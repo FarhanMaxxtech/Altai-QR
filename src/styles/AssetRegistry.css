@@ -1,0 +1,410 @@
+.asset-registry {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  text-align: left;
+}
+
+.registry-form-section h2,
+.registry-grid-section h2 {
+  margin-bottom: 12px;
+}
+
+.product-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: #f8f9fb;
+  border: 1px solid #e5e4e7;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+/* Direct children of a column-flex container should size to content,
+   not stretch to a 200px main-axis (height) minimum */
+.product-form > .form-group {
+  flex: 0 0 auto;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 200px;
+}
+
+.form-group-wide {
+  flex: 1 1 100%;
+}
+
+.variant-card > .form-group,
+.attributes-block .form-group {
+  flex: 0 0 auto;
+}
+
+.form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #0d2d5e;
+  box-shadow: 0 0 0 2px rgba(13, 45, 94, 0.15);
+}
+
+.form-group input:disabled {
+  background: #f3f4f6;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: normal;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+.checkbox-label input[type='checkbox'] {
+  width: auto;
+  cursor: pointer;
+}
+
+/* Variants block */
+.variants-block {
+  border-top: 1px solid #e5e4e7;
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.variants-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.variants-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.variant-card {
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.variant-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.variant-index {
+  font-weight: 600;
+  font-size: 13px;
+  color: #0d2d5e;
+}
+
+.variant-fields-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* Attributes */
+.attributes-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.attribute-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.attribute-row input {
+  flex: 1 1 auto;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.btn-add-attribute {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed #9ca3af;
+  color: #374151;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-add-attribute:hover {
+  background: #f3f4f6;
+}
+
+.btn-remove-small {
+  border: none;
+  background: none;
+  color: #b91c1c;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.btn-remove {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #b91c1c;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-remove:hover {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+/* Color picker row */
+.color-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.color-row input[type='color'] {
+  width: 40px;
+  height: 34px;
+  padding: 2px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* QR generation inside form */
+.variant-qr-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.qr-wrapper-inline {
+  display: inline-flex;
+}
+
+/* Buttons */
+.btn-primary {
+  background: #0d2d5e;
+  color: #fff;
+  border: none;
+  padding: 9px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.btn-primary:hover {
+  background: #0a2349;
+}
+
+.btn-submit-product {
+  align-self: flex-start;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: #0d2d5e;
+  border: 1px solid #0d2d5e;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn-secondary:hover {
+  background: #f0f4f9;
+}
+
+.empty-state {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+/* Registered products display */
+.product-block {
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e4e7;
+}
+
+.product-block-header h3 {
+  margin: 0 0 4px;
+}
+
+.product-description {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.asset-card {
+  border: 1px solid #e5e4e7;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+  background: #fff;
+}
+
+.qr-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.variant-color-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid #d1d5db;
+  margin: 0 auto 8px;
+}
+
+.variant-attribute-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #374151;
+  text-align: left;
+}
+
+.attr-key {
+  font-weight: 600;
+}
+
+.asset-sku {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.variant-price {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0d2d5e;
+}
+
+.asset-description {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.variant-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-copy-variant {
+  padding: 4px 12px;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+  .variant-list-table {
+    border: none;
+  }
+
+  .variant-list-table thead {
+    display: none; /* header row doesn't make sense stacked */
+  }
+
+  .variant-list-table,
+  .variant-list-table tbody,
+  .variant-list-table tr,
+  .variant-list-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .variant-list-table tr {
+    background: #fff;
+    border: 1px solid #e5e4e7;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+  }
+
+  .variant-list-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f3f4f6;
+    white-space: normal; /* let long attribute text wrap instead of clipping */
+    text-align: right;
+  }
+
+  .variant-list-table td:last-child {
+    border-bottom: none;
+  }
+
+  /* Label shown on the left, using the data-label attribute set in JSX */
+  .variant-list-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    font-size: 12px;
+    color: #6b7280;
+    text-align: left;
+    flex-shrink: 0;
+  }
+}

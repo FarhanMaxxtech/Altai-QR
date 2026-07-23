@@ -1,0 +1,453 @@
+.stock-adjustment {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  text-align: left;
+}
+
+.lookup-section h2,
+.variant-summary-section h2 {
+  margin: 0 0 12px;
+}
+
+.lookup-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  background: #f8f9fb;
+  border: 1px solid #e5e4e7;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 200px;
+}
+
+.form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.form-group select,
+.form-group input {
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.or-divider {
+  font-size: 13px;
+  color: #9ca3af;
+  padding-bottom: 8px;
+}
+
+.qr-reader-box {
+  width: 300px;
+  max-width: 100%;
+  margin-top: 12px;
+  border: 1px solid #e5e4e7;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.error-text {
+  color: #b91c1c;
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+.variant-sku {
+  color: #6b7280;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.balance-table {
+  border-collapse: collapse;
+  margin-bottom: 20px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.balance-table th,
+.balance-table td {
+  border: 1px solid #e5e4e7;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.balance-table th {
+  background: #f8f9fb;
+  color: #374151;
+}
+
+.transaction-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+  background: #f8f9fb;
+  border: 1px solid #e5e4e7;
+  border-radius: 8px;
+  padding: 16px;
+  max-width: 600px;
+}
+
+.status-text {
+  font-size: 14px;
+  color: #0d2d5e;
+  margin-top: 12px;
+}
+
+.btn-primary {
+  background: #0d2d5e;
+  color: #fff;
+  border: none;
+  padding: 9px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.btn-primary:hover {
+  background: #0a2349;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: #0d2d5e;
+  border: 1px solid #0d2d5e;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.btn-secondary:hover {
+  background: #f0f4f9;
+}
+
+@media (max-width: 768px) {
+
+  .app-main {
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 60px;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .form-group,
+  .form-group-wide {
+    width: 100% !important;
+  }
+
+  .generate-form,
+  .transaction-form,
+  .account-form,
+  .merchant-form,
+  .store-form,
+  .lookup-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  /* ADD THE NEW RULE HERE, anywhere inside this same closing brace */
+  .lookup-row .form-group {
+    flex: 0 0 auto;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    width: 100%;
+    padding: 12px;
+    font-size: 1rem;
+  }
+
+}
+
+@media (max-width: 640px) {
+
+  .group-variant-table {
+    border: none;
+    border-spacing: 0;
+    width: 100%;
+  }
+
+  .group-variant-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .history-table {
+    border: none;
+  }
+
+  .history-table thead {
+    display: none;
+  }
+
+  .history-table,
+  .history-table tbody,
+  .history-table tr,
+  .history-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .history-table tr {
+    background: #fff;
+    border: 1px solid #e5e4e7;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+  }
+
+  .history-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid #f3f4f6;
+    white-space: normal;
+    text-align: right;
+  }
+
+  .history-table td:last-child {
+    border-bottom: none;
+  }
+
+  .history-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    font-size: 12px;
+    color: #6b7280;
+    text-align: left;
+    flex-shrink: 0;
+  }
+
+    .group-variant-table {
+    border: none;
+  }
+
+  .group-variant-table thead {
+    display: none;
+  }
+
+  .group-variant-table,
+  .group-variant-table tbody,
+  .group-variant-table tr,
+  .group-variant-table td {
+    display: block;
+    width: 100%;
+  }
+
+    .group-variant-table tr {
+    background: #fff;
+    border: 1px solid #e5e4e7;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    padding: 14px 20px;   /* increase horizontal (left/right) padding here */
+    box-sizing: border-box;
+  }
+
+  .group-variant-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;       /* keep this at 0 horizontally — the tr already handles left/right */
+    border: none;
+    border-bottom: 1px solid #f3f4f6;
+    white-space: normal;
+    text-align: right;
+  }
+
+  .group-variant-table td:last-child {
+    border-bottom: none;
+    justify-content: center;
+  }
+
+  .group-variant-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    font-size: 12px;
+    color: #6b7280;
+    text-align: left;
+    flex-shrink: 0;
+  }
+
+  .group-variant-table .btn-secondary {
+    width: 100%;
+  }
+}
+
+.product-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font-weight: 600;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.product-link:hover {
+  text-decoration: underline;
+}
+
+/* --- Card layout for Product Balance / Product Balance Detail ------------- */
+
+.balance-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-top: 3px solid #2563eb;
+  border-radius: 8px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.balance-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0d2d5e;
+}
+
+.balance-card-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.balance-results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.balance-results-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #0d2d5e;
+}
+
+.balance-filter-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.balance-filter-grid .form-group {
+  flex: 1 1 220px;
+}
+
+.balance-filter-actions {
+  flex: 0 0 auto;
+}
+
+.balance-badge {
+  display: inline-block;
+  min-width: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #0d2d5e;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.in-value {
+  color: #16a34a;
+  font-weight: 700;
+}
+
+.out-value {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+/* --- Variation Info card ---------------------------------------------------- */
+
+.variation-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.variation-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.variation-info-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.variation-info-value {
+  font-size: 14px;
+  color: #08060d;
+  font-weight: 600;
+}
+
+/* --- History table (Product Balance Detail) -------------------------------- */
+
+.history-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.history-table th,
+.history-table td {
+  border: 1px solid #e5e4e7;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.history-table th {
+  background: #f8f9fb;
+  color: #374151;
+  font-weight: 600;
+}
+
+.history-table tfoot td {
+  font-weight: 700;
+  background: #f8f9fb;
+}
+
+.history-total-label {
+  text-align: right !important;
+}
+
+@media (max-width: 768px) {
+  .balance-filter-grid,
+  .balance-filter-actions {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+}

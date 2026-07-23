@@ -1,0 +1,159 @@
+.app-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: sans-serif;
+}
+
+.app-title {
+  margin: 0 0 12px;
+}
+
+.app-divider {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 12px 0;
+}
+
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  font-family: sans-serif;
+}
+
+.app-main {
+  flex: 1 1 auto;
+  padding: 24px 32px;
+  overflow-y: auto;
+}
+
+/* ============================================================
+   MOBILE RESPONSIVE RULES — applies below 768px (phones/small tablets)
+   ============================================================ */
+@media (max-width: 768px) {
+
+  /* Give content room now that the sidebar is hidden (hamburger menu) */
+  .app-main {
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 60px; /* clears the fixed hamburger button */
+  }
+
+  /* Tables: instead of squeezing columns, let them scroll sideways */
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Forms: stack every field full-width instead of side-by-side */
+  .form-group,
+  .form-group-wide {
+    width: 100% !important;
+  }
+
+  /* Any row of form-groups/buttons that was flex-row becomes flex-column */
+  .generate-form,
+  .transaction-form,
+  .account-form,
+  .merchant-form,
+  .store-form,
+  .edit-form,
+  .lookup-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  /* Buttons become full-width and easier to tap */
+  .btn-primary,
+  .btn-secondary {
+    width: 100%;
+    padding: 12px;
+    font-size: 1rem; /* larger tap target */
+  }
+
+  /* Grids (asset cards, stat cards, etc.) collapse to one column */
+  .asset-grid,
+  .stats-grid,
+  .qr-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Headers with search bars stack instead of squeezing side-by-side */
+  .listing-header,
+  .merchant-list-header,
+  .qr-list-header,
+  .store-list-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .search-input {
+    width: 100%;
+  }
+
+  /* Prevent iOS Safari from auto-zooming when a field is focused —
+     it zooms any input/select/textarea under 16px */
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* AssetRegistry's variant row (Price / SKU / Color) — force single
+     column earlier than the desktop 200px flex-wrap behavior */
+  .variant-fields-row {
+    flex-direction: column;
+  }
+
+  .variant-fields-row .form-group {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  /* AssetRegistry's Attribute name/Value rows — stack instead of
+     squeezing two inputs into a narrow row */
+  .attribute-row {
+    flex-wrap: wrap;
+  }
+
+  .attribute-row input {
+    flex: 1 1 100%;
+  }
+}
+
+/* ============================================================
+   SMALL PHONE RULES — applies below 480px (iPhone SE and similar)
+   ============================================================ */
+@media (max-width: 480px) {
+  .app-main {
+    padding: 12px;
+    padding-top: 60px;
+  }
+
+  .asset-card,
+  .stat-card,
+  .qr-card {
+    padding: 12px;
+  }
+
+  h2 {
+    font-size: 17px;
+  }
+
+  .variants-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .variants-header h3 {
+    margin: 0;
+  }
+
+  .variants-header .btn-secondary {
+    width: 100%;
+  }
+}

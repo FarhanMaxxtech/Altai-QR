@@ -1,0 +1,201 @@
+.store-management {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  text-align: left;
+}
+
+.store-form-section h2,
+.store-list-section h2 {
+  margin: 0 0 12px;
+}
+
+.store-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+  background: #f8f9fb;
+  border: 1px solid #e5e4e7;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 200px;
+}
+
+.form-group-wide {
+  flex: 1 1 100%;
+}
+
+.form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.form-group input,
+.form-group select {
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #0d2d5e;
+  box-shadow: 0 0 0 2px rgba(13, 45, 94, 0.15);
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-primary {
+  background: #0d2d5e;
+  color: #fff;
+  border: none;
+  padding: 9px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 17px;
+}
+
+.btn-primary:hover {
+  background: #0a2349;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: #0d2d5e;
+  border: 1px solid #0d2d5e;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.btn-secondary:hover {
+  background: #f0f4f9;
+}
+
+.status-text {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #0d2d5e;
+}
+
+.store-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.search-input {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  min-width: 260px;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #0d2d5e;
+  box-shadow: 0 0 0 2px rgba(13, 45, 94, 0.15);
+}
+
+.empty-state {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.stores-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.stores-table th,
+.stores-table td {
+  border: 1px solid #e5e4e7;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+.stores-table th {
+  background: #f8f9fb;
+  color: #374151;
+  font-weight: 600;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-active {
+  background: rgba(22, 163, 74, 0.12);
+  color: #16a34a;
+}
+
+.status-inactive {
+  background: rgba(107, 114, 128, 0.12);
+  color: #6b7280;
+}
+
+.store-management .actions-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 12px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: #0d2d5e;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.btn-link-danger {
+  color: #b91c1c;
+}
+
+@media (max-width: 768px) {
+  .store-form .form-group,
+  .store-form .form-group-wide {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
+  .store-form .form-actions {
+    flex-direction: row;   /* keep Add Store / Cancel side-by-side */
+    width: 100%;
+  }
+
+  .store-form .form-actions .btn-primary,
+  .store-form .form-actions .btn-secondary {
+    flex: 1 1 0;
+    width: auto;
+  }
+}

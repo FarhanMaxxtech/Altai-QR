@@ -1,0 +1,90 @@
+.ledger-history {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+}
+
+.ledger-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.filter-group {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-btn {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+}
+
+.filter-btn:hover {
+  background: #f5f5f5;
+}
+
+.filter-btn-active {
+  background: #0d2d5e;
+  color: #fff;
+  border-color: #0d2d5e;
+}
+
+.ledger-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.ledger-table th,
+.ledger-table td {
+  border: 1px solid #e5e4e7;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.ledger-table th {
+  background: #f8f9fb;
+  color: #374151;
+  font-weight: 600;
+}
+
+.ledger-table tbody tr:hover {
+  background: #f8f9fb;
+}
+
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-receive {
+  background: rgba(22, 163, 74, 0.12);
+  color: #16a34a;
+}
+
+.badge-transfer {
+  background: rgba(13, 45, 94, 0.1);
+  color: #0d2d5e;
+}
+
+.badge-checkout {
+  background: rgba(217, 119, 6, 0.12);
+  color: #d97706;
+}
+
+.empty-state {
+  color: #9ca3af;
+  font-style: italic;
+}

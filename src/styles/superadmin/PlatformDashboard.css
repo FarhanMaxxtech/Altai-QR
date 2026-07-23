@@ -1,0 +1,110 @@
+/* src/styles/superadmin/PlatformDashboard.css */
+
+.platform-dashboard {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.platform-dashboard h2 {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  color: #0d2d5e;
+}
+
+.platform-dashboard h3 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  color: #0d2d5e;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.stat-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.stat-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #0d2d5e;
+}
+
+.stat-value-active {
+  color: #16a34a;
+}
+
+.stat-value-suspended {
+  color: #dc2626;
+}
+
+/* --- Recent merchants ------------------------------------------------------ */
+
+.recent-merchants-section {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.recent-merchants-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.recent-merchants-table th,
+.recent-merchants-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 0.9rem;
+}
+
+.recent-merchants-table th {
+  color: #374151;
+  font-weight: 600;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.status-badge-active {
+  background: #16a34a;
+}
+
+.status-badge-suspended {
+  background: #dc2626;
+}
+
+.empty-state {
+  color: #9ca3af;
+  font-style: italic;
+  padding: 12px 0;
+}

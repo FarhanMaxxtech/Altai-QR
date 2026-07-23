@@ -1,0 +1,374 @@
+.listing-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.listing-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.listing-page-header h2 {
+  margin: 0;
+  font-size: 1.6rem;
+  color: #111827;
+}
+
+.listing-breadcrumb {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.listing-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-top: 3px solid #2563eb;
+  border-radius: 8px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* --- Filter row ------------------------------------------------------------ */
+
+.listing-filter-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.listing-filter-grid .form-group {
+  flex: 1 1 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.listing-filter-grid label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.listing-filter-grid input {
+  padding: 9px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.listing-filter-grid input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.listing-filter-actions {
+  display: flex;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin-bottom: 15px;
+}
+
+.btn-search {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-search:hover {
+  background: #1d4ed8;
+}
+
+.btn-clear {
+  background: #fff;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-clear:hover {
+  background: #f3f4f6;
+}
+
+.listing-add-action {
+  flex: 1 1 100%;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-add-product {
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-add-product:hover {
+  background: #15803d;
+}
+
+/* --- Toolbar: entries + export --------------------------------------------- */
+
+.listing-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #f3f4f6;
+}
+
+.entries-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #374151;
+}
+
+.entries-control select {
+  padding: 5px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.export-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.export-buttons button {
+  background: #0e7490;
+  color: #fff;
+  border: none;
+  padding: 7px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.export-buttons button:hover {
+  background: #0c5f76;
+}
+
+/* --- Table header row -------------------------------------------------------- */
+
+.listing-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f8f9fb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 10px 16px;
+}
+
+.sort-toggle {
+  background: none;
+  border: none;
+  font-weight: 600;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+  padding: 0;
+}
+
+.listing-count {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* --- Pagination -------------------------------------------------------------- */
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding-top: 8px;
+}
+
+.pagination-status {
+  font-size: 0.85rem;
+  color: #374151;
+  font-weight: 600;
+}
+
+@media print {
+  .listing-filter-grid,
+  .listing-toolbar,
+  .pagination-bar,
+  .listing-page-header p {
+    display: none !important;
+  }
+}
+
+/* --- Flat product table ------------------------------------------------- */
+
+.products-flat-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.products-flat-table th,
+.products-flat-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 0.9rem;
+}
+
+.products-flat-table th {
+  background: #f8f9fb;
+  color: #374151;
+  font-weight: 600;
+}
+
+.products-flat-table tbody tr:hover {
+  background: #f8f9fb;
+}
+
+.product-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.product-link:hover {
+  text-decoration: underline;
+}
+
+/* --- Product Details page ------------------------------------------------ */
+
+.detail-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.detail-section-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #111827;
+}
+
+.variant-count-badge {
+  background: #6b7280;
+  color: #fff;
+  border-radius: 6px;
+  padding: 2px 9px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.detail-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-field {
+  display: flex;
+  gap: 8px;
+}
+
+.detail-label {
+  font-weight: 700;
+  color: #111827;
+  min-width: 180px;
+}
+
+.detail-value {
+  color: #374151;
+}
+
+/* --- Batch Assignment column (migrated from old ProductListing.jsx) ------ */
+
+.batch-assigned-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+}
+
+.batch-assigned-badge {
+  align-self: flex-start;
+  background: rgba(22, 163, 74, 0.12);
+  color: #16a34a;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-bottom: 2px;
+}
+
+.batch-assigned-stat {
+  font-size: 0.82rem;
+  color: #374151;
+  font-weight: 600;
+}
+
+.batch-assigned-stat-muted {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.batch-assign-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.batch-assign-block select {
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  max-width: 260px;
+}
+
+.btn-assign-batch {
+  align-self: flex-start;
+  font-size: 0.78rem;
+  padding: 5px 12px;
+}
+
+.batch-none-text {
+  color: #9ca3af;
+  font-style: italic;
+  font-size: 0.82rem;
+}
+
+.success-text {
+  color: #16a34a;
+  font-size: 0.85rem;
+  margin: 0 0 8px;
+}
