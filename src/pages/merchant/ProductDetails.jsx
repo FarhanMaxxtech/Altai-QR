@@ -27,6 +27,7 @@ export default function ProductDetails() {
   const [assigningVariantId, setAssigningVariantId] = useState(null);
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
+  const [batchBreakdowns, setBatchBreakdowns] = useState({}); 
 
   const loadProduct = () => {
     // Reuses the same /api/products list the listing page uses (rather than
@@ -40,6 +41,7 @@ export default function ProductDetails() {
           setNotFound(true);
         } else {
           setProduct(found);
+          loadBatchBreakdowns(found.variants);
         }
       })
       .catch((err) => console.error('Failed to load product:', err))
@@ -60,6 +62,22 @@ export default function ProductDetails() {
         loadAvailableBatches();
       }, [productId]);
 
+
+      const loadBatchBreakdowns = (variants) => {
+        Promise.all(
+          variants.map((v) =>
+            apiFetch(`/api/qrcode/variants/${v.variant_id}/batch-summary`)
+              .then((res) => res.json())
+              .then((data) => [v.variant_id, data])
+          )
+        )
+          .then((entries) => {
+            const map = {};
+            entries.forEach(([variantId, data]) => { map[variantId] = data; });
+            setBatchBreakdowns(map);
+          })
+          .catch((err) => console.error('Failed to load batch breakdowns:', err));
+      };
 
     const updateAssignForm = (variantId, field, value) => {
       setAssignForms((prev) => ({
@@ -171,112 +189,119 @@ export default function ProductDetails() {
           <p className="empty-state">No variants for this product.</p>
         ) : (
           <table className="variant-list-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>SKU</th>
-                <th>Attributes</th>
-                <th>Price (RM)</th>
-                <th>Qty</th>
-                <th>Remarks</th>
-                <th>Batch Assignment</th>
-              </tr>
-            </thead>
-            <tbody>
-              {product.variants.map((variant, index) => {
-                const attributesArray = attributesObjectToArray(variant.attributes);
-                const isAssigned = variant.assigned_unit_count > 0;
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>SKU</th>
+                  <th>Attributes</th>
+                  <th>Price (RM)</th>
+                  <th>Qty</th>
+                  <th>Remarks</th>
+                  <th>Assigned Batches</th>
+                  <th>Assign More</th>
+                </tr>
+              </thead>
+              <tbody>
+                {product.variants.map((variant, index) => {
+                  const attributesArray = attributesObjectToArray(variant.attributes);
+                  const breakdown = batchBreakdowns[variant.variant_id] || [];
+                  const totalAssigned = breakdown.reduce((sum, b) => sum + Number(b.count), 0);
 
-                return (
-                  <tr key={variant.variant_id}>
-                    <td data-label="#">{index + 1}</td>
-                    <td data-label="SKU">{variant.sku}</td>
-                    <td data-label="Attributes">
-                      {attributesArray.length > 0
-                        ? attributesArray.map((a) => `${a.key}: ${a.value}`).join(', ')
-                        : '—'}
-                    </td>
-                    <td data-label="Price (RM)">
-                      {variant.price ? Number(variant.price).toFixed(2) : '—'}
-                    </td>
-                    <td data-label="Qty">{variant.in_stock_count ?? 0}</td>
-                    <td data-label="Remarks">{variant.remarks || '—'}</td>
-                    <td data-label="Batch Assignment">
-                      {isAssigned ? (
-                        <div className="batch-assigned-info">
-                          <span className="batch-assigned-badge">Assigned</span>
-                          <span className="batch-assigned-stat">
-                            {variant.assigned_unit_count} unit{variant.assigned_unit_count === 1 ? '' : 's'} linked
-                          </span>
-                          <span className="batch-assigned-stat batch-assigned-stat-muted">
-                            {variant.in_stock_count ?? 0} in stock
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="batch-assign-block">
-                            {availableBatches.length === 0 ? (
-                              <span className="batch-none-text">No available batches</span>
-                            ) : (
-                              <>
-                                <div className="assign-field">
-                                  <label>Batch</label>
-                                  <select
-                                    value={assignForms[variant.variant_id]?.batch_id || ''}
-                                    onChange={(e) => updateAssignForm(variant.variant_id, 'batch_id', e.target.value)}
-                                  >
-                                    <option value="">Select a batch...</option>
-                                    {availableBatches.map((batch) => (
-                                      <option key={batch.batch_id} value={batch.batch_id}>
-                                        {batch.company_name} — {batch.unassigned_count} available ({batch.serial_start}–{batch.serial_end})
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
+                  return (
+                    <tr key={variant.variant_id}>
+                      <td data-label="#">{index + 1}</td>
+                      <td data-label="SKU">{variant.sku}</td>
+                      <td data-label="Attributes">
+                        {attributesArray.length > 0
+                          ? attributesArray.map((a) => `${a.key}: ${a.value}`).join(', ')
+                          : '—'}
+                      </td>
+                      <td data-label="Price (RM)">
+                        {variant.price ? Number(variant.price).toFixed(2) : '—'}
+                      </td>
+                      <td data-label="Qty">{variant.in_stock_count ?? 0}</td>
+                      <td data-label="Remarks">{variant.remarks || '—'}</td>
 
-                                {assignForms[variant.variant_id]?.batch_id && (() => {
-                                  const chosen = availableBatches.find(
-                                    (b) => b.batch_id === assignForms[variant.variant_id].batch_id
-                                  );
-                                  return (
-                                    <>
-                                      <div className="assign-batch-summary">
-                                        <span className="assign-batch-name">{chosen.company_name}</span>
-                                        <span className="assign-batch-count">{chosen.unassigned_count} unassigned</span>
-                                      </div>
-
-                                      <div className="assign-field">
-                                        <label>Quantity</label>
-                                        <input
-                                          type="number"
-                                          min="1"
-                                          max={chosen.unassigned_count}
-                                          placeholder={`up to ${chosen.unassigned_count}`}
-                                          value={assignForms[variant.variant_id]?.quantity || ''}
-                                          onChange={(e) => updateAssignForm(variant.variant_id, 'quantity', e.target.value)}
-                                        />
-                                      </div>
-
-                                      <button
-                                        type="button"
-                                        className="btn-secondary btn-assign-batch"
-                                        onClick={() => handleAssignQuantity(variant.variant_id)}
-                                        disabled={assigningVariantId === variant.variant_id}
-                                      >
-                                        {assigningVariantId === variant.variant_id ? 'Assigning…' : 'Assign'}
-                                      </button>
-                                    </>
-                                  );
-                                })()}
-                              </>
-                            )}
+                      <td data-label="Assigned Batches">
+                        {breakdown.length === 0 ? (
+                          <span className="batch-none-text">None yet</span>
+                        ) : (
+                          <div className="assigned-batches-list">
+                            {breakdown.map((b) => (
+                              <div key={b.batch_id} className="assigned-batch-row">
+                                <span className="assigned-batch-name">{b.company_name}</span>
+                                <span className="assigned-batch-qty">{b.count} units</span>
+                              </div>
+                            ))}
+                            <div className="assigned-batch-total">Total: {totalAssigned} units</div>
                           </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        )}
+                      </td>
+
+                      <td data-label="Assign More">
+                        <div className="batch-assign-block">
+                          {availableBatches.length === 0 ? (
+                            <span className="batch-none-text">No available batches</span>
+                          ) : (
+                            <>
+                              <div className="assign-field">
+                                <label>Batch</label>
+                                <select
+                                  value={assignForms[variant.variant_id]?.batch_id || ''}
+                                  onChange={(e) => updateAssignForm(variant.variant_id, 'batch_id', e.target.value)}
+                                >
+                                  <option value="">Select a batch...</option>
+                                  {availableBatches.map((batch) => (
+                                    <option key={batch.batch_id} value={batch.batch_id}>
+                                      {batch.company_name} — {batch.unassigned_count} available ({batch.serial_start}–{batch.serial_end})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              {assignForms[variant.variant_id]?.batch_id && (() => {
+                                const chosen = availableBatches.find(
+                                  (b) => b.batch_id === assignForms[variant.variant_id].batch_id
+                                );
+                                return (
+                                  <>
+                                    <div className="assign-batch-summary">
+                                      <span className="assign-batch-name">{chosen.company_name}</span>
+                                      <span className="assign-batch-count">{chosen.unassigned_count} unassigned</span>
+                                    </div>
+
+                                    <div className="assign-field">
+                                      <label>Quantity</label>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max={chosen.unassigned_count}
+                                        placeholder={`up to ${chosen.unassigned_count}`}
+                                        value={assignForms[variant.variant_id]?.quantity || ''}
+                                        onChange={(e) => updateAssignForm(variant.variant_id, 'quantity', e.target.value)}
+                                      />
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      className="btn-secondary btn-assign-batch"
+                                      onClick={() => handleAssignQuantity(variant.variant_id)}
+                                      disabled={assigningVariantId === variant.variant_id}
+                                    >
+                                      {assigningVariantId === variant.variant_id ? 'Assigning…' : 'Assign'}
+                                    </button>
+                                  </>
+                                );
+                              })()}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
         )}
 
         <button className="btn-secondary" style={{ marginTop: 16 }} onClick={() => navigate('/listing')}>

@@ -140,6 +140,29 @@ router.post('/batches/:id/assign-variant', async (req, res) => {
   }
 });
 
+// GET per-batch breakdown of codes already assigned to one variant —
+// e.g. "Batch X: 1000 units", "Batch Y: 500 units" — so the merchant can
+// see exactly where a variant's stock came from across multiple batches.
+router.get('/variants/:variantId/batch-summary', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.batch_id, b.company_name, b.serial_start, b.serial_end,
+              COUNT(qc.qr_id) AS count
+       FROM qr_codes qc
+       JOIN qrcode_batches b ON b.batch_id = qc.batch_id
+       JOIN variants v ON v.variant_id = qc.variant_id
+       JOIN products p ON p.product_id = v.product_id
+       WHERE qc.variant_id = $1 AND p.merchant_id = $2
+       GROUP BY b.batch_id, b.company_name, b.serial_start, b.serial_end
+       ORDER BY b.created_at DESC`,
+      [req.params.variantId, req.user.merchant_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // POST assign a specific QUANTITY of unassigned codes from ONE chosen batch
 // to one variant — partial assignment, unlike assign-variant which takes
 // the whole batch's remaining unassigned codes.
