@@ -152,7 +152,7 @@ export default function QRGenerator() {
             <input
               type="number"
               min="4"
-              max="10"
+              max="6"
               value={serialDigits}
               onChange={(e) => setSerialDigits(e.target.value)}
             />

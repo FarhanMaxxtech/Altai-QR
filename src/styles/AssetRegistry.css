@@ -408,3 +408,132 @@
     flex-shrink: 0;
   }
 }
+
+/* --- Just Registered card (matches Product Listing / Product Balance theme) --- */
+
+.just-registered-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-top: 3px solid #2563eb;
+  border-radius: 8px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.just-registered-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0d2d5e;
+}
+
+.just-registered-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.just-registered-card .product-block {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.just-registered-card .product-block-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.just-registered-card .product-block-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #111827;
+}
+
+.just-registered-card .variant-count-badge {
+  background: #6b7280;
+  color: #fff;
+  border-radius: 6px;
+  padding: 2px 9px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.just-registered-card .product-description {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
+  flex: 1 1 100%;
+}
+
+.variant-table-wrapper {
+  overflow-x: auto;
+}
+
+.just-registered-card .variant-list-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.just-registered-card .variant-list-table th,
+.just-registered-card .variant-list-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.just-registered-card .variant-list-table th {
+  background: #f8f9fb;
+  color: #374151;
+  font-weight: 600;
+}
+
+.just-registered-card .variant-list-table tbody tr:hover {
+  background: #f8f9fb;
+}
+
+.sku-badge {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0d2d5e;
+  background: rgba(13, 45, 94, 0.08);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.color-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.just-registered-card .variant-color-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #d1d5db;
+  margin: 0;
+}
+
+.color-hex {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.price-badge {
+  display: inline-block;
+  font-weight: 700;
+  color: #0d2d5e;
+}
+
+.muted-dash {
+  color: #9ca3af;
+}

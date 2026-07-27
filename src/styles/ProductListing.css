@@ -343,8 +343,69 @@
 .batch-assign-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-width: 220px;
+  gap: 10px;
+  min-width: 260px;
+  background: #f8f9fb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.assign-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.assign-field label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.assign-field select,
+.assign-field input {
+  padding: 7px 9px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: #fff;
+}
+
+.assign-field select:focus,
+.assign-field input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.assign-batch-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #eff4fb;
+  border: 1px solid rgba(13, 45, 94, 0.15);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.assign-batch-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #0d2d5e;
+}
+
+.assign-batch-count {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #16a34a;
+}
+
+.btn-assign-batch {
+  align-self: stretch;
+  text-align: center;
 }
 
 .batch-assign-block select {
@@ -371,4 +432,38 @@
   color: #16a34a;
   font-size: 0.85rem;
   margin: 0 0 8px;
+}
+
+.assigned-batches-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.assigned-batch-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #374151;
+}
+
+.assigned-batch-name {
+  font-weight: 600;
+}
+
+.assigned-batch-qty {
+  color: #16a34a;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.assigned-batch-total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #0d2d5e;
 }

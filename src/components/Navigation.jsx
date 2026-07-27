@@ -22,6 +22,7 @@ const navItems = [
         children: [
             { path: '/registry', label: 'Register New Product', module: 'Asset Registry' },
             { path: '/listing', label: 'Product Listing', module: 'Product Listing' },
+            { path: '/assign-qr', label: 'Assign QR to Product', module: 'Asset Registry' },
         ],
     },
     { path: '/stock-balance', label: 'Product Balance', icon: PackageSearch, module: 'Stock Adjustment' },

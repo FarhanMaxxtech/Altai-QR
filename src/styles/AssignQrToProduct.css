@@ -1,0 +1,178 @@
+/* Full-width layout — uses .listing-page / .listing-card from ProductListing.css
+   for consistent page chrome; this file only styles what's specific here. */
+
+.assign-qr-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px 24px;
+}
+
+.assign-qr-grid .form-group-wide {
+  grid-column: 1 / -1;
+}
+
+.assign-qr-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assign-qr-form .form-group label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.assign-qr-form input,
+.assign-qr-form select {
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.assign-qr-form input:focus,
+.assign-qr-form select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.assign-qr-count {
+  color: #2563eb;
+  font-weight: 700;
+}
+
+/* First field: read-only display, visually distinct from the active
+   scan input so it's clear this one just shows the result. */
+.assign-qr-serial-display {
+  background: #f3f4f6;
+  color: #6b7280;
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 600;
+  cursor: default;
+}
+
+.assign-qr-input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.assign-qr-input-with-icon input {
+  flex: 1 1 auto;
+  padding-right: 40px;
+}
+
+.assign-qr-icon-btn {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+}
+
+.assign-qr-icon-btn:hover {
+  color: #2563eb;
+}
+
+.assign-qr-hint {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  color: #9ca3af;
+}
+
+.assign-qr-char-count {
+  align-self: flex-end;
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+.assign-qr-camera-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assign-qr-reader-box {
+  width: 260px;
+  max-width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.assign-qr-scanned-list {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 24px;
+}
+
+.assign-qr-scanned-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.assign-qr-scanned-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.assign-qr-scanned-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: #f8f9fb;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.assign-qr-serial {
+  font-family: ui-monospace, Consolas, monospace;
+  color: #0d2d5e;
+  font-weight: 600;
+}
+
+.assign-qr-remove {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.assign-qr-remove:hover {
+  color: #dc2626;
+}
+
+.assign-qr-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+@media (max-width: 768px) {
+  .assign-qr-grid {
+    grid-template-columns: 1fr;
+  }
+}

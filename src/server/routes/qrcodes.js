@@ -143,10 +143,10 @@ router.post('/batches', async (req, res) => {
     // One single INSERT for the whole batch — unnest() turns the three
     // parallel arrays into that many rows, in one round trip to the database.
     const codesResult = await client.query(
-      `INSERT INTO qr_codes (batch_id, serial_number, qr_value, assigned_user_id)
-       SELECT $1, s, q, $2
-       FROM unnest($3::text[], $4::text[]) AS t(s, q)
-       RETURNING serial_number, qr_value`,
+      `INSERT INTO qr_codes (batch_id, serial_number, qr_value, assigned_user_id, status)
+      SELECT $1, s, q, $2, 'pending'
+      FROM unnest($3::text[], $4::text[]) AS t(s, q)
+      RETURNING serial_number, qr_value`,
       [batch.batch_id, assigned_user_id, serials, qrValues]
     );
 
