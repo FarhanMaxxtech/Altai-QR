@@ -22,8 +22,9 @@ export default function ProductDetails() {
   const [notFound, setNotFound] = useState(false);
 
   // --- Assign Batch state (migrated from the old ProductListing.jsx) -----
-  const [availableBatches, setAvailableBatches] = useState([]);
-  const [batchSelections, setBatchSelections] = useState({}); // { [variant_id]: batch_id }
+  // Replaces availableBatches / batchSelections
+  const [availableBalance, setAvailableBalance] = useState(0);
+  const [quantityInputs, setQuantityInputs] = useState({}); // { [variant_id]: string }
   const [assigningVariantId, setAssigningVariantId] = useState(null);
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
@@ -48,48 +49,49 @@ export default function ProductDetails() {
 
   // Merchant-scoped: only batches generated for the currently logged-in
   // merchant come back from this endpoint (req.user.user_id on the backend).
-  const loadAvailableBatches = () => {
-    apiFetch('/api/qrcode/batches/available')
-      .then((res) => res.json())
-      .then((data) => setAvailableBatches(data))
-      .catch((err) => console.error('Failed to load available batches:', err));
-  };
+    const loadAvailableBalance = () => {
+      apiFetch('/api/qrcode/balance')
+        .then((res) => res.json())
+        .then((data) => setAvailableBalance(data.available))
+        .catch((err) => console.error('Failed to load QR balance:', err));
+    };
 
-  useEffect(() => {
-    loadProduct();
-    loadAvailableBatches();
-  }, [productId]);
+    useEffect(() => {
+      loadProduct();
+      loadAvailableBalance();
+    }, [productId]);
 
-  const handleAssignBatch = async (variantId) => {
+    const handleAssignQuantity = async (variantId) => {
     setAssignError('');
     setAssignSuccess('');
-    const batchId = batchSelections[variantId];
-    if (!batchId) {
-      setAssignError('Select a batch first.');
+
+    const qty = Number(quantityInputs[variantId]);
+    if (!qty || qty <= 0) {
+      setAssignError('Enter a valid quantity.');
+      return;
+    }
+    if (qty > availableBalance) {
+      setAssignError(`Only ${availableBalance} unassigned codes available in your balance.`);
       return;
     }
 
     setAssigningVariantId(variantId);
     try {
-      const res = await apiFetch(`/api/qrcode/batches/${batchId}/assign-variant`, {
+      const res = await apiFetch('/api/qrcode/assign-quantity', {
         method: 'POST',
-        body: JSON.stringify({ variant_id: variantId }),
+        body: JSON.stringify({ variant_id: variantId, quantity: qty }),
       });
       const result = await res.json();
 
       if (!res.ok) {
-        setAssignError(result.message || 'Could not assign this batch.');
+        setAssignError(result.message || 'Could not assign codes.');
         return;
       }
 
       setAssignSuccess(`Assigned ${result.assigned_count} codes to this variant.`);
-      setBatchSelections((prev) => {
-        const next = { ...prev };
-        delete next[variantId];
-        return next;
-      });
-      loadProduct();           // refresh so assigned_unit_count/in_stock_count reflect the new link
-      loadAvailableBatches();  // this batch is now (partially or fully) consumed
+      setQuantityInputs((prev) => ({ ...prev, [variantId]: '' }));
+      loadProduct();          // refresh in_stock/assigned counts
+      loadAvailableBalance(); // pool just shrank
     } catch (err) {
       setAssignError('Could not reach server. Check it is running.');
       console.error(err);
@@ -195,33 +197,27 @@ export default function ProductDetails() {
                         </div>
                       ) : (
                         <div className="batch-assign-block">
-                          {availableBatches.length === 0 ? (
-                            <span className="batch-none-text">No available batches</span>
+                          {availableBalance === 0 ? (
+                            <span className="batch-none-text">No unassigned codes left</span>
                           ) : (
                             <>
-                              <select
-                                value={batchSelections[variant.variant_id] || ''}
+                              <input
+                                type="number"
+                                min="1"
+                                max={availableBalance}
+                                placeholder={`up to ${availableBalance}`}
+                                value={quantityInputs[variant.variant_id] || ''}
                                 onChange={(e) =>
-                                  setBatchSelections((prev) => ({
-                                    ...prev,
-                                    [variant.variant_id]: e.target.value,
-                                  }))
+                                  setQuantityInputs((prev) => ({ ...prev, [variant.variant_id]: e.target.value }))
                                 }
-                              >
-                                <option value="">Select a batch...</option>
-                                {availableBatches.map((batch) => (
-                                  <option key={batch.batch_id} value={batch.batch_id}>
-                                    {batch.company_name} — {batch.unassigned_count} unassigned ({batch.serial_start}–{batch.serial_end})
-                                  </option>
-                                ))}
-                              </select>
+                              />
                               <button
                                 type="button"
                                 className="btn-secondary btn-assign-batch"
-                                onClick={() => handleAssignBatch(variant.variant_id)}
+                                onClick={() => handleAssignQuantity(variant.variant_id)}
                                 disabled={assigningVariantId === variant.variant_id}
                               >
-                                {assigningVariantId === variant.variant_id ? 'Assigning…' : 'Assign Batch'}
+                                {assigningVariantId === variant.variant_id ? 'Assigning…' : 'Assign'}
                               </button>
                             </>
                           )}
