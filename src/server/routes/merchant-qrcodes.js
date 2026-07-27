@@ -140,4 +140,74 @@ router.post('/batches/:id/assign-variant', async (req, res) => {
   }
 });
 
+// POST assign a specific QUANTITY of unassigned codes from ONE chosen batch
+// to one variant — partial assignment, unlike assign-variant which takes
+// the whole batch's remaining unassigned codes.
+router.post('/batches/:id/assign-quantity', async (req, res) => {
+  const { variant_id, quantity } = req.body;
+  const qty = Number(quantity);
+
+  if (!variant_id) return res.status(400).json({ message: 'variant_id is required.' });
+  if (!qty || qty <= 0) return res.status(400).json({ message: 'A valid quantity is required.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Ownership: batch must belong to this merchant, variant must belong
+    // to this merchant's own products — same checks as assign-variant.
+    const batchCheck = await client.query(
+      'SELECT batch_id FROM qrcode_batches WHERE batch_id = $1 AND assigned_user_id = $2',
+      [req.params.id, req.user.user_id]
+    );
+    if (batchCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'This batch does not belong to you.' });
+    }
+
+    const variantCheck = await client.query(
+      `SELECT v.variant_id FROM variants v
+       JOIN products p ON p.product_id = v.product_id
+       WHERE v.variant_id = $1 AND p.merchant_id = $2`,
+      [variant_id, req.user.merchant_id]
+    );
+    if (variantCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'This variant does not belong to you.' });
+    }
+
+    // Lock exactly `qty` unassigned codes from THIS batch only.
+    const codesResult = await client.query(
+      `SELECT qr_id FROM qr_codes
+       WHERE batch_id = $1 AND variant_id IS NULL
+       ORDER BY serial_number
+       LIMIT $2
+       FOR UPDATE SKIP LOCKED`,
+      [req.params.id, qty]
+    );
+
+    if (codesResult.rows.length < qty) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: `Only ${codesResult.rows.length} unassigned codes left in this batch — cannot assign ${qty}.`,
+      });
+    }
+
+    const qrIds = codesResult.rows.map((r) => r.qr_id);
+
+    await client.query(
+      `UPDATE qr_codes SET variant_id = $1, status = 'pending' WHERE qr_id = ANY($2::uuid[])`,
+      [variant_id, qrIds]
+    );
+
+    await client.query('COMMIT');
+    res.json({ assigned_count: qrIds.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 export default router;

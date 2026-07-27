@@ -1,5 +1,6 @@
 // src/pages/merchant/RegisterProduct.jsx
 import React, { useState } from 'react';
+import { PackageCheck } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import '../../styles/AssetRegistry.css';
 
@@ -328,50 +329,67 @@ export default function RegisterProduct() {
       </section>
 
       {lastRegistered && (
-        <section className="registry-grid-section">
-          <h2>Just Registered</h2>
+        <section className="just-registered-card">
+          <div className="just-registered-header">
+            <PackageCheck size={18} />
+            <h2>Just Registered</h2>
+          </div>
+
           <div className="product-block">
             <div className="product-block-header">
               <h3>{lastRegistered.product_name}</h3>
+              <span className="variant-count-badge">
+                {lastRegistered.variants.length} variant{lastRegistered.variants.length === 1 ? '' : 's'}
+              </span>
               {lastRegistered.product_description && (
                 <p className="product-description">{lastRegistered.product_description}</p>
               )}
             </div>
 
-            <table className="variant-list-table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>Attributes</th>
-                  <th>Color</th>
-                  <th>Price (RM)</th>
-                  <th>Remarks</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lastRegistered.variants.map((variant) => {
-                  const attributesArray = attributesObjectToArray(variant.attributes);
-                  return (
-                    <tr key={variant.variant_id}>
-                      <td data-label="SKU">{variant.sku}</td>
-                      <td data-label="Attributes">
-                        {attributesArray.length > 0
-                          ? attributesArray.map((a) => `${a.key}: ${a.value}`).join(', ')
-                          : '—'}
-                      </td>
-                      <td data-label="Color">
-                        <span className="variant-color-dot" style={{ background: variant.color }} />
-                      </td>
-                      <td data-label="Price (RM)">
-                        {variant.price ? Number(variant.price).toFixed(2) : '—'}
-                      </td>
-                      <td data-label="Remarks">{variant.remarks || '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="variant-table-wrapper">
+              <table className="variant-list-table">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Attributes</th>
+                    <th>Color</th>
+                    <th>Price (RM)</th>
+                    <th>Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lastRegistered.variants.map((variant) => {
+                    const attributesArray = attributesObjectToArray(variant.attributes);
+                    return (
+                      <tr key={variant.variant_id}>
+                        <td data-label="SKU">
+                          <span className="sku-badge">{variant.sku}</span>
+                        </td>
+                        <td data-label="Attributes">
+                          {attributesArray.length > 0
+                            ? attributesArray.map((a) => `${a.key}: ${a.value}`).join(', ')
+                            : <span className="muted-dash">—</span>}
+                        </td>
+                        <td data-label="Color">
+                          <span className="color-swatch-row">
+                            <span className="variant-color-dot" style={{ background: variant.color }} />
+                            <span className="color-hex">{variant.color}</span>
+                          </span>
+                        </td>
+                        <td data-label="Price (RM)">
+                          {variant.price
+                            ? <span className="price-badge">{Number(variant.price).toFixed(2)}</span>
+                            : <span className="muted-dash">—</span>}
+                        </td>
+                        <td data-label="Remarks">{variant.remarks || <span className="muted-dash">—</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
+
           <p className="section-hint">
             Head to Product InfoCenter → Product Listing to see all registered products.
           </p>

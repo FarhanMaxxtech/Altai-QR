@@ -22,9 +22,8 @@ export default function ProductDetails() {
   const [notFound, setNotFound] = useState(false);
 
   // --- Assign Batch state (migrated from the old ProductListing.jsx) -----
-  // Replaces availableBatches / batchSelections
-  const [availableBalance, setAvailableBalance] = useState(0);
-  const [quantityInputs, setQuantityInputs] = useState({}); // { [variant_id]: string }
+  const [assignForms, setAssignForms] = useState({});
+  const [availableBatches, setAvailableBatches] = useState([]);
   const [assigningVariantId, setAssigningVariantId] = useState(null);
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
@@ -49,56 +48,74 @@ export default function ProductDetails() {
 
   // Merchant-scoped: only batches generated for the currently logged-in
   // merchant come back from this endpoint (req.user.user_id on the backend).
-    const loadAvailableBalance = () => {
-      apiFetch('/api/qrcode/balance')
-        .then((res) => res.json())
-        .then((data) => setAvailableBalance(data.available))
-        .catch((err) => console.error('Failed to load QR balance:', err));
+    const loadAvailableBatches = () => {
+        apiFetch('/api/qrcode/batches/available')
+          .then((res) => res.json())
+          .then((data) => setAvailableBatches(data))
+          .catch((err) => console.error('Failed to load available batches:', err));
+      };
+
+      useEffect(() => {
+        loadProduct();
+        loadAvailableBatches();
+      }, [productId]);
+
+
+    const updateAssignForm = (variantId, field, value) => {
+      setAssignForms((prev) => ({
+        ...prev,
+        [variantId]: { ...(prev[variantId] || { batch_id: '', quantity: '' }), [field]: value },
+      }));
     };
-
-    useEffect(() => {
-      loadProduct();
-      loadAvailableBalance();
-    }, [productId]);
-
     const handleAssignQuantity = async (variantId) => {
-    setAssignError('');
-    setAssignSuccess('');
+        setAssignError('');
+        setAssignSuccess('');
 
-    const qty = Number(quantityInputs[variantId]);
-    if (!qty || qty <= 0) {
-      setAssignError('Enter a valid quantity.');
-      return;
-    }
-    if (qty > availableBalance) {
-      setAssignError(`Only ${availableBalance} unassigned codes available in your balance.`);
-      return;
-    }
+        const form = assignForms[variantId] || {};
+        const batch = availableBatches.find((b) => b.batch_id === form.batch_id);
 
-    setAssigningVariantId(variantId);
-    try {
-      const res = await apiFetch('/api/qrcode/assign-quantity', {
-        method: 'POST',
-        body: JSON.stringify({ variant_id: variantId, quantity: qty }),
-      });
-      const result = await res.json();
+        if (!form.batch_id) {
+          setAssignError('Select a batch first.');
+          return;
+        }
+        const qty = Number(form.quantity);
+        if (!qty || qty <= 0) {
+          setAssignError('Enter a valid quantity.');
+          return;
+        }
+        if (batch && qty > batch.unassigned_count) {
+          setAssignError(`Only ${batch.unassigned_count} unassigned codes left in that batch.`);
+          return;
+        }
 
-      if (!res.ok) {
-        setAssignError(result.message || 'Could not assign codes.');
-        return;
-      }
+        setAssigningVariantId(variantId);
+        try {
+          const res = await apiFetch(`/api/qrcode/batches/${form.batch_id}/assign-quantity`, {
+            method: 'POST',
+            body: JSON.stringify({ variant_id: variantId, quantity: qty }),
+          });
+          const result = await res.json();
 
-      setAssignSuccess(`Assigned ${result.assigned_count} codes to this variant.`);
-      setQuantityInputs((prev) => ({ ...prev, [variantId]: '' }));
-      loadProduct();          // refresh in_stock/assigned counts
-      loadAvailableBalance(); // pool just shrank
-    } catch (err) {
-      setAssignError('Could not reach server. Check it is running.');
-      console.error(err);
-    } finally {
-      setAssigningVariantId(null);
-    }
-  };
+          if (!res.ok) {
+            setAssignError(result.message || 'Could not assign codes.');
+            return;
+          }
+
+          setAssignSuccess(`Assigned ${result.assigned_count} codes to this variant.`);
+          setAssignForms((prev) => {
+            const next = { ...prev };
+            delete next[variantId];
+            return next;
+          });
+          loadProduct();
+          loadAvailableBatches();
+        } catch (err) {
+          setAssignError('Could not reach server. Check it is running.');
+          console.error(err);
+        } finally {
+          setAssigningVariantId(null);
+        }
+      };
 
   if (loading) {
     return <div className="listing-page"><p className="empty-state">Loading…</p></div>;
@@ -197,31 +214,62 @@ export default function ProductDetails() {
                         </div>
                       ) : (
                         <div className="batch-assign-block">
-                          {availableBalance === 0 ? (
-                            <span className="batch-none-text">No unassigned codes left</span>
-                          ) : (
-                            <>
-                              <input
-                                type="number"
-                                min="1"
-                                max={availableBalance}
-                                placeholder={`up to ${availableBalance}`}
-                                value={quantityInputs[variant.variant_id] || ''}
-                                onChange={(e) =>
-                                  setQuantityInputs((prev) => ({ ...prev, [variant.variant_id]: e.target.value }))
-                                }
-                              />
-                              <button
-                                type="button"
-                                className="btn-secondary btn-assign-batch"
-                                onClick={() => handleAssignQuantity(variant.variant_id)}
-                                disabled={assigningVariantId === variant.variant_id}
-                              >
-                                {assigningVariantId === variant.variant_id ? 'Assigning…' : 'Assign'}
-                              </button>
-                            </>
-                          )}
-                        </div>
+                            {availableBatches.length === 0 ? (
+                              <span className="batch-none-text">No available batches</span>
+                            ) : (
+                              <>
+                                <div className="assign-field">
+                                  <label>Batch</label>
+                                  <select
+                                    value={assignForms[variant.variant_id]?.batch_id || ''}
+                                    onChange={(e) => updateAssignForm(variant.variant_id, 'batch_id', e.target.value)}
+                                  >
+                                    <option value="">Select a batch...</option>
+                                    {availableBatches.map((batch) => (
+                                      <option key={batch.batch_id} value={batch.batch_id}>
+                                        {batch.company_name} — {batch.unassigned_count} available ({batch.serial_start}–{batch.serial_end})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {assignForms[variant.variant_id]?.batch_id && (() => {
+                                  const chosen = availableBatches.find(
+                                    (b) => b.batch_id === assignForms[variant.variant_id].batch_id
+                                  );
+                                  return (
+                                    <>
+                                      <div className="assign-batch-summary">
+                                        <span className="assign-batch-name">{chosen.company_name}</span>
+                                        <span className="assign-batch-count">{chosen.unassigned_count} unassigned</span>
+                                      </div>
+
+                                      <div className="assign-field">
+                                        <label>Quantity</label>
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          max={chosen.unassigned_count}
+                                          placeholder={`up to ${chosen.unassigned_count}`}
+                                          value={assignForms[variant.variant_id]?.quantity || ''}
+                                          onChange={(e) => updateAssignForm(variant.variant_id, 'quantity', e.target.value)}
+                                        />
+                                      </div>
+
+                                      <button
+                                        type="button"
+                                        className="btn-secondary btn-assign-batch"
+                                        onClick={() => handleAssignQuantity(variant.variant_id)}
+                                        disabled={assigningVariantId === variant.variant_id}
+                                      >
+                                        {assigningVariantId === variant.variant_id ? 'Assigning…' : 'Assign'}
+                                      </button>
+                                    </>
+                                  );
+                                })()}
+                              </>
+                            )}
+                          </div>
                       )}
                     </td>
                   </tr>
