@@ -122,7 +122,7 @@ export default function ProductDetails() {
                 <th>Price (RM)</th>
                 <th>Qty</th>
                 <th>Remarks</th>
-                <th>Assigned Batches</th>
+                {/*<th>Assigned Batches</th>*/}
               </tr>
             </thead>
             <tbody>
@@ -145,8 +145,8 @@ export default function ProductDetails() {
                     </td>
                     <td data-label="Qty">{variant.in_stock_count ?? 0}</td>
                     <td data-label="Remarks">{variant.remarks || '—'}</td>
-
-                    <td data-label="Assigned Batches">
+                        
+                    {/*<td data-label="Assigned Batches">
                       {breakdown.length === 0 ? (
                         <span className="batch-none-text">None yet</span>
                       ) : (
@@ -160,7 +160,7 @@ export default function ProductDetails() {
                           <div className="assigned-batch-total">Total: {totalAssigned} units</div>
                         </div>
                       )}
-                    </td>
+                    </td>*/}
                   </tr>
                 );
               })}

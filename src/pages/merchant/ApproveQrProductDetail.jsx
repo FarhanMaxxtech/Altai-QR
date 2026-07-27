@@ -152,7 +152,7 @@ export default function ApproveQrProductDetail() {
                 <input type="checkbox" checked={allSelected} onChange={toggleAll} />
               </th>
               <th>Serial Number</th>
-              <th>Current Product Name</th>
+              <th>New Product Name</th>
               <th>Previous Product Name</th>
             </tr>
           </thead>

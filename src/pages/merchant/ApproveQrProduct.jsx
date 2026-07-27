@@ -1,90 +1,509 @@
-// src/pages/merchant/ApproveQrProduct.jsx
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck } from 'lucide-react';
+// src/pages/merchant/AssignQrToProduct.jsx
+import React, { useState, useRef, useEffect } from 'react';
+import { Html5Qrcode } from 'html5-qrcode';
+import { QrCode as QrCodeIcon, Trash2, X } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
-import { formatDateTime } from '../../utils/dateFormat';
+import '../../styles/AssignQrToProduct.css';
 import '../../styles/ApproveQrProduct.css';
 
-export default function ApproveQrProduct() {
-  const navigate = useNavigate();
-  const [groups, setGroups] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState('');
+function displayName(sku, productName) {
+  if (!sku && !productName) return '—';
+  return `${productName} (${sku})`;
+}
 
-  const loadGroups = () => {
-    setIsLoading(true);
-    apiFetch('/api/qrcode/pending-approvals')
-      .then((res) => res.json())
-      .then((data) => setGroups(data))
-      .catch((err) => {
-        setErrorMessage('Could not reach server. Check it is running.');
-        console.error(err);
-      })
-      .finally(() => setIsLoading(false));
-  };
+export default function AssignQrToProduct() {
+  const [products, setProducts] = useState([]);
+  const [productId, setProductId] = useState('');
+  const [variantId, setVariantId] = useState('');
+
+  const [scanCart, setScanCart] = useState([]);
+  const [qrUrlInput, setQrUrlInput] = useState('');
+  const [scanError, setScanError] = useState('');
+
+  const [batchNumber, setBatchNumber] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
+
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const html5QrRef = useRef(null);
+  const lastScannedRef = useRef('');
+  const qrUrlInputRef = useRef(null);
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState('');
+
+  // --- Review-and-approve state (moved in from ApproveQrProduct / ApproveQrProductDetail) ---
+  const [reviewVariantId, setReviewVariantId] = useState(null);
+  const [reviewLabel, setReviewLabel] = useState('');
+  const [reviewRows, setReviewRows] = useState([]);
+  const [reviewSelected, setReviewSelected] = useState(new Set());
+  const [isLoadingReview, setIsLoadingReview] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewStatusMessage, setReviewStatusMessage] = useState('');
+  const [isProcessingReview, setIsProcessingReview] = useState(false);
 
   useEffect(() => {
-    loadGroups();
+    apiFetch('/api/products')
+      .then((res) => res.json())
+      .then((data) => setProducts(data))
+      .catch((err) => console.error('Failed to load products:', err));
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (html5QrRef.current) html5QrRef.current.stop().catch(() => {});
+    };
+  }, []);
+
+  const selectedProduct = products.find((p) => p.product_id === productId);
+  const variantOptions = selectedProduct ? selectedProduct.variants : [];
+
+  const handleProductChange = (e) => {
+    setProductId(e.target.value);
+    setVariantId('');
+  };
+
+  // Backend checks the value against BOTH serial_number and qr_value,
+  // so a single field/param can accept either — no need to distinguish.
+  const addToCart = async (value) => {
+    setScanError('');
+
+    const alreadyScanned = scanCart.some(
+      (item) => item.serial_number === value || item.qr_value === value
+    );
+    if (alreadyScanned) {
+      setScanError('This code has already been scanned in this batch.');
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`);
+      const result = await res.json();
+
+      if (!res.ok) {
+        setScanError(result.message || 'Could not recognize this code.');
+        return;
+      }
+
+      setScanCart((prev) => [...prev, result]);
+    } catch (err) {
+      setScanError('Could not reach server. Check it is running.');
+      console.error(err);
+    }
+  };
+
+  const handleQrUrlSubmit = (e) => {
+    e.preventDefault();
+    if (!qrUrlInput.trim()) return;
+    addToCart(qrUrlInput.trim());
+    setQrUrlInput('');
+  };
+
+  const removeFromCart = (qrId) => {
+    setScanCart((prev) => prev.filter((item) => item.qr_id !== qrId));
+  };
+
+  const clearCart = () => {
+    setScanCart([]);
+    setScanError('');
+    setSubmitMessage('');
+  };
+
+  const toggleCamera = async () => {
+    if (isCameraOpen) {
+      if (html5QrRef.current) {
+        await html5QrRef.current.stop().then(() => html5QrRef.current.clear()).catch(() => {});
+      }
+      setIsCameraOpen(false);
+      return;
+    }
+
+    setScanError('');
+    lastScannedRef.current = '';
+    setIsCameraOpen(true);
+
+    setTimeout(async () => {
+      try {
+        const html5Qr = new Html5Qrcode('assign-qr-reader');
+        html5QrRef.current = html5Qr;
+
+        await html5Qr.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          (decodedText) => {
+            const trimmed = decodedText.trim();
+            if (trimmed === lastScannedRef.current) return;
+            lastScannedRef.current = trimmed;
+            addToCart(trimmed);
+          },
+          () => {}
+        );
+      } catch (err) {
+        setScanError('Could not access camera. Check permissions and try again.');
+        setIsCameraOpen(false);
+      }
+    }, 0);
+  };
+
+  // --- Review loading / actions ------------------------------------------
+
+  const loadReview = (varId) => {
+    setIsLoadingReview(true);
+    setReviewError('');
+    apiFetch(`/api/qrcode/pending-approvals/${varId}`)
+      .then((res) => {
+        if (res.status === 404) return [];
+        return res.json();
+      })
+      .then((data) => {
+        setReviewRows(data);
+        setReviewSelected(new Set(data.map((r) => r.qr_id)));
+        if (data.length > 0) {
+          setReviewLabel(displayName(data[0].target_sku, data[0].target_product_name));
+        }
+      })
+      .catch((err) => {
+        setReviewError('Could not reach server. Check it is running.');
+        console.error(err);
+      })
+      .finally(() => setIsLoadingReview(false));
+  };
+
+  const allReviewSelected = reviewRows.length > 0 && reviewSelected.size === reviewRows.length;
+
+  const toggleAllReview = () => {
+    setReviewSelected(allReviewSelected ? new Set() : new Set(reviewRows.map((r) => r.qr_id)));
+  };
+
+  const toggleOneReview = (qrId) => {
+    setReviewSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(qrId)) next.delete(qrId);
+      else next.add(qrId);
+      return next;
+    });
+  };
+
+  const runReviewAction = async (action) => {
+    const selectedIds = Array.from(reviewSelected);
+    if (selectedIds.length === 0) {
+      setReviewStatusMessage('Select at least one serial number first.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      action === 'approve'
+        ? `Approve ${selectedIds.length} unit(s) for ${reviewLabel}?`
+        : `Reject ${selectedIds.length} unit(s)? They will keep their previous product assignment.`
+    );
+    if (!confirmed) return;
+
+    setIsProcessingReview(true);
+    setReviewStatusMessage('');
+    try {
+      const res = await apiFetch(`/api/qrcode/pending-approvals/${reviewVariantId}/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({ qr_ids: selectedIds }),
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        setReviewStatusMessage(result.message || `Could not ${action} the selected units.`);
+        return;
+      }
+
+      const count = action === 'approve' ? result.approved_count : result.rejected_count;
+      setReviewStatusMessage(`${count} unit(s) ${action === 'approve' ? 'approved' : 'rejected'}.`);
+
+      const remaining = reviewRows.filter((r) => !selectedIds.includes(r.qr_id));
+      if (remaining.length === 0) {
+        // Nothing left pending for this variant — collapse the review panel.
+        setReviewRows([]);
+        setReviewVariantId(null);
+        setReviewLabel('');
+      } else {
+        loadReview(reviewVariantId);
+      }
+    } catch (err) {
+      setReviewStatusMessage('Could not reach server. Check it is running.');
+      console.error(err);
+    } finally {
+      setIsProcessingReview(false);
+    }
+  };
+
+  // --- Submit assignment request -------------------------------------------
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitMessage('');
+
+    if (scanCart.length === 0) {
+      setSubmitMessage('Scan at least one QR code first.');
+      return;
+    }
+    if (!variantId) {
+      setSubmitMessage('Select a product and variant.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const res = await apiFetch('/api/qrcode/assign-scan', {
+        method: 'POST',
+        body: JSON.stringify({
+          qr_ids: scanCart.map((item) => item.qr_id),
+          variant_id: variantId,
+          remarks: batchNumber.trim() || null,
+          expiry_date: expiryDate || null,
+        }),
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        setSubmitMessage(result.message || 'Could not assign codes.');
+        return;
+      }
+
+      setSubmitMessage(`${result.requested_count} code(s) sent for approval.`);
+
+      // Load the review table for the variant we just submitted, before
+      // resetting the form fields below (which clear variantId).
+      setReviewVariantId(variantId);
+      setReviewStatusMessage('');
+      loadReview(variantId);
+
+      setScanCart([]);
+      setBatchNumber('');
+      setExpiryDate('');
+      setProductId('');
+      setVariantId('');
+      qrUrlInputRef.current?.focus();
+    } catch (err) {
+      setSubmitMessage('Could not reach server. Check it is running.');
+      console.error(err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const lastScannedSerial = scanCart.length > 0 ? scanCart[scanCart.length - 1].serial_number : '';
+  const isValid = scanCart.length > 0 && Boolean(variantId);
 
   return (
     <div className="listing-page">
       <div className="listing-page-header">
-        <h2>Approve QR Product</h2>
-        <p className="listing-breadcrumb">Product InfoCenter / Approve QR Product</p>
+        <h2>Scan QR Code</h2>
+        <p className="listing-breadcrumb">Product InfoCenter / Assign QR to Product</p>
       </div>
 
       <div className="listing-card">
-        <div className="detail-section-header">
-          <ClipboardCheck size={18} />
-          <h3>Pending Assignments</h3>
-          <span className="variant-count-badge">{groups.length}</span>
-        </div>
+        <form onSubmit={handleSubmit} className="assign-qr-form">
+          <div className="assign-qr-grid">
+            <div className="form-group">
+              <label>
+                Serial / Label Number(s) Quantity scanned:{' '}
+                <span className="assign-qr-count">{scanCart.length}</span>
+                <span className="required-asterisk">*</span>
+              </label>
+              <input
+                type="text"
+                className="assign-qr-serial-display"
+                value={lastScannedSerial}
+                placeholder="Scanned serial number will appear here"
+                readOnly
+                disabled
+              />
+            </div>
 
-        {errorMessage && <p className="error-text">{errorMessage}</p>}
+            <div className="form-group form-group-wide">
+              <label>QR Code</label>
+              <div className="assign-qr-input-with-icon">
+                <input
+                  ref={qrUrlInputRef}
+                  type="text"
+                  value={qrUrlInput}
+                  onChange={(e) => setQrUrlInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleQrUrlSubmit(e);
+                  }}
+                  placeholder="Point scanner here, or paste/type a serial number or QR value..."
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="assign-qr-icon-btn"
+                  onClick={toggleCamera}
+                  aria-label="Scan with camera"
+                >
+                  <QrCodeIcon size={18} />
+                </button>
+              </div>
+              <p className="assign-qr-hint">You can either enter the QR code url or scan the QR code.</p>
 
-        {isLoading ? (
-          <p className="empty-state">Loading…</p>
-        ) : groups.length === 0 ? (
-          <p className="empty-state">No pending QR assignments right now.</p>
-        ) : (
-          <table className="products-flat-table">
-            <thead>
-              <tr>
-                <th>Product Name</th>
-                <th>SKU</th>
-                <th>Pending Units</th>
-                <th>Last Requested</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map((g) => (
-                <tr key={g.variant_id}>
-                  <td>{g.product_name}</td>
-                  <td>
-                    <span className="sku-badge">{g.sku}</span>
-                  </td>
-                  <td>
-                    <span className="variant-count-badge">{g.pending_count}</span>
-                  </td>
-                  <td>{formatDateTime(g.last_requested_at)}</td>
-                  <td>
+              {isCameraOpen && (
+                <div className="assign-qr-camera-block">
+                  <div id="assign-qr-reader" className="assign-qr-reader-box" />
+                  <button type="button" className="btn-secondary" onClick={toggleCamera}>
+                    Stop Camera
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label>Remark / Batch Number</label>
+              <input
+                type="text"
+                value={batchNumber}
+                onChange={(e) => setBatchNumber(e.target.value.slice(0, 255))}
+                maxLength={255}
+              />
+              <span className="assign-qr-char-count">{batchNumber.length} / 255</span>
+            </div>
+
+            <div className="form-group">
+              <label>Expiry Date</label>
+              <input
+                type="date"
+                value={expiryDate}
+                onChange={(e) => setExpiryDate(e.target.value)}
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Product <span className="required-asterisk">*</span></label>
+              <select value={productId} onChange={handleProductChange}>
+                <option value="">-- Select Product --</option>
+                {products.map((p) => (
+                  <option key={p.product_id} value={p.product_id}>{p.product_name}</option>
+                ))}
+              </select>
+            </div>
+
+            {productId && (
+              <div className="form-group">
+                <label>Variant <span className="required-asterisk">*</span></label>
+                <select value={variantId} onChange={(e) => setVariantId(e.target.value)}>
+                  <option value="">-- Select Variant --</option>
+                  {variantOptions.map((v) => (
+                    <option key={v.variant_id} value={v.variant_id}>{v.sku}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {scanCart.length > 0 && (
+            <div className="assign-qr-scanned-list">
+              <div className="assign-qr-scanned-header">
+                <span>Scanned Codes ({scanCart.length})</span>
+                <button type="button" className="btn-clear-all" onClick={clearCart}>
+                  <Trash2 size={14} /> Clear
+                </button>
+              </div>
+              <ul>
+                {scanCart.map((item) => (
+                  <li key={item.qr_id}>
+                    <span className="assign-qr-serial">{item.serial_number}</span>
                     <button
                       type="button"
-                      className="product-link"
-                      onClick={() => navigate(`/approve-qr/${g.variant_id}`)}
+                      className="assign-qr-remove"
+                      onClick={() => removeFromCart(item.qr_id)}
+                      aria-label="Remove"
                     >
-                      Review &rarr;
+                      <X size={14} />
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {scanError && <p className="error-text">{scanError}</p>}
+          {submitMessage && <p className="status-text">{submitMessage}</p>}
+
+          <div className="assign-qr-actions">
+            <button type="submit" className="btn-primary" disabled={!isValid || isSubmitting}>
+              {isSubmitting ? 'Submitting…' : 'Submit'}
+            </button>
+          </div>
+        </form>
       </div>
+
+      {/* --- Review & Approve panel (was ApproveQrProduct/ApproveQrProductDetail) --- */}
+      {reviewVariantId && (
+        <div className="listing-card">
+          <div className="detail-section-header">
+            <h3>Review: {reviewLabel}</h3>
+            <span className="variant-count-badge">{reviewRows.length} pending</span>
+          </div>
+
+          {reviewError && <p className="error-text">{reviewError}</p>}
+          {reviewStatusMessage && <p className="status-text">{reviewStatusMessage}</p>}
+
+          {isLoadingReview ? (
+            <p className="empty-state">Loading…</p>
+          ) : reviewRows.length === 0 ? (
+            <p className="empty-state">No pending assignments found — they may have already been processed.</p>
+          ) : (
+            <>
+              <table className="products-flat-table approve-qr-table">
+                <thead>
+                  <tr>
+                    <th className="approve-qr-checkbox-col">
+                      <input type="checkbox" checked={allReviewSelected} onChange={toggleAllReview} />
+                    </th>
+                    <th>Serial Number</th>
+                    <th>New Product Name</th>
+                    <th>Previous Product Name</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reviewRows.map((r) => (
+                    <tr key={r.qr_id}>
+                      <td className="approve-qr-checkbox-col">
+                        <input
+                          type="checkbox"
+                          checked={reviewSelected.has(r.qr_id)}
+                          onChange={() => toggleOneReview(r.qr_id)}
+                        />
+                      </td>
+                      <td className="approve-qr-serial-cell">{r.serial_number}</td>
+                      <td>{displayName(r.target_sku, r.target_product_name)}</td>
+                      <td>
+                        {r.previous_sku
+                          ? displayName(r.previous_sku, r.previous_product_name)
+                          : <span className="muted-dash">— (first assignment)</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="approve-qr-actions">
+                <div className="approve-qr-actions-right">
+                  <button
+                    type="button"
+                    className="btn-remove-small approve-qr-reject-btn"
+                    onClick={() => runReviewAction('reject')}
+                    disabled={isProcessingReview || reviewSelected.size === 0}
+                  >
+                    Reject Selected ({reviewSelected.size})
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => runReviewAction('approve')}
+                    disabled={isProcessingReview || reviewSelected.size === 0}
+                  >
+                    {isProcessingReview ? 'Processing…' : `Approve Selected (${reviewSelected.size})`}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

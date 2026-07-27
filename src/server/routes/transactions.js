@@ -141,6 +141,7 @@ router.get('/scan-lookup', async (req, res) => {
       WHERE
           (qc.serial_number = $1 OR qc.qr_value = $1)
       AND p.merchant_id = $2
+      ORDER BY qc.created_at DESC
       LIMIT 1
       `,
       [value, req.user.merchant_id]

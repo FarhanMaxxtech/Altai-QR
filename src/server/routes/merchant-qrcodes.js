@@ -41,6 +41,10 @@ router.get('/balance', async (req, res) => {
 // used by the "Assign QR to Product" scan page. Allows scanning codes that
 // already have a variant (reassignment), but blocks codes that already
 // have a pending approval request in flight.
+// GET look up one of THIS merchant's codes by serial_number or qr_value —
+// used by the "Assign QR to Product" scan page. Always resolves to the
+// MOST RECENT row for that label, since a checked_out code can have a
+// newer row created for it once it's reassigned (see /assign-scan).
 router.get('/scan-lookup', async (req, res) => {
   const value = req.query.serial_number?.trim() || req.query.qr_value?.trim();
   if (!value) {
@@ -56,6 +60,7 @@ router.get('/scan-lookup', async (req, res) => {
        LEFT JOIN variants v ON v.variant_id = qc.variant_id
        LEFT JOIN products p ON p.product_id = v.product_id
        WHERE (qc.serial_number = $1 OR qc.qr_value = $1) AND qc.assigned_user_id = $2
+       ORDER BY qc.created_at DESC
        LIMIT 1`,
       [value, req.user.user_id]
     );
@@ -65,6 +70,15 @@ router.get('/scan-lookup', async (req, res) => {
     }
 
     const code = result.rows[0];
+
+    // In-stock codes must be checked out first — they can't be reassigned
+    // to a different product while still physically in a store.
+    if (code.status === 'in_stock') {
+      return res.status(409).json({
+        message: 'This QR code is currently in stock and cannot be assigned to a product until it is checked out.',
+      });
+    }
+
     if (code.pending_variant_id) {
       return res.status(409).json({ message: 'This code already has a pending assignment awaiting approval.' });
     }
@@ -75,10 +89,15 @@ router.get('/scan-lookup', async (req, res) => {
   }
 });
 
-// POST create an assignment REQUEST for a batch of scanned codes — does
-// NOT change variant_id yet. Sets pending_variant_id; the current
-// variant_id (if any) is preserved so it can be shown as "previous
-// product" on the approval screen.
+// POST create an assignment REQUEST for a batch of scanned codes.
+//
+// - Codes that are NOT checked_out (pending/unassigned): updated in place,
+//   same as before — sets pending_variant_id on the existing row.
+// - Codes that ARE checked_out: the existing row is LEFT UNTOUCHED (it stays
+//   as a permanent history record of that check-out), and a brand-new
+//   qr_codes row is inserted reusing the same serial_number/qr_value, so the
+//   physical label can be scanned and assigned again — to the same product
+//   or a different one.
 router.post('/assign-scan', async (req, res) => {
   const { qr_ids, variant_id, remarks, expiry_date } = req.body;
 
@@ -103,7 +122,8 @@ router.post('/assign-scan', async (req, res) => {
     }
 
     const codesCheck = await client.query(
-      `SELECT qr_id FROM qr_codes
+      `SELECT qr_id, batch_id, serial_number, qr_value, status
+       FROM qr_codes
        WHERE qr_id = ANY($1::uuid[]) AND assigned_user_id = $2 AND pending_variant_id IS NULL
        FOR UPDATE`,
       [qr_ids, req.user.user_id]
@@ -113,15 +133,48 @@ router.post('/assign-scan', async (req, res) => {
       return res.status(409).json({ message: 'One or more scanned codes are invalid or already have a pending assignment.' });
     }
 
-    await client.query(
-      `UPDATE qr_codes
-       SET pending_variant_id = $1, pending_requested_at = now(), remarks = $2, expiry_date = $3
-       WHERE qr_id = ANY($4::uuid[])`,
-      [variant_id, remarks || null, expiry_date || null, qr_ids]
-    );
+    const inStockCodes = codesCheck.rows.filter((r) => r.status === 'in_stock');
+    if (inStockCodes.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        message: `${inStockCodes.length} scanned code(s) are currently in stock and cannot be reassigned until checked out.`,
+      });
+    }
+
+    const reusableCodes = codesCheck.rows.filter((r) => r.status === 'checked_out');
+    const directCodes = codesCheck.rows.filter((r) => r.status !== 'checked_out');
+
+    if (directCodes.length > 0) {
+      await client.query(
+        `UPDATE qr_codes
+         SET pending_variant_id = $1, pending_requested_at = now(), remarks = $2, expiry_date = $3
+         WHERE qr_id = ANY($4::uuid[])`,
+        [variant_id, remarks || null, expiry_date || null, directCodes.map((r) => r.qr_id)]
+      );
+    }
+
+    let reusedCount = 0;
+    for (const code of reusableCodes) {
+      await client.query(
+        `INSERT INTO qr_codes
+           (batch_id, serial_number, qr_value, assigned_user_id, status,
+            pending_variant_id, pending_requested_at, remarks, expiry_date)
+         VALUES ($1, $2, $3, $4, 'unassigned', $5, now(), $6, $7)`,
+        [
+          code.batch_id,
+          code.serial_number,
+          code.qr_value,
+          req.user.user_id,
+          variant_id,
+          remarks || null,
+          expiry_date || null,
+        ]
+      );
+      reusedCount++;
+    }
 
     await client.query('COMMIT');
-    res.json({ requested_count: qr_ids.length });
+    res.json({ requested_count: directCodes.length + reusedCount });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: err.message });

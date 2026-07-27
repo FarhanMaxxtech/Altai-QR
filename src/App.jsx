@@ -17,8 +17,8 @@ import RegisterProduct from './pages/merchant/RegisterProduct';
 import ProductDetails from './pages/merchant/ProductDetails';
 import ProductBalanceDetails from './pages/merchant/ProductBalanceDetails';
 import AssignQrToProduct from './pages/merchant/AssignQrToProduct';
-import ApproveQrProduct from './pages/merchant/ApproveQrProduct';
-import ApproveQrProductDetail from './pages/merchant/ApproveQrProductDetail';
+//import ApproveQrProduct from './pages/merchant/ApproveQrProduct';
+//import ApproveQrProductDetail from './pages/merchant/ApproveQrProductDetail';
 /// Authentication pages
 import Login from './authentication/Login';
 
@@ -51,8 +51,8 @@ function App() {
                   <Route path="/listing" element={<ProtectedRoute module="Product Listing"><ProductListing /></ProtectedRoute>} />
                   <Route path="/listing/:productId" element={<ProtectedRoute module="Product Listing"><ProductDetails /></ProtectedRoute>} />
                   <Route path="/assign-qr" element={<ProtectedRoute module="Asset Registry"><AssignQrToProduct /></ProtectedRoute>} />
-                  <Route path="/approve-qr" element={<ProtectedRoute module="Asset Registry"><ApproveQrProduct /></ProtectedRoute>} />
-                  <Route path="/approve-qr/:variantId" element={<ProtectedRoute module="Asset Registry"><ApproveQrProductDetail /></ProtectedRoute>} />
+                  {/*<Route path="/approve-qr" element={<ProtectedRoute module="Asset Registry"><ApproveQrProduct /></ProtectedRoute>} />
+                  <Route path="/approve-qr/:variantId" element={<ProtectedRoute module="Asset Registry"><ApproveQrProductDetail /></ProtectedRoute>} /> */}
                   <Route path="/stock-balance" element={<ProtectedRoute module="Stock Balance"><StockAdjustment /></ProtectedRoute>} />
                   <Route path="/stores" element={<ProtectedRoute module="Store Management"><StoreManagement /></ProtectedRoute>} />
                   <Route path="/stock" element={<ProtectedRoute module="Stock Adjustment"><StockManager /></ProtectedRoute>} />

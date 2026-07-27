@@ -176,3 +176,9 @@
     grid-template-columns: 1fr;
   }
 }
+
+.assign-qr-reused-badge {
+  color: #d97706;
+  font-weight: 500;
+  font-size: 0.75rem;
+}
