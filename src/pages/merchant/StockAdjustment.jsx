@@ -1,7 +1,8 @@
 // src/pages/StockAdjustment.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PackageSearch } from 'lucide-react';
+import { Html5Qrcode } from 'html5-qrcode';
+import { PackageSearch, ScanBarcode, X } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import TableControls from '../../components/TableControls';
 import { exportRowsToExcel, exportRowsToCsv, exportRowsToPdf } from '../../utils/tableExport';
@@ -51,6 +52,14 @@ export default function StockAdjustment() {
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
 
+  // --- Scan-to-search state ------------------------------------------------
+  const [scanInput, setScanInput] = useState('');
+  const [scanError, setScanError] = useState('');
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const html5QrRef = useRef(null);
+  const lastScannedRef = useRef('');
+  const scanInputRef = useRef(null);
+
   useEffect(() => {
     apiFetch('/api/stores')
       .then((res) => res.json())
@@ -61,6 +70,12 @@ export default function StockAdjustment() {
       .then((res) => res.json())
       .then((data) => setProducts(data))
       .catch((err) => console.error('Failed to load products:', err));
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (html5QrRef.current) html5QrRef.current.stop().catch(() => {});
+    };
   }, []);
 
   const variantOptions = useMemo(() => {
@@ -74,27 +89,28 @@ export default function StockAdjustment() {
     setVariantFilter('');
   };
 
-  const runSearch = (e) => {
-    e.preventDefault();
+  // Runs the actual search against explicit filter values, so callers
+  // (scan handler) can pass fresh values without waiting on setState.
+  const performSearch = ({ product_id, variant_id, store_id }) => {
     setIsLoading(true);
     setErrorMessage('');
 
     const params = new URLSearchParams();
-    if (storeFilter) params.set('store_id', storeFilter);
+    if (store_id) params.set('store_id', store_id);
 
     apiFetch(`/api/stock-balance?${params.toString()}`)
       .then((res) => res.json())
       .then((data) => {
         let filtered = data;
 
-        if (variantFilter) {
-          filtered = filtered.filter((r) => r.variant_id === variantFilter);
-        } else if (productFilter) {
-          const variantIds = new Set(variantOptions.map((v) => v.variant_id));
+        if (variant_id) {
+          filtered = filtered.filter((r) => r.variant_id === variant_id);
+        } else if (product_id) {
+          const productVariants = products.find((p) => p.product_id === product_id);
+          const variantIds = new Set((productVariants?.variants || []).map((v) => v.variant_id));
           filtered = filtered.filter((r) => variantIds.has(r.variant_id));
         }
 
-        // Default sort: most recently moved stock first, by full timestamp.
         setRows(sortByLastMovementDesc(filtered));
         setHasSearched(true);
         setPage(1);
@@ -104,6 +120,95 @@ export default function StockAdjustment() {
         console.error(err);
       })
       .finally(() => setIsLoading(false));
+  };
+
+  const runSearch = (e) => {
+    e.preventDefault();
+    performSearch({
+      product_id: productFilter,
+      variant_id: variantFilter,
+      store_id: storeFilter,
+    });
+  };
+
+  // --- Scan handling ---------------------------------------------------------
+
+  const handleScanResult = async (value) => {
+    setScanError('');
+
+    try {
+      const res = await apiFetch(`/api/transactions/scan-lookup?serial_number=${encodeURIComponent(value)}`);
+      const result = await res.json();
+
+      if (!res.ok) {
+        setScanError(result.message || 'Could not recognize this code.');
+        return;
+      }
+
+      // Auto-select product, variant, and (if the unit is currently in a
+      // store) that store, then immediately run the search with those
+      // values — no need to wait for a second click.
+      setProductFilter(result.product_id);
+      setVariantFilter(result.variant_id);
+      setStoreFilter(result.current_store_id || '');
+
+      performSearch({
+        product_id: result.product_id,
+        variant_id: result.variant_id,
+        store_id: result.current_store_id || '',
+      });
+    } catch (err) {
+      setScanError('Could not reach server. Check it is running.');
+      console.error(err);
+    }
+  };
+
+  const handleScanInputSubmit = (e) => {
+    e.preventDefault();
+    if (!scanInput.trim()) return;
+    handleScanResult(scanInput.trim());
+    setScanInput('');
+  };
+
+  const toggleCamera = async () => {
+    if (isCameraOpen) {
+      if (html5QrRef.current) {
+        await html5QrRef.current.stop().then(() => html5QrRef.current.clear()).catch(() => {});
+      }
+      setIsCameraOpen(false);
+      return;
+    }
+
+    setScanError('');
+    lastScannedRef.current = '';
+    setIsCameraOpen(true);
+
+    setTimeout(async () => {
+      try {
+        const html5Qr = new Html5Qrcode('stock-adjustment-qr-reader');
+        html5QrRef.current = html5Qr;
+
+        await html5Qr.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          (decodedText) => {
+            const trimmed = decodedText.trim();
+            if (trimmed === lastScannedRef.current) return;
+            lastScannedRef.current = trimmed;
+            handleScanResult(trimmed);
+          },
+          () => {}
+        );
+      } catch (err) {
+        setScanError('Could not access camera. Check permissions and try again.');
+        setIsCameraOpen(false);
+      }
+    }, 0);
+  };
+
+  const clearScan = () => {
+    setScanInput('');
+    setScanError('');
   };
 
   const exportRows = useMemo(
@@ -138,6 +243,45 @@ export default function StockAdjustment() {
         <div className="balance-card-header">
           <PackageSearch size={18} />
           <h2>Inventory Balance</h2>
+        </div>
+
+        {/* --- Scan-to-search row ------------------------------------------- */}
+        <div className="scan-search-row">
+          {!isCameraOpen ? (
+            <>
+              <form className="scan-search-input-form" onSubmit={handleScanInputSubmit}>
+                <ScanBarcode size={18} className="scan-search-input-icon" />
+                <input
+                  ref={scanInputRef}
+                  type="text"
+                  value={scanInput}
+                  onChange={(e) => setScanInput(e.target.value)}
+                  placeholder="Point scanner here or type serial number / QR value to auto-search..."
+                  autoFocus
+                />
+                {scanInput && (
+                  <button type="button" className="sm-input-clear" onClick={clearScan} aria-label="Clear input">
+                    <X size={14} />
+                  </button>
+                )}
+              </form>
+              <button type="button" className="btn-secondary" onClick={toggleCamera}>
+                Use Camera
+              </button>
+            </>
+          ) : (
+            <div className="scan-search-camera-active">
+              <div id="stock-adjustment-qr-reader" className="qr-reader-box" />
+              <button type="button" className="btn-secondary" onClick={toggleCamera}>
+                Stop Camera
+              </button>
+            </div>
+          )}
+        </div>
+        {scanError && <p className="error-text">{scanError}</p>}
+
+        <div className="or-divider-row">
+          <span className="or-divider">or filter manually</span>
         </div>
 
         <form className="balance-filter-grid" onSubmit={runSearch}>
@@ -193,7 +337,7 @@ export default function StockAdjustment() {
         </div>
 
         {!hasSearched ? (
-          <p className="empty-state">Choose your filters and click Search to view balances.</p>
+          <p className="empty-state">Scan a code or choose your filters and click Search to view balances.</p>
         ) : rows.length === 0 ? (
           <p className="empty-state">No stock found for this query.</p>
         ) : (

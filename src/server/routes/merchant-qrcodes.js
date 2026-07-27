@@ -37,22 +37,60 @@ router.get('/balance', async (req, res) => {
   }
 });
 
-// POST assign a specific QUANTITY of unassigned QR codes to one variant.
-// Pulls from the merchant's whole pool (oldest/lowest serial first),
-// not from a single batch — this is what makes partial assignment
-// (1000 to Product A, 500 to Product B, etc.) possible.
-router.post('/assign-quantity', async (req, res) => {
-  const { variant_id, quantity } = req.body;
-  const qty = Number(quantity);
+// GET look up one of THIS merchant's codes by serial_number or qr_value —
+// used by the "Assign QR to Product" scan page. Allows scanning codes that
+// already have a variant (reassignment), but blocks codes that already
+// have a pending approval request in flight.
+router.get('/scan-lookup', async (req, res) => {
+  const value = req.query.serial_number?.trim() || req.query.qr_value?.trim();
+  if (!value) {
+    return res.status(400).json({ message: 'serial_number or qr_value is required.' });
+  }
 
+  try {
+    const result = await pool.query(
+      `SELECT qc.qr_id, qc.serial_number, qc.qr_value, qc.status,
+              qc.variant_id, qc.pending_variant_id,
+              v.sku AS current_sku, p.product_name AS current_product_name
+       FROM qr_codes qc
+       LEFT JOIN variants v ON v.variant_id = qc.variant_id
+       LEFT JOIN products p ON p.product_id = v.product_id
+       WHERE (qc.serial_number = $1 OR qc.qr_value = $1) AND qc.assigned_user_id = $2
+       LIMIT 1`,
+      [value, req.user.user_id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Code not found.' });
+    }
+
+    const code = result.rows[0];
+    if (code.pending_variant_id) {
+      return res.status(409).json({ message: 'This code already has a pending assignment awaiting approval.' });
+    }
+
+    res.json(code);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST create an assignment REQUEST for a batch of scanned codes — does
+// NOT change variant_id yet. Sets pending_variant_id; the current
+// variant_id (if any) is preserved so it can be shown as "previous
+// product" on the approval screen.
+router.post('/assign-scan', async (req, res) => {
+  const { qr_ids, variant_id, remarks, expiry_date } = req.body;
+
+  if (!Array.isArray(qr_ids) || qr_ids.length === 0) {
+    return res.status(400).json({ message: 'qr_ids must be a non-empty array.' });
+  }
   if (!variant_id) return res.status(400).json({ message: 'variant_id is required.' });
-  if (!qty || qty <= 0) return res.status(400).json({ message: 'A valid quantity is required.' });
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Ownership check — same pattern as the existing assign-variant route.
     const variantCheck = await client.query(
       `SELECT v.variant_id FROM variants v
        JOIN products p ON p.product_id = v.product_id
@@ -64,8 +102,187 @@ router.post('/assign-quantity', async (req, res) => {
       return res.status(403).json({ message: 'This variant does not belong to you.' });
     }
 
-    // Lock exactly `qty` unassigned codes belonging to this merchant,
-    // oldest serial first, across all their batches.
+    const codesCheck = await client.query(
+      `SELECT qr_id FROM qr_codes
+       WHERE qr_id = ANY($1::uuid[]) AND assigned_user_id = $2 AND pending_variant_id IS NULL
+       FOR UPDATE`,
+      [qr_ids, req.user.user_id]
+    );
+    if (codesCheck.rows.length !== qr_ids.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'One or more scanned codes are invalid or already have a pending assignment.' });
+    }
+
+    await client.query(
+      `UPDATE qr_codes
+       SET pending_variant_id = $1, pending_requested_at = now(), remarks = $2, expiry_date = $3
+       WHERE qr_id = ANY($4::uuid[])`,
+      [variant_id, remarks || null, expiry_date || null, qr_ids]
+    );
+
+    await client.query('COMMIT');
+    res.json({ requested_count: qr_ids.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// GET grouped list of pending assignment requests — one row per target
+// variant, with a count of how many codes are waiting on it. This is what
+// "Approve QR Product" lists.
+router.get('/pending-approvals', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT v.variant_id, v.sku, p.product_id, p.product_name,
+              COUNT(qc.qr_id) AS pending_count,
+              MAX(qc.pending_requested_at) AS last_requested_at
+       FROM qr_codes qc
+       JOIN variants v ON v.variant_id = qc.pending_variant_id
+       JOIN products p ON p.product_id = v.product_id
+       WHERE p.merchant_id = $1 AND qc.pending_variant_id IS NOT NULL
+       GROUP BY v.variant_id, v.sku, p.product_id, p.product_name
+       ORDER BY MAX(qc.pending_requested_at) DESC`,
+      [req.user.merchant_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET the serial-level detail for one pending group — current (target)
+// product/variant plus previous product/variant (null if this is a first
+// assignment, not a reassignment).
+router.get('/pending-approvals/:variantId', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT qc.qr_id, qc.serial_number, qc.remarks, qc.expiry_date, qc.pending_requested_at,
+              tv.sku AS target_sku, tp.product_name AS target_product_name,
+              pv.sku AS previous_sku, pp.product_name AS previous_product_name
+       FROM qr_codes qc
+       JOIN variants tv ON tv.variant_id = qc.pending_variant_id
+       JOIN products tp ON tp.product_id = tv.product_id
+       LEFT JOIN variants pv ON pv.variant_id = qc.variant_id
+       LEFT JOIN products pp ON pp.product_id = pv.product_id
+       WHERE qc.pending_variant_id = $1 AND tp.merchant_id = $2
+       ORDER BY qc.serial_number`,
+      [req.params.variantId, req.user.merchant_id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No pending assignments found for this variant.' });
+    }
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST approve some or all pending codes for one target variant.
+// Approving moves variant_id -> pending_variant_id (i.e. the request
+// becomes real), clears the pending fields, and resets stock status to
+// 'pending' since a reassigned unit needs to be re-received before it
+// counts as in-stock again.
+router.post('/pending-approvals/:variantId/approve', async (req, res) => {
+  const { qr_ids } = req.body; // optional subset; default = every code in this group
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const variantCheck = await client.query(
+      `SELECT v.variant_id FROM variants v
+       JOIN products p ON p.product_id = v.product_id
+       WHERE v.variant_id = $1 AND p.merchant_id = $2`,
+      [req.params.variantId, req.user.merchant_id]
+    );
+    if (variantCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'This variant does not belong to you.' });
+    }
+
+    const hasSubset = Array.isArray(qr_ids) && qr_ids.length > 0;
+    const result = await client.query(
+      `UPDATE qr_codes
+       SET variant_id = pending_variant_id,
+           pending_variant_id = NULL,
+           pending_requested_at = NULL,
+           status = 'pending',
+           current_store_id = NULL
+       WHERE pending_variant_id = $1
+       ${hasSubset ? 'AND qr_id = ANY($2::uuid[])' : ''}
+       RETURNING qr_id`,
+      hasSubset ? [req.params.variantId, qr_ids] : [req.params.variantId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ approved_count: result.rowCount });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST reject some or all pending codes for one target variant — just
+// cancels the request; the code goes back to whatever it was before
+// (unchanged variant_id/status).
+router.post('/pending-approvals/:variantId/reject', async (req, res) => {
+  const { qr_ids } = req.body;
+
+  try {
+    const ownershipCheck = await pool.query(
+      `SELECT v.variant_id FROM variants v
+       JOIN products p ON p.product_id = v.product_id
+       WHERE v.variant_id = $1 AND p.merchant_id = $2`,
+      [req.params.variantId, req.user.merchant_id]
+    );
+    if (ownershipCheck.rows.length === 0) {
+      return res.status(403).json({ message: 'This variant does not belong to you.' });
+    }
+
+    const hasSubset = Array.isArray(qr_ids) && qr_ids.length > 0;
+    const result = await pool.query(
+      `UPDATE qr_codes
+       SET pending_variant_id = NULL, pending_requested_at = NULL
+       WHERE pending_variant_id = $1
+       ${hasSubset ? 'AND qr_id = ANY($2::uuid[])' : ''}
+       RETURNING qr_id`,
+      hasSubset ? [req.params.variantId, qr_ids] : [req.params.variantId]
+    );
+    res.json({ rejected_count: result.rowCount });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// --- Existing batch-based routes (unchanged, kept for compatibility) ------
+
+router.post('/assign-quantity', async (req, res) => {
+  const { variant_id, quantity } = req.body;
+  const qty = Number(quantity);
+
+  if (!variant_id) return res.status(400).json({ message: 'variant_id is required.' });
+  if (!qty || qty <= 0) return res.status(400).json({ message: 'A valid quantity is required.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const variantCheck = await client.query(
+      `SELECT v.variant_id FROM variants v
+       JOIN products p ON p.product_id = v.product_id
+       WHERE v.variant_id = $1 AND p.merchant_id = $2`,
+      [variant_id, req.user.merchant_id]
+    );
+    if (variantCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'This variant does not belong to you.' });
+    }
+
     const codesResult = await client.query(
       `SELECT qr_id FROM qr_codes
        WHERE assigned_user_id = $1 AND variant_id IS NULL
@@ -99,16 +316,11 @@ router.post('/assign-quantity', async (req, res) => {
   }
 });
 
-// POST link an entire batch's unassigned codes to one variant
 router.post('/batches/:id/assign-variant', async (req, res) => {
   const { variant_id } = req.body;
   if (!variant_id) return res.status(400).json({ message: 'variant_id is required.' });
 
   try {
-    // Ownership check: the batch must actually belong to this merchant,
-    // and the variant must belong to this merchant's own products —
-    // otherwise someone could assign another merchant's QR batch to
-    // their own product, or vice versa.
     const batchCheck = await pool.query(
       'SELECT batch_id FROM qrcode_batches WHERE batch_id = $1 AND assigned_user_id = $2',
       [req.params.id, req.user.user_id]
@@ -140,9 +352,6 @@ router.post('/batches/:id/assign-variant', async (req, res) => {
   }
 });
 
-// GET per-batch breakdown of codes already assigned to one variant —
-// e.g. "Batch X: 1000 units", "Batch Y: 500 units" — so the merchant can
-// see exactly where a variant's stock came from across multiple batches.
 router.get('/variants/:variantId/batch-summary', async (req, res) => {
   try {
     const result = await pool.query(
@@ -163,95 +372,6 @@ router.get('/variants/:variantId/batch-summary', async (req, res) => {
   }
 });
 
-// GET look up one of THIS merchant's codes by serial_number or qr_value,
-// before it's been linked to a product — used by the "Assign QR to
-// Product" scan page.
-router.get('/scan-lookup', async (req, res) => {
-  const value = req.query.serial_number?.trim() || req.query.qr_value?.trim();
-  if (!value) {
-    return res.status(400).json({ message: 'serial_number or qr_value is required.' });
-  }
-
-  try {
-    const result = await pool.query(
-      `SELECT qr_id, serial_number, qr_value, status, variant_id
-       FROM qr_codes
-       WHERE (serial_number = $1 OR qr_value = $1) AND assigned_user_id = $2
-       LIMIT 1`,
-      [value, req.user.user_id]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({ message: 'Code not found.' });
-    }
-
-    const code = result.rows[0];
-    if (code.variant_id) {
-      return res.status(409).json({ message: 'This code is already assigned to a product.' });
-    }
-
-    res.json(code);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
-
-// POST link a batch of scanned (previously unlinked) codes to one variant,
-// with an optional batch/remarks note and expiry date.
-router.post('/assign-scan', async (req, res) => {
-  const { qr_ids, variant_id, remarks, expiry_date } = req.body;
-
-  if (!Array.isArray(qr_ids) || qr_ids.length === 0) {
-    return res.status(400).json({ message: 'qr_ids must be a non-empty array.' });
-  }
-  if (!variant_id) return res.status(400).json({ message: 'variant_id is required.' });
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const variantCheck = await client.query(
-      `SELECT v.variant_id FROM variants v
-       JOIN products p ON p.product_id = v.product_id
-       WHERE v.variant_id = $1 AND p.merchant_id = $2`,
-      [variant_id, req.user.merchant_id]
-    );
-    if (variantCheck.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ message: 'This variant does not belong to you.' });
-    }
-
-    const codesCheck = await client.query(
-      `SELECT qr_id FROM qr_codes
-       WHERE qr_id = ANY($1::uuid[]) AND assigned_user_id = $2 AND variant_id IS NULL
-       FOR UPDATE`,
-      [qr_ids, req.user.user_id]
-    );
-    if (codesCheck.rows.length !== qr_ids.length) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ message: 'One or more scanned codes are invalid or already assigned.' });
-    }
-
-    await client.query(
-      `UPDATE qr_codes
-       SET variant_id = $1, status = 'pending', remarks = $2, expiry_date = $3
-       WHERE qr_id = ANY($4::uuid[])`,
-      [variant_id, remarks || null, expiry_date || null, qr_ids]
-    );
-
-    await client.query('COMMIT');
-    res.json({ assigned_count: qr_ids.length });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ message: err.message });
-  } finally {
-    client.release();
-  }
-});
-
-// POST assign a specific QUANTITY of unassigned codes from ONE chosen batch
-// to one variant — partial assignment, unlike assign-variant which takes
-// the whole batch's remaining unassigned codes.
 router.post('/batches/:id/assign-quantity', async (req, res) => {
   const { variant_id, quantity } = req.body;
   const qty = Number(quantity);
@@ -263,8 +383,6 @@ router.post('/batches/:id/assign-quantity', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Ownership: batch must belong to this merchant, variant must belong
-    // to this merchant's own products — same checks as assign-variant.
     const batchCheck = await client.query(
       'SELECT batch_id FROM qrcode_batches WHERE batch_id = $1 AND assigned_user_id = $2',
       [req.params.id, req.user.user_id]
@@ -285,7 +403,6 @@ router.post('/batches/:id/assign-quantity', async (req, res) => {
       return res.status(403).json({ message: 'This variant does not belong to you.' });
     }
 
-    // Lock exactly `qty` unassigned codes from THIS batch only.
     const codesResult = await client.query(
       `SELECT qr_id FROM qr_codes
        WHERE batch_id = $1 AND variant_id IS NULL

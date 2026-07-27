@@ -1,0 +1,50 @@
+.approve-qr-checkbox-col {
+  width: 40px;
+  text-align: center;
+}
+
+.approve-qr-checkbox-col input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.approve-qr-serial-cell {
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 600;
+  color: #0d2d5e;
+}
+
+.approve-qr-table tbody tr:hover {
+  background: #f8f9fb;
+}
+
+.approve-qr-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.approve-qr-actions-right {
+  display: flex;
+  gap: 10px;
+}
+
+.approve-qr-reject-btn {
+  padding: 9px 16px;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .approve-qr-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .approve-qr-actions-right {
+    flex-direction: column;
+  }
+}

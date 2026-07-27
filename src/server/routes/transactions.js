@@ -133,6 +133,7 @@ router.get('/scan-lookup', async (req, res) => {
           qc.current_store_id,
           v.variant_id,
           v.sku,
+          p.product_id,
           p.product_name
       FROM qr_codes qc
       JOIN variants v ON v.variant_id = qc.variant_id

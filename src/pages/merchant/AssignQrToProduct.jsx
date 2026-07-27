@@ -159,7 +159,7 @@ export default function AssignQrToProduct() {
         return;
       }
 
-      setSubmitMessage(`${result.assigned_count} code(s) assigned to product.`);
+      setSubmitMessage(`${result.requested_count} code(s) sent for approval.`);
       setScanCart([]);
       setBatchNumber('');
       setExpiryDate('');
@@ -187,7 +187,7 @@ export default function AssignQrToProduct() {
       <div className="listing-card">
         <form onSubmit={handleSubmit} className="assign-qr-form">
           <div className="assign-qr-grid">
-            <div className="form-group">
+            {/*<div className="form-group">
               <label>
                 Serial / Label Number(s) Quantity scanned:{' '}
                 <span className="assign-qr-count">{scanCart.length}</span>
@@ -201,7 +201,7 @@ export default function AssignQrToProduct() {
                 readOnly
                 disabled
               />
-            </div>
+            </div>*/}
 
             <div className="form-group form-group-wide">
               <label>QR Code</label>
