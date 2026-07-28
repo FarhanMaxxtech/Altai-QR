@@ -2,16 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../utils/api';
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  Line,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, LineChart, Line,
 } from 'recharts';
 import StockMovementCard from '../../components/StockMovementCard';
 import '../../styles/Dashboard.css';
@@ -26,83 +18,25 @@ const STAT_CARDS = [
 ];
 
 function StatCard({ label, value, unit, delta, trend, color }) {
-  const safeValue = Number(value ?? 0);
-const safeDelta = Number(delta ?? 0);
-
-const trendData = (
-  Array.isArray(trend) && trend.length > 0
-    ? trend
-    : [0, 0, 0, 0, 0, 0, 0]
-).map((v, i) => ({
-  i,
-  v: Number(v) || 0,
-}));
-
-const deltaText =
-  safeDelta > 0 ? `+${safeDelta}` : `${safeDelta}`;
+  const trendData = (trend && trend.length > 0 ? trend : [0, 0]).map((v, i) => ({ i, v }));
+  const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
 
   return (
     <div className="stat-card-v2">
       <div className="stat-card-v2-top">
         <span className="stat-card-v2-label">{label}</span>
-        <span
-    className={`stat-card-v2-delta ${
-        safeDelta > 0
-            ? "positive"
-            : safeDelta < 0
-            ? "negative"
-            : "neutral"
-    }`}
->
-    {deltaText}
-</span>
+        {delta !== undefined && <span className="stat-card-v2-delta">{deltaText}</span>}
       </div>
       <div className="stat-card-v2-bottom">
         <p className="stat-card-v2-value">
-          {safeValue.toLocaleString()} <span className="stat-card-v2-unit">{unit}</span>
+          {Number(value).toLocaleString()} <span className="stat-card-v2-unit">{unit}</span>
         </p>
         <div className="stat-card-v2-sparkline">
-            <ResponsiveContainer width={70} height={32}>
-                <AreaChart data={trendData}>
-
-                    <defs>
-                        <linearGradient
-                            id={`grad-${label}`}
-                            x1="0"
-                            y1="0"
-                            x2="0"
-                            y2="1"
-                        >
-                            <stop
-                                offset="5%"
-                                stopColor={color}
-                                stopOpacity={0.18}
-                            />
-                            <stop
-                                offset="95%"
-                                stopColor={color}
-                                stopOpacity={0}
-                            />
-                        </linearGradient>
-                    </defs>
-
-                    <Area
-                        type="monotone"
-                        dataKey="v"
-                        stroke="none"
-                        fill={`url(#grad-${label})`}
-                    />
-
-                    <Line
-                        type="monotone"
-                        dataKey="v"
-                        stroke={color}
-                        strokeWidth={2.5}
-                        dot={false}
-                    />
-
-                </AreaChart>
-            </ResponsiveContainer>
+          <ResponsiveContainer width={70} height={32}>
+            <LineChart data={trendData}>
+              <Line type="monotone" dataKey="v" stroke={color} strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
     </div>
@@ -145,7 +79,7 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard">
-      {/*<h2 className="dashboard-title">Dashboard</h2>/}
+      {/*<h2 className="dashboard-title">Dashboard</h2>
 
       {/* Top stat cards */}
       <div className="stat-cards-v2">
