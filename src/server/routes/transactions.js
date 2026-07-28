@@ -211,15 +211,14 @@ router.post('/scan-move', async (req, res) => {
       return res.status(403).json({ message: 'One or more scanned codes do not belong to you or were not found.' });
     }
 
-    // One transaction row = one variant moving — every scanned unit in
-    // this batch must be the same variant.
+    // One transaction row = one variant moving, matching the old model —
+    // every scanned unit in this batch must be the same variant.
     const variantIds = new Set(codesResult.rows.map((r) => r.variant_id));
     if (variantIds.size > 1) {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: 'All scanned units must be the same product variant.' });
     }
     const variant_id = [...variantIds][0];
-    const qty = qr_ids.length;
 
     for (const row of codesResult.rows) {
       if (transaction_type === 'RECEIVE' && row.status !== 'pending') {
@@ -232,40 +231,6 @@ router.post('/scan-move', async (req, res) => {
         return res.status(400).json({ message: 'A scanned unit is not in stock at the selected source store.' });
       }
     }
-
-    // --- Keep inventory_balance in sync with the qr_codes move below ----
-    // Decrement the source store (TRANSFER / CHECKOUT only — RECEIVE has none).
-    if (transaction_type !== 'RECEIVE') {
-      const balanceResult = await client.query(
-        `SELECT quantity FROM inventory_balance
-         WHERE variant_id = $1 AND store_id = $2 FOR UPDATE`,
-        [variant_id, from_store_id]
-      );
-      const available = balanceResult.rows[0]?.quantity || 0;
-      if (qty > available) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ message: `Only ${available} units available at source store.` });
-      }
-      await client.query(
-        `INSERT INTO inventory_balance (variant_id, store_id, quantity)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (variant_id, store_id)
-         DO UPDATE SET quantity = inventory_balance.quantity - $3, updated_at = now()`,
-        [variant_id, from_store_id, qty]
-      );
-    }
-
-    // Increment the destination store (RECEIVE / TRANSFER only — CHECKOUT has none).
-    if (transaction_type !== 'CHECKOUT') {
-      await client.query(
-        `INSERT INTO inventory_balance (variant_id, store_id, quantity)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (variant_id, store_id)
-         DO UPDATE SET quantity = inventory_balance.quantity + $3, updated_at = now()`,
-        [variant_id, to_store_id, qty]
-      );
-    }
-    // ----------------------------------------------------------------------
 
     if (transaction_type === 'RECEIVE') {
       await client.query(
@@ -287,7 +252,7 @@ router.post('/scan-move', async (req, res) => {
     const txResult = await client.query(
       `INSERT INTO transactions (variant_id, transaction_type, from_store_id, to_store_id, qty)
        VALUES ($1, $2, $3, $4, $5) RETURNING transaction_id`,
-      [variant_id, transaction_type, from_store_id || null, to_store_id || null, qty]
+      [variant_id, transaction_type, from_store_id || null, to_store_id || null, qr_ids.length]
     );
     const transaction_id = txResult.rows[0].transaction_id;
 
@@ -298,7 +263,7 @@ router.post('/scan-move', async (req, res) => {
     );
 
     await client.query('COMMIT');
-    res.status(201).json({ message: 'Transaction recorded.', count: qty });
+    res.status(201).json({ message: 'Transaction recorded.', count: qr_ids.length });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: err.message });
