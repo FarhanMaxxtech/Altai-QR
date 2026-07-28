@@ -47,6 +47,7 @@ function App() {
               <Navigation />
               <main className="app-main">
                 <PageHeader />
+                <div className="app-main-content">
                 <Routes>
                   <Route path="/dashboard" element={<ProtectedRoute module={null}><Dashboard /></ProtectedRoute>} />
                   <Route path="/registry" element={<ProtectedRoute module="Asset Registry"><RegisterProduct /></ProtectedRoute>} />
@@ -62,6 +63,7 @@ function App() {
                   <Route path="/ledger" element={<ProtectedRoute module="Ledger"><LedgerHistory /></ProtectedRoute>} />
                   <Route path="/users" element={<ProtectedRoute module="User Management"><UserManagement /></ProtectedRoute>} />
                 </Routes>
+                </div>
               </main>
             </div>
           }
