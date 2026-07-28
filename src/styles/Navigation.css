@@ -334,23 +334,7 @@
 
 }
 
-.brand-icon{
 
-    width:40px;
-
-    height:40px;
-
-    border-radius:12px;
-
-    background:#2D7A16;
-
-    display:flex;
-
-    justify-content:center;
-
-    align-items:center;
-
-}
 
 .scanner-card{
 
@@ -457,4 +441,18 @@
 
     color:#B91C1C;
 
+}
+
+.brand-icon {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 18px 0;
+}
+
+.brand-icon img {
+    width: 40px;
+    height: auto;
+    object-fit: contain;
+    margin-bottom: 5px;
 }

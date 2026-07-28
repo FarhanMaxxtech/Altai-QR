@@ -98,7 +98,7 @@ export default function Navigation() {
                 <div className="sidebar-header">
                     <div className="sidebar-brand">
                             <div className="brand-icon">
-                                <img src="/logo.png" alt="logo" />
+                                <img src={logo} alt="Logo" />
                             </div>
 
                             <div>

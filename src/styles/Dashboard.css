@@ -167,3 +167,112 @@
 .stat-card-v2-sparkline {
   flex-shrink: 0;
 }
+
+.store-card{
+    background:#fff;
+    border:1px solid #e8e8e8;
+    border-radius:18px;
+    padding:22px;
+    box-shadow:0 6px 18px rgba(0,0,0,.05);
+}
+
+.store-card-header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:18px;
+}
+
+.store-card-header h3{
+    margin:0;
+    font-size:22px;
+    font-weight:700;
+    color:#111827;
+}
+
+.store-total{
+    text-align:right;
+}
+
+.store-total .value{
+    font-size:26px;
+    font-weight:800;
+    color:#111827;
+}
+
+.store-total .label{
+    display:block;
+    font-size:11px;
+    letter-spacing:2px;
+    color:#94a3b8;
+    text-transform:uppercase;
+}
+
+.store-row{
+    margin-bottom:24px;
+}
+
+.store-top{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:8px;
+}
+
+.store-name{
+    font-size:17px;
+    font-weight:700;
+    color:#1f2937;
+}
+
+.store-right{
+    display:flex;
+    align-items:center;
+    gap:22px;
+}
+
+.qty{
+    width:40px;
+    text-align:right;
+    font-size:24px;
+    font-weight:800;
+    color:#111827;
+}
+
+.today{
+    width:42px;
+    text-align:right;
+    font-size:15px;
+    font-weight:700;
+}
+
+.positive{
+    color:#16a34a;
+}
+
+.negative{
+    color:#dc2626;
+}
+
+.neutral{
+    color:#94a3b8;
+}
+
+.progress{
+    width:100%;
+    height:9px;
+    background:#eef2ec;
+    border-radius:999px;
+    overflow:hidden;
+}
+
+.progress-fill{
+    height:100%;
+    background:#2f8f1f;
+    border-radius:999px;
+    transition:width .35s ease;
+}
+
+.store-row:hover .progress-fill{
+    background:#228b22;
+}

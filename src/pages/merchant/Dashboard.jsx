@@ -100,17 +100,45 @@ export default function Dashboard() {
       <div className="chart-grid">
         <StockMovementCard />
 
-        <div className="chart-card">
-          <h3>Total Tags per Store</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={tagsPerStore} layout="vertical" margin={{ left: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e4e7" />
-              <XAxis type="number" tick={{ fontSize: 12 }} />
-              <YAxis type="category" dataKey="store" tick={{ fontSize: 12 }} width={100} />
-              <Tooltip />
-              <Bar dataKey="tags" fill="#16a34a" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+        <div className="store-card">
+          <div className="store-card-header">
+            <h3>Items per Store</h3>
+            <div className="store-total">
+              <span className="value">
+                {tagsPerStore.reduce((sum, s) => sum + (s.tags || 0), 0)}
+              </span>
+              <span className="label">Total</span>
+            </div>
+          </div>
+
+          {tagsPerStore.length === 0 ? (
+            <p className="empty-state">No store data yet.</p>
+          ) : (
+            (() => {
+              const maxTags = Math.max(1, ...tagsPerStore.map((s) => s.tags || 0));
+              return tagsPerStore.map((s) => {
+                const delta = s.delta ?? 0; // TODO: backend to supply today's net change
+                const deltaClass = delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'neutral';
+                const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
+                const pct = ((s.tags || 0) / maxTags) * 100;
+
+                return (
+                  <div className="store-row" key={s.store}>
+                    <div className="store-top">
+                      <span className="store-name">{s.store}</span>
+                      <div className="store-right">
+                        <span className="qty">{s.tags || 0}</span>
+                        <span className={`today ${deltaClass}`}>{deltaText}</span>
+                      </div>
+                    </div>
+                    <div className="progress">
+                      <div className="progress-fill" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              });
+            })()
+          )}
         </div>
 
         <div className="chart-card">

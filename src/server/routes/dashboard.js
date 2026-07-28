@@ -73,16 +73,64 @@ router.get('/stock-in-out', async (req, res) => {
 
 router.get('/tags-per-store', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT s.location AS store, COALESCE(SUM(ib.quantity), 0) AS tags
-       FROM stores s
-       LEFT JOIN inventory_balance ib ON ib.store_id = s.store_id
-       WHERE s.merchant_id = $1
-       GROUP BY s.store_id, s.location
-       ORDER BY s.location`,
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [balanceResult, deltaResult] = await Promise.all([
+      pool.query(
+        `SELECT s.location AS store, COALESCE(SUM(ib.quantity), 0) AS tags
+         FROM stores s
+         LEFT JOIN inventory_balance ib ON ib.store_id = s.store_id
+         WHERE s.merchant_id = $1
+         GROUP BY s.store_id, s.location
+         ORDER BY s.location`,
+        [req.user.merchant_id]
+      ),
+      // Net change today per store: +qty when this store is the destination,
+      // -qty when this store is the source — same signed-sum idea as
+      // stock-balance.js's `deltas` CTE, just scoped to today's transactions.
+      pool.query(
+        `WITH today_deltas AS (
+           SELECT t.to_store_id AS store_id, t.qty AS delta
+           FROM transactions t
+           JOIN variants v ON v.variant_id = t.variant_id
+           JOIN products p ON p.product_id = v.product_id
+           WHERE p.merchant_id = $1 AND t.created_at >= $2 AND t.to_store_id IS NOT NULL
+           UNION ALL
+           SELECT t.from_store_id AS store_id, -t.qty AS delta
+           FROM transactions t
+           JOIN variants v ON v.variant_id = t.variant_id
+           JOIN products p ON p.product_id = v.product_id
+           WHERE p.merchant_id = $1 AND t.created_at >= $2 AND t.from_store_id IS NOT NULL
+         )
+         SELECT store_id, COALESCE(SUM(delta), 0) AS delta
+         FROM today_deltas
+         GROUP BY store_id`,
+        [req.user.merchant_id, today]
+      ),
+    ]);
+
+    const deltaByStoreId = {};
+    for (const row of deltaResult.rows) {
+      deltaByStoreId[row.store_id] = Number(row.delta);
+    }
+
+    // balanceResult only has store name, not store_id — refetch stores
+    // once to map name -> id so we can attach the right delta.
+    const storesResult = await pool.query(
+      'SELECT store_id, location FROM stores WHERE merchant_id = $1',
       [req.user.merchant_id]
     );
-    res.json(result.rows.map((r) => ({ store: r.store, tags: Number(r.tags) })));
+    const storeIdByName = {};
+    for (const s of storesResult.rows) storeIdByName[s.location] = s.store_id;
+
+    res.json(
+      balanceResult.rows.map((r) => ({
+        store: r.store,
+        tags: Number(r.tags),
+        delta: deltaByStoreId[storeIdByName[r.store]] || 0,
+      }))
+    );
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
