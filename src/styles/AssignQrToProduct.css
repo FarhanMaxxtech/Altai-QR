@@ -168,7 +168,37 @@
 .assign-qr-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
   margin-top: 24px;
+}
+
+.assign-qr-actions .btn-pending-approvals,
+.assign-qr-actions .btn-primary {
+  height: 42px;
+  min-width: 120px;
+  padding: 0 18px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  border-radius: 6px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.assign-qr-actions .btn-pending-approvals {
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #d97706;
+  color: #d97706;
+  cursor: pointer;
+  margin-bottom: 17px;
+}
+
+.assign-qr-actions .btn-pending-approvals:hover {
+  background: #fffbeb;
 }
 
 @media (max-width: 768px) {

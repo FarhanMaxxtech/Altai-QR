@@ -1,0 +1,269 @@
+/* src/styles/StockMovementCard.css */
+
+.movement-card {
+  background: #fff;
+  border: 1px solid #e5e4e7;
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.movement-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.movement-card-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #16250f;
+}
+
+.movement-card-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #7e8f73;
+}
+
+.movement-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #f0f4ec;
+}
+
+.movement-tab {
+  border: none;
+  background: transparent;
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #7e8f73;
+  cursor: pointer;
+}
+
+.movement-tab-active {
+  background: #fff;
+  color: #16250f;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* --- Trend --- */
+
+.movement-trend-body {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.movement-trend-chart {
+  flex: 1;
+  min-width: 0;
+}
+
+.movement-trend-summary {
+  width: 118px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: 16px;
+  border-left: 1px solid #edf1e8;
+}
+
+.movement-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.movement-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.movement-summary-label {
+  font-size: 11px;
+  color: #7e8f73;
+  display: flex;
+  align-items: center;
+}
+
+.movement-summary-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #16250f;
+}
+
+.movement-net-block {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid #edf1e8;
+}
+
+.movement-net-label {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: #7e8f73;
+  display: block;
+}
+
+.movement-net-value {
+  font-size: 17px;
+  font-weight: 700;
+  color: #2e7d14;
+  display: block;
+  margin-top: 2px;
+}
+
+.movement-net-negative {
+  color: #b3341e;
+}
+
+/* --- Split --- */
+
+.movement-split-body {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 4px 0 6px;
+}
+
+.movement-split-donut {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.movement-donut-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.movement-donut-total {
+  font-size: 22px;
+  font-weight: 800;
+  color: #16250f;
+  line-height: 1;
+}
+
+.movement-donut-caption {
+  font-size: 9px;
+  letter-spacing: 0.6px;
+  color: #7e8f73;
+  margin-top: 3px;
+}
+
+.movement-split-list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.movement-split-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.movement-split-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #16250f;
+  flex: 1;
+}
+
+.movement-split-value {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: #16250f;
+}
+
+.movement-split-pct {
+  font-size: 11px;
+  color: #9aa891;
+  width: 34px;
+  text-align: right;
+}
+
+.movement-split-bar {
+  height: 6px;
+  border-radius: 6px;
+  background: #edf1e8;
+  overflow: hidden;
+}
+
+.movement-split-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+}
+
+/* --- By store --- */
+
+.movement-store-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.movement-store-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 64px;
+  align-items: center;
+  gap: 12px;
+}
+
+.movement-store-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #3f5236;
+}
+
+.movement-store-bar {
+  display: flex;
+  height: 18px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #f0f4ec;
+}
+
+.movement-store-bar-in,
+.movement-store-bar-out {
+  height: 100%;
+}
+
+.movement-store-tally {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: #7e8f73;
+  text-align: right;
+}
+
+.empty-state {
+  color: #9ca3af;
+  font-style: italic;
+  margin: 0;
+}

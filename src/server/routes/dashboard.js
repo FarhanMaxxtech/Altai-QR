@@ -107,4 +107,82 @@ router.get('/low-stock', async (req, res) => {
   }
 });
 
+// GET stock movement for the last 7 days, in three shapes at once:
+// trend (daily in/out), split (7-day totals), byStore (in/out per store).
+// RECEIVE = stock in, CHECKOUT = stock out — TRANSFER is store-to-store,
+// so it's excluded from these totals (same convention as /stock-in-out).
+router.get('/stock-movement', async (req, res) => {
+  try {
+    const [trendResult, splitResult, byStoreResult] = await Promise.all([
+      pool.query(
+        `WITH days AS (
+           SELECT generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day')::date AS day
+         ),
+         merchant_tx AS (
+           SELECT t.created_at::date AS day, t.transaction_type, t.qty
+           FROM transactions t
+           JOIN variants v ON v.variant_id = t.variant_id
+           JOIN products p ON p.product_id = v.product_id
+           WHERE p.merchant_id = $1
+             AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
+         )
+         SELECT
+           days.day,
+           COALESCE(SUM(CASE WHEN merchant_tx.transaction_type = 'RECEIVE' THEN merchant_tx.qty END), 0) AS stock_in,
+           COALESCE(SUM(CASE WHEN merchant_tx.transaction_type = 'CHECKOUT' THEN merchant_tx.qty END), 0) AS stock_out
+         FROM days
+         LEFT JOIN merchant_tx ON merchant_tx.day = days.day
+         GROUP BY days.day
+         ORDER BY days.day`,
+        [req.user.merchant_id]
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN t.transaction_type = 'RECEIVE' THEN t.qty END), 0) AS stock_in,
+           COALESCE(SUM(CASE WHEN t.transaction_type = 'CHECKOUT' THEN t.qty END), 0) AS stock_out
+         FROM transactions t
+         JOIN variants v ON v.variant_id = t.variant_id
+         JOIN products p ON p.product_id = v.product_id
+         WHERE p.merchant_id = $1 AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'`,
+        [req.user.merchant_id]
+      ),
+      pool.query(
+        `SELECT
+           s.store_id, s.location AS store,
+           COALESCE(SUM(CASE WHEN t.transaction_type = 'RECEIVE' AND t.to_store_id = s.store_id THEN t.qty END), 0) AS stock_in,
+           COALESCE(SUM(CASE WHEN t.transaction_type = 'CHECKOUT' AND t.from_store_id = s.store_id THEN t.qty END), 0) AS stock_out
+         FROM stores s
+         LEFT JOIN transactions t
+           ON (t.to_store_id = s.store_id OR t.from_store_id = s.store_id)
+          AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
+          AND t.transaction_type IN ('RECEIVE', 'CHECKOUT')
+         WHERE s.merchant_id = $1
+         GROUP BY s.store_id, s.location
+         ORDER BY s.location`,
+        [req.user.merchant_id]
+      ),
+    ]);
+
+    res.json({
+      trend: trendResult.rows.map((r) => ({
+        day: r.day,
+        stock_in: Number(r.stock_in),
+        stock_out: Number(r.stock_out),
+      })),
+      split: {
+        stockIn: Number(splitResult.rows[0].stock_in),
+        stockOut: Number(splitResult.rows[0].stock_out),
+      },
+      byStore: byStoreResult.rows.map((r) => ({
+        store_id: r.store_id,
+        store: r.store,
+        stock_in: Number(r.stock_in),
+        stock_out: Number(r.stock_out),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 export default router;
