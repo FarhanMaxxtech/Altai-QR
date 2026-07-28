@@ -4,12 +4,13 @@ import pool from '../db.js';
 const router = express.Router();
 const LOW_STOCK_THRESHOLD = 10;
 
+// src/server/routes/dashboard.js
 router.get('/summary', async (req, res) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const [deliveries, transfers, totalStock] = await Promise.all([
+    const [deliveries, transfers, totalStock, scans] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
@@ -31,12 +32,22 @@ router.get('/summary', async (req, res) => {
          WHERE p.merchant_id = $1`,
         [req.user.merchant_id]
       ),
+      // "Scans today" = QR codes touched/created today for this merchant's
+      // codes. qr_codes.assigned_user_id -> users.user_id -> merchant_id,
+      // so this works even for codes not yet bound to a variant/product.
+      pool.query(
+        `SELECT COUNT(*) FROM qr_codes qc
+         JOIN users u ON u.user_id = qc.assigned_user_id
+         WHERE u.merchant_id = $1 AND qc.created_at >= $2`,
+        [req.user.merchant_id, today]
+      ),
     ]);
 
     res.json({
       deliveriesToday: Number(deliveries.rows[0].count),
       transfersInProgress: Number(transfers.rows[0].count),
       totalStockAvailable: Number(totalStock.rows[0].total),
+      scansToday: Number(scans.rows[0].count),
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
