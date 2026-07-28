@@ -53,22 +53,23 @@ export default function Dashboard() {
   const [tagsPerStore, setTagsPerStore] = useState([]);
   const [lowStock, setLowStock] = useState([]);
 
-  useEffect(() => {
-    apiFetch('/api/dashboard/summary')
-      .then((res) => res.json())
-      .then((data) => setSummary(data))
-      .catch((err) => console.error('Failed to load summary:', err));
+// src/pages/merchant/Dashboard.jsx
+useEffect(() => {
+  apiFetch('/api/dashboard/summary')
+    .then((res) => res.json())
+    .then((data) => setSummary((prev) => ({ ...prev, ...data })))   // merge, don't replace
+    .catch((err) => console.error('Failed to load summary:', err));
 
-    apiFetch('/api/dashboard/tags-per-store')
-      .then((res) => res.json())
-      .then((data) => setTagsPerStore(data))
-      .catch((err) => console.error('Failed to load tags per store:', err));
+  apiFetch('/api/dashboard/tags-per-store')
+    .then((res) => res.json())
+    .then((data) => setTagsPerStore(data))
+    .catch((err) => console.error('Failed to load tags per store:', err));
 
-    apiFetch('/api/dashboard/low-stock')
-      .then((res) => res.json())
-      .then((data) => setLowStock(data))
-      .catch((err) => console.error('Failed to load low stock:', err));
-  }, []);
+  apiFetch('/api/dashboard/low-stock')
+    .then((res) => res.json())
+    .then((data) => setLowStock(data))
+    .catch((err) => console.error('Failed to load low stock:', err));
+}, []);
 
   const cardData = {
     deliveries: { value: summary.deliveriesToday, delta: summary.deliveriesDelta, trend: summary.deliveriesTrend },
