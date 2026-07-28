@@ -4,7 +4,7 @@ import pool from '../db.js';
 const router = express.Router();
 
 router.get('/', async (req, res) => {
-  const { variant_id } = req.query;
+  const { variant_id, from_date, to_date } = req.query;
 
   try {
     const baseQuery = `
@@ -19,9 +19,25 @@ router.get('/', async (req, res) => {
   LEFT JOIN stores ts ON ts.store_id = t.to_store_id
   WHERE p.merchant_id = $1`;
 
-    const result = variant_id
-      ? await pool.query(`${baseQuery} AND t.variant_id = $2 ORDER BY t.created_at DESC`, [req.user.merchant_id, variant_id])
-      : await pool.query(`${baseQuery} ORDER BY t.created_at DESC`, [req.user.merchant_id]);
+    const conditions = [];
+    const params = [req.user.merchant_id];
+    let idx = 2;
+
+    if (variant_id) {
+      conditions.push(`t.variant_id = $${idx++}`);
+      params.push(variant_id);
+    }
+    if (from_date) {
+      conditions.push(`t.created_at::date >= $${idx++}::date`);
+      params.push(from_date);
+    }
+    if (to_date) {
+      conditions.push(`t.created_at::date <= $${idx++}::date`);
+      params.push(to_date);
+    }
+
+    const whereExtra = conditions.length ? ` AND ${conditions.join(' AND ')}` : '';
+    const result = await pool.query(`${baseQuery}${whereExtra} ORDER BY t.created_at DESC`, params);
 
     res.json(result.rows);
   } catch (err) {
