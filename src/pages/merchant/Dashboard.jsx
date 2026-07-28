@@ -3,18 +3,52 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../utils/api';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  PieChart, Pie, Cell, ResponsiveContainer,
+  PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line,
 } from 'recharts';
 import '../../styles/Dashboard.css';
 
 const PIE_COLORS = ['#0d2d5e', '#d97706'];
 const LOW_STOCK_THRESHOLD = 10;
 
+const STAT_CARDS = [
+  { key: 'deliveries', label: 'Deliveries Today', unit: 'in-store', color: '#d97706' },
+  { key: 'transfers', label: 'Transfers Open', unit: 'in progress', color: '#65a30d' },
+  { key: 'totalStock', label: 'Total Stock', unit: 'units', color: '#16a34a' },
+  { key: 'scans', label: 'Scans Today', unit: 'items', color: '#0d2d5e' },
+];
+
+function StatCard({ label, value, unit, delta, trend, color }) {
+  const trendData = (trend && trend.length > 0 ? trend : [0, 0]).map((v, i) => ({ i, v }));
+  const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
+
+  return (
+    <div className="stat-card-v2">
+      <div className="stat-card-v2-top">
+        <span className="stat-card-v2-label">{label}</span>
+        {delta !== undefined && <span className="stat-card-v2-delta">{deltaText}</span>}
+      </div>
+      <div className="stat-card-v2-bottom">
+        <p className="stat-card-v2-value">
+          {Number(value).toLocaleString()} <span className="stat-card-v2-unit">{unit}</span>
+        </p>
+        <div className="stat-card-v2-sparkline">
+          <ResponsiveContainer width={70} height={32}>
+            <LineChart data={trendData}>
+              <Line type="monotone" dataKey="v" stroke={color} strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [summary, setSummary] = useState({
-    deliveriesToday: 0,
-    transfersInProgress: 0,
-    totalStockAvailable: 0,
+    deliveriesToday: 0, deliveriesDelta: 0, deliveriesTrend: [],
+    transfersInProgress: 0, transfersDelta: 0, transfersTrend: [],
+    totalStockAvailable: 0, totalStockDelta: 0, totalStockTrend: [],
+    scansToday: 0, scansDelta: 0, scansTrend: [],
   });
   const [stockInOut, setStockInOut] = useState([
     { name: 'Stock In', value: 0 },
@@ -45,24 +79,30 @@ export default function Dashboard() {
       .catch((err) => console.error('Failed to load low stock:', err));
   }, []);
 
+  const cardData = {
+    deliveries: { value: summary.deliveriesToday, delta: summary.deliveriesDelta, trend: summary.deliveriesTrend },
+    transfers: { value: summary.transfersInProgress, delta: summary.transfersDelta, trend: summary.transfersTrend },
+    totalStock: { value: summary.totalStockAvailable, delta: summary.totalStockDelta, trend: summary.totalStockTrend },
+    scans: { value: summary.scansToday, delta: summary.scansDelta, trend: summary.scansTrend },
+  };
+
   return (
     <div className="dashboard">
-      {/*<h2 className="dashboard-title">Dashboard</h2>*/}
+      <h2 className="dashboard-title">Dashboard</h2>
 
       {/* Top stat cards */}
-      <div className="stat-cards">
-        <div className="stat-card">
-          <p className="stat-label">Deliveries Today (In-Store)</p>
-          <p className="stat-value">{summary.deliveriesToday}</p>
-        </div>
-        <div className="stat-card">
-          <p className="stat-label">Transfers In Progress</p>
-          <p className="stat-value">{summary.transfersInProgress}</p>
-        </div>
-        <div className="stat-card">
-          <p className="stat-label">Total Stock Available</p>
-          <p className="stat-value">{summary.totalStockAvailable}</p>
-        </div>
+      <div className="stat-cards-v2">
+        {STAT_CARDS.map((card) => (
+          <StatCard
+            key={card.key}
+            label={card.label}
+            unit={card.unit}
+            color={card.color}
+            value={cardData[card.key].value}
+            delta={cardData[card.key].delta}
+            trend={cardData[card.key].trend}
+          />
+        ))}
       </div>
 
       {/* Chart grid */}

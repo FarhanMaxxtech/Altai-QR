@@ -107,3 +107,63 @@
   font-size: 1.25rem;
   color: #0d2d5e;
 }
+
+.stat-cards-v2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.stat-card-v2 {
+  background: #fff;
+  border: 1px solid #e5e4e7;
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.stat-card-v2-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.stat-card-v2-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.stat-card-v2-delta {
+  background: #ecfdf3;
+  color: #16a34a;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.stat-card-v2-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.stat-card-v2-value {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: #08060d;
+}
+
+.stat-card-v2-unit {
+  font-size: 13px;
+  font-weight: 500;
+  color: #9ca3af;
+}
+
+.stat-card-v2-sparkline {
+  flex-shrink: 0;
+}

@@ -59,6 +59,23 @@ export default function AssignQrToProduct() {
   const [reviewError, setReviewError] = useState('');
   const [reviewStatusMessage, setReviewStatusMessage] = useState('');
   const [isProcessingReview, setIsProcessingReview] = useState(false);
+ // Whether ANY pending approvals exist right now — controls whether the
+  // "Log" button next to Submit is shown at all.
+  const [hasPendingApprovals, setHasPendingApprovals] = useState(false);
+  // True only while the sidebar was force-opened right after a Submit —
+  // the user must approve/reject before they're allowed to close it.
+  const [mustAct, setMustAct] = useState(false);
+
+  const refreshPendingFlag = () => {
+    apiFetch('/api/qrcode/pending-approvals')
+      .then((res) => res.json())
+      .then((data) => setHasPendingApprovals(Array.isArray(data) && data.length > 0))
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshPendingFlag();
+  }, []);
 
   useEffect(() => {
     apiFetch('/api/products')
@@ -180,12 +197,14 @@ export default function AssignQrToProduct() {
   };
 
   const openPendingSidebar = () => {
+    setMustAct(false); // opened voluntarily via the Log button — closable anytime
     setSidebarView('list');
     setIsSidebarOpen(true);
     loadPendingGroups();
   };
 
   const closeSidebar = () => {
+    if (mustAct) return; // compulsory review in progress — block close
     setIsSidebarOpen(false);
   };
 
@@ -277,6 +296,11 @@ export default function AssignQrToProduct() {
       const count = action === 'approve' ? result.approved_count : result.rejected_count;
       setReviewStatusMessage(`${count} unit(s) ${action === 'approve' ? 'approved' : 'rejected'}.`);
 
+      // The user has now made a decision — the compulsory lock is satisfied,
+      // sidebar can be closed from here on.
+      setMustAct(false);
+      refreshPendingFlag();
+
       const remaining = reviewRows.filter((r) => !selectedIds.includes(r.qr_id));
       if (remaining.length === 0) {
         // Nothing left pending for this variant — go back to the list view
@@ -328,11 +352,13 @@ export default function AssignQrToProduct() {
 
       setSubmitMessage(`${result.requested_count} code(s) sent for approval.`);
 
-      // Auto-open the sidebar straight into this variant's review, so the
-      // user sees what they just submitted immediately.
+      // Force the sidebar open straight into this variant's review — the
+      // user must approve or reject before they can close it.
       setReviewStatusMessage('');
+      setMustAct(true);
       setIsSidebarOpen(true);
       loadReview(variantId);
+      refreshPendingFlag();
 
       setScanCart([]);
       setBatchNumber('');
@@ -355,16 +381,6 @@ export default function AssignQrToProduct() {
     <div className="listing-page">
 
       <div className="listing-card assign-qr-card">
-            <div className="assign-qr-card-topbar">
-              <button
-                type="button"
-                className="btn-pending-approvals"
-                onClick={openPendingSidebar}
-              >
-                <Clock size={14} />
-                Pending
-              </button>
-            </div>
         <form onSubmit={handleSubmit} className="assign-qr-form">
           <div className="assign-qr-grid">
             <div className="form-group">
@@ -496,6 +512,16 @@ export default function AssignQrToProduct() {
           {submitMessage && <p className="status-text">{submitMessage}</p>}
 
           <div className="assign-qr-actions">
+            {hasPendingApprovals && (
+              <button
+                type="button"
+                className="btn-pending-approvals"
+                onClick={openPendingSidebar}
+              >
+                <Clock size={14} />
+                Log
+              </button>
+            )}
             <button type="submit" className="btn-primary" disabled={!isValid || isSubmitting}>
               {isSubmitting ? 'Submitting…' : 'Submit'}
             </button>
@@ -510,9 +536,11 @@ export default function AssignQrToProduct() {
       <aside className={`pending-sidebar ${isSidebarOpen ? 'pending-sidebar-open' : ''}`}>
         <div className="pending-sidebar-header">
           <h3>{sidebarView === 'list' ? 'Pending Approvals' : `Review: ${reviewLabel}`}</h3>
-          <button type="button" className="pending-sidebar-close" onClick={closeSidebar} aria-label="Close">
-            <X size={18} />
-          </button>
+          {!mustAct && (
+            <button type="button" className="pending-sidebar-close" onClick={closeSidebar} aria-label="Close">
+              <X size={18} />
+            </button>
+          )}
         </div>
 
         <div className="pending-sidebar-body">
@@ -549,6 +577,11 @@ export default function AssignQrToProduct() {
                 &larr; Back to all pending
               </button>
 
+              {mustAct && (
+                <p className="status-text">
+                  Please approve or reject these units before closing.
+                </p>
+              )}
               {reviewError && <p className="error-text">{reviewError}</p>}
               {reviewStatusMessage && <p className="status-text">{reviewStatusMessage}</p>}
 
