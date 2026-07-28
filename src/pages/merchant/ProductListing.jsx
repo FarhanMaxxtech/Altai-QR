@@ -139,10 +139,6 @@ export default function ProductListing() {
 
   return (
     <div className="listing-page">
-      <div className="listing-page-header">
-        <h2>Products</h2>
-        <p className="listing-breadcrumb">Home / Products</p>
-      </div>
 
       <div className="listing-card">
         <form className="listing-filter-grid" onSubmit={handleSearch}>

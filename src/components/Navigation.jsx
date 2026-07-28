@@ -13,6 +13,8 @@ import {
     ChevronRight,
 } from 'lucide-react';
 import '../../src/styles/Navigation.css';
+import logo from "../assets/logo.png";
+import { LogOut } from "lucide-react";
 
 const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, module: null },
@@ -67,6 +69,17 @@ export default function Navigation() {
         navigate('/login');
     };
 
+    const getInitials = (name) => {
+    if (!name) return "—";
+
+    return name
+        .split(" ")
+        .map((word) => word[0])
+        .join("")
+        .substring(0, 2)
+        .toUpperCase();
+};
+
     return (
         <>
             <button
@@ -83,14 +96,32 @@ export default function Navigation() {
 
             <aside className={`sidebar ${isMobileOpen ? 'sidebar-open' : ''}`}>
                 <div className="sidebar-header">
-                    <div className="sidebar-logo">
-                        <div className="logo-placeholder">LOGO</div>
-                        <span className="logo-text">HQ Inventory</span>
-                    </div>
-                    <div className="profile-block">
-                        <span className="profile-name">{user?.name || '—'}</span>
-                        <span className="profile-role">{user?.role || '—'}</span>
-                    </div>
+                    <div className="sidebar-brand">
+                            <div className="brand-icon">
+                                <img src="/logo.png" alt="logo" />
+                            </div>
+
+                            <div>
+                                <h2>AltaiTech</h2>
+                                <p>HQ Inventory</p>
+                            </div>
+                        </div>
+                                <div className="profile-card">
+                                    <div className="avatar">
+                                        {getInitials(user?.name)}
+                                    </div>
+
+                                    <div>
+                                        <div className="profile-name">
+                                            {user?.name || "—"}
+                                        </div>
+
+                                        <div className="profile-role">
+                                            {user?.role || "—"}
+                                            {user?.storeName && ` · ${user.storeName}`}
+                                        </div>
+                                    </div>
+                                </div>
                 </div>
 
                 <nav className="sidebar-nav">
@@ -110,7 +141,7 @@ export default function Navigation() {
                                         className={`nav-button nav-button-parent ${isChildActive(item) ? 'nav-button-active' : ''}`}
                                         onClick={() => toggleMenu(item.label)}
                                     >
-                                        <Icon size={18} className="nav-icon" />
+                                        <Icon size={20} className="nav-icon" />
                                         <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>
                                         {openMenus[item.label] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                     </button>
@@ -144,7 +175,7 @@ export default function Navigation() {
                                 onClick={() => setIsMobileOpen(false)}
                                 className={({ isActive }) => `nav-button ${isActive ? 'nav-button-active' : ''}`}
                             >
-                                <Icon size={18} className="nav-icon" />
+                                <Icon size={16} className="nav-icon" />
                                 <span>{item.label}</span>
                             </NavLink>
                         );
@@ -152,12 +183,39 @@ export default function Navigation() {
                 </nav>
 
                 <div className="sidebar-footer">
-                    <button className="footer-button" onClick={() => alert('Settings — coming soon')}>
+                    <div className="scanner-card">
+
+                            <div className="scanner-title">
+
+                                ● SCANNERS ONLINE
+
+                            </div>
+
+                            <div className="scanner-count">
+
+                                12
+
+                                <span> of 12 devices</span>
+
+                            </div>
+
+                            <div className="scanner-progress">
+
+                                <div className="scanner-progress-fill"/>
+
+                            </div>
+
+                        </div>
+                    {/*<button className="footer-button" onClick={() => alert('Settings — coming soon')}>
                         Settings
-                    </button>
-                    <button className="footer-button footer-button-logout" onClick={handleLogout}>
-                        Log Out
-                    </button>
+                    </button> */}
+                    <button
+                            className="footer-button footer-button-logout"
+                            onClick={handleLogout}
+                        >
+                            <LogOut size={18} />
+                            <span>Log Out</span>
+                        </button>
                 </div>
             </aside>
         </>

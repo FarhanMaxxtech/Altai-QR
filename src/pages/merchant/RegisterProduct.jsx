@@ -174,7 +174,6 @@ export default function RegisterProduct() {
   return (
     <div className="asset-registry">
       <section className="registry-form-section">
-        <h2>Register New Product</h2>
         <form className="product-form" onSubmit={handleProductSubmit}>
           <div className="form-group">
             <label htmlFor="name">Product Name</label>

@@ -182,3 +182,195 @@
   font-weight: 500;
   font-size: 0.75rem;
 }
+
+/* --- Serial number label row: label + Pending button side by side ------ */
+
+.assign-qr-serial-col .assign-qr-serial-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.btn-pending-approvals {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #d97706;
+  color: #d97706;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-pending-approvals:hover {
+  background: #fffbeb;
+}
+
+/* --- Right sidebar -------------------------------------------------------- */
+
+.pending-sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+}
+
+.pending-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 420px;
+  max-width: 92vw;
+  background: #fff;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  transform: translateX(100%);
+  transition: transform 0.2s ease;
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+}
+
+.pending-sidebar-open {
+  transform: translateX(0);
+}
+
+.pending-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.pending-sidebar-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #0d2d5e;
+}
+
+.pending-sidebar-close {
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+}
+
+.pending-sidebar-close:hover {
+  color: #111827;
+}
+
+.pending-sidebar-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pending-back-btn {
+  align-self: flex-start;
+}
+
+.pending-review-table-wrapper {
+  overflow-x: auto;
+}
+
+.pending-sidebar-actions {
+  flex-wrap: wrap;
+}
+
+/* --- Pending groups list (list view) -------------------------------------- */
+
+.pending-groups-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pending-group-item {
+  width: 100%;
+  text-align: left;
+  background: #f8f9fb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pending-group-item:hover {
+  background: #eff4fb;
+  border-color: rgba(13, 45, 94, 0.25);
+}
+
+.pending-group-name {
+  font-weight: 600;
+  color: #0d2d5e;
+  font-size: 0.9rem;
+}
+
+.pending-group-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pending-group-date {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+@media (max-width: 640px) {
+  .pending-sidebar {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+/* --- Top-right "Pending" button on the card --------------------------- */
+
+.assign-qr-card {
+  position: relative;
+}
+
+.assign-qr-card-topbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.btn-pending-approvals {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #d97706;
+  color: #d97706;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-pending-approvals:hover {
+  background: #fffbeb;
+}

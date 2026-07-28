@@ -240,10 +240,7 @@ export default function StockAdjustment() {
   return (
     <div className="stock-adjustment">
       <section className="balance-card">
-        <div className="balance-card-header">
-          <PackageSearch size={18} />
-          <h2>Inventory Balance</h2>
-        </div>
+
 
         {/* --- Scan-to-search row ------------------------------------------- */}
         <div className="scan-search-row">

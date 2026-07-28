@@ -47,7 +47,7 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard">
-      <h2 className="dashboard-title">Dashboard</h2>
+      {/*<h2 className="dashboard-title">Dashboard</h2>*/}
 
       {/* Top stat cards */}
       <div className="stat-cards">

@@ -17,6 +17,7 @@ import RegisterProduct from './pages/merchant/RegisterProduct';
 import ProductDetails from './pages/merchant/ProductDetails';
 import ProductBalanceDetails from './pages/merchant/ProductBalanceDetails';
 import AssignQrToProduct from './pages/merchant/AssignQrToProduct';
+import PageHeader from './components/PageHeader';
 //import ApproveQrProduct from './pages/merchant/ApproveQrProduct';
 //import ApproveQrProductDetail from './pages/merchant/ApproveQrProductDetail';
 /// Authentication pages
@@ -45,6 +46,7 @@ function App() {
             <div className="app-shell">
               <Navigation />
               <main className="app-main">
+                <PageHeader />
                 <Routes>
                   <Route path="/dashboard" element={<ProtectedRoute module={null}><Dashboard /></ProtectedRoute>} />
                   <Route path="/registry" element={<ProtectedRoute module="Asset Registry"><RegisterProduct /></ProtectedRoute>} />
