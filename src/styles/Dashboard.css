@@ -136,13 +136,26 @@
   color: #6b7280;
 }
 
-.stat-card-v2-delta {
-  background: #ecfdf3;
-  color: #16a34a;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 999px;
+.stat-card-v2-delta{
+    padding:4px 8px;
+    border-radius:8px;
+    font-size:13px;
+    font-weight:700;
+}
+
+.stat-card-v2-delta.positive{
+    color:#2E7D14;
+    background:#E8F5E9;
+}
+
+.stat-card-v2-delta.negative{
+    color:#C62828;
+    background:#FDECEC;
+}
+
+.stat-card-v2-delta.neutral{
+    color:#6B7280;
+    background:#F3F4F6;
 }
 
 .stat-card-v2-bottom {
@@ -185,7 +198,7 @@
 
 .store-card-header h3{
     margin:0;
-    font-size:22px;
+    font-size:15px;
     font-weight:700;
     color:#111827;
 }
@@ -195,7 +208,7 @@
 }
 
 .store-total .value{
-    font-size:26px;
+    font-size:15px;
     font-weight:800;
     color:#111827;
 }
@@ -203,7 +216,7 @@
 .store-total .label{
     display:block;
     font-size:11px;
-    letter-spacing:2px;
+    letter-spacing:1px;
     color:#94a3b8;
     text-transform:uppercase;
 }
@@ -220,7 +233,7 @@
 }
 
 .store-name{
-    font-size:17px;
+    font-size:12px;
     font-weight:700;
     color:#1f2937;
 }
@@ -234,7 +247,7 @@
 .qty{
     width:40px;
     text-align:right;
-    font-size:24px;
+    font-size:12px;
     font-weight:800;
     color:#111827;
 }

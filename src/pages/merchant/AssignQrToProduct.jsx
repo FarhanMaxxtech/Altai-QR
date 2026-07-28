@@ -265,6 +265,17 @@ export default function AssignQrToProduct() {
     });
   };
 
+  // Removes a single serial from this review batch — it's excluded from
+  // whatever Approve/Reject action runs next, without touching the server.
+  const removeReviewRow = (qrId) => {
+    setReviewRows((prev) => prev.filter((r) => r.qr_id !== qrId));
+    setReviewSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(qrId);
+      return next;
+    });
+  };
+
   const runReviewAction = async (action) => {
     const selectedIds = Array.from(reviewSelected);
     if (selectedIds.length === 0) {
@@ -535,12 +546,17 @@ export default function AssignQrToProduct() {
       )}
       <aside className={`pending-sidebar ${isSidebarOpen ? 'pending-sidebar-open' : ''}`}>
         <div className="pending-sidebar-header">
-          <h3>{sidebarView === 'list' ? 'Pending Approvals' : `Review: ${reviewLabel}`}</h3>
-          {!mustAct && (
-            <button type="button" className="pending-sidebar-close" onClick={closeSidebar} aria-label="Close">
-              <X size={18} />
-            </button>
-          )}
+          <h3>{sidebarView === 'list' ? 'Summary Product' : `History: ${reviewLabel}`}</h3>
+          <div className="pending-sidebar-header-actions">
+            {sidebarView === 'detail' && (
+              <span className="pending-sidebar-count">{reviewRows.length} pending</span>
+            )}
+            {!mustAct && (
+              <button type="button" className="pending-sidebar-close" onClick={closeSidebar} aria-label="Close">
+                <X size={18} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="pending-sidebar-body">
@@ -553,8 +569,9 @@ export default function AssignQrToProduct() {
                 <p className="empty-state">No pending assignments right now.</p>
               ) : (
                 <ul className="pending-groups-list">
-                  {pendingGroups.map((g) => (
-                    <li key={g.variant_id}>
+                  {pendingGroups.map((g, index) => (
+                    <li key={g.variant_id} className="pending-group-row">
+                      <span className="pending-group-number">{index + 1}.</span>
                       <button
                         type="button"
                         className="pending-group-item"
@@ -573,9 +590,9 @@ export default function AssignQrToProduct() {
             </>
           ) : (
             <>
-              <button type="button" className="btn-secondary pending-back-btn" onClick={backToList}>
+              {/*<button type="button" className="btn-secondary pending-back-btn" onClick={backToList}>
                 &larr; Back to all pending
-              </button>
+              </button>*/}
 
               {mustAct && (
                 <p className="status-text">
@@ -595,30 +612,32 @@ export default function AssignQrToProduct() {
                     <table className="products-flat-table approve-qr-table">
                       <thead>
                         <tr>
-                          <th className="approve-qr-checkbox-col">
-                            <input type="checkbox" checked={allReviewSelected} onChange={toggleAllReview} />
-                          </th>
+                          <th className="approve-qr-checkbox-col">No.</th>
                           <th>Serial Number</th>
                           <th>New Product Name</th>
                           <th>Previous Product Name</th>
+                          <th>Action</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {reviewRows.map((r) => (
+                        {reviewRows.map((r, index) => (
                           <tr key={r.qr_id}>
-                            <td className="approve-qr-checkbox-col">
-                              <input
-                                type="checkbox"
-                                checked={reviewSelected.has(r.qr_id)}
-                                onChange={() => toggleOneReview(r.qr_id)}
-                              />
-                            </td>
+                            <td className="approve-qr-checkbox-col">{index + 1}</td>
                             <td className="approve-qr-serial-cell">{r.serial_number}</td>
                             <td>{displayName(r.target_sku, r.target_product_name)}</td>
                             <td>
                               {r.previous_sku
                                 ? displayName(r.previous_sku, r.previous_product_name)
                                 : <span className="muted-dash">— (first assignment)</span>}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn-remove-small"
+                                onClick={() => removeReviewRow(r.qr_id)}
+                              >
+                                Remove
+                              </button>
                             </td>
                           </tr>
                         ))}

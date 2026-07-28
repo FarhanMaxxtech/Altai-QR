@@ -255,7 +255,7 @@
   top: 0;
   right: 0;
   height: 100vh;
-  width: 420px;
+  width: 520px;   /* was 420px */
   max-width: 92vw;
   background: #fff;
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
@@ -264,6 +264,23 @@
   z-index: 1001;
   display: flex;
   flex-direction: column;
+}
+
+.pending-sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.pending-sidebar-count {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #fff;
+  background: #6b7280;
+  border-radius: 6px;
+  padding: 2px 9px;
+  white-space: nowrap;
 }
 
 .pending-sidebar-open {
@@ -403,4 +420,17 @@
 
 .btn-pending-approvals:hover {
   background: #fffbeb;
+}
+
+.pending-group-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pending-group-number {
+  flex: none;
+  color: black;
+  font-weight: 700;
+  font-size: 0.85rem;
 }

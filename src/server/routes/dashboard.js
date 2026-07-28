@@ -6,40 +6,217 @@ const LOW_STOCK_THRESHOLD = 10;
 
 router.get('/summary', async (req, res) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const merchantId = req.user.merchant_id;
 
-    const [deliveries, transfers, totalStock] = await Promise.all([
-      pool.query(
-        `SELECT COUNT(*) FROM transactions t
-         JOIN variants v ON v.variant_id = t.variant_id
-         JOIN products p ON p.product_id = v.product_id
-         WHERE t.transaction_type = 'RECEIVE' AND t.created_at >= $1 AND p.merchant_id = $2`,
-        [today, req.user.merchant_id]
-      ),
-      pool.query(
-        `SELECT COUNT(*) FROM transactions t
-         JOIN variants v ON v.variant_id = t.variant_id
-         JOIN products p ON p.product_id = v.product_id
-         WHERE t.transaction_type = 'TRANSFER' AND t.created_at >= $1 AND p.merchant_id = $2`,
-        [today, req.user.merchant_id]
-      ),
-      pool.query(
-        `SELECT COALESCE(SUM(ib.quantity), 0) AS total FROM inventory_balance ib
-         JOIN variants v ON v.variant_id = ib.variant_id
-         JOIN products p ON p.product_id = v.product_id
-         WHERE p.merchant_id = $1`,
-        [req.user.merchant_id]
-      ),
+    const [
+      deliveriesToday,
+      deliveriesYesterday,
+      deliveriesTrend,
+
+      transfersToday,
+      transfersYesterday,
+      transfersTrend,
+
+      totalStock,
+
+      scansToday,
+      scansYesterday,
+      scansTrend,
+    ] = await Promise.all([
+
+      // Deliveries today
+      pool.query(`
+        SELECT COUNT(*) AS total
+        FROM transactions t
+        JOIN variants v ON v.variant_id=t.variant_id
+        JOIN products p ON p.product_id=v.product_id
+        WHERE p.merchant_id=$1
+          AND t.transaction_type='RECEIVE'
+          AND t.created_at::date=CURRENT_DATE
+      `,[merchantId]),
+
+      // Deliveries yesterday
+      pool.query(`
+        SELECT COUNT(*) AS total
+        FROM transactions t
+        JOIN variants v ON v.variant_id=t.variant_id
+        JOIN products p ON p.product_id=v.product_id
+        WHERE p.merchant_id=$1
+          AND t.transaction_type='RECEIVE'
+          AND t.created_at::date=CURRENT_DATE-1
+      `,[merchantId]),
+
+      // Delivery trend
+      pool.query(`
+        WITH days AS (
+          SELECT generate_series(
+            CURRENT_DATE-INTERVAL '6 days',
+            CURRENT_DATE,
+            INTERVAL '1 day'
+          )::date d
+        )
+        SELECT
+          days.d,
+          COALESCE(COUNT(t.transaction_id),0) total
+        FROM days
+        LEFT JOIN transactions t
+          ON t.created_at::date=days.d
+         AND t.transaction_type='RECEIVE'
+        LEFT JOIN variants v
+          ON v.variant_id=t.variant_id
+        LEFT JOIN products p
+          ON p.product_id=v.product_id
+         AND p.merchant_id=$1
+        GROUP BY days.d
+        ORDER BY days.d
+      `,[merchantId]),
+
+      // Transfers today
+      pool.query(`
+        SELECT COUNT(*) total
+        FROM transactions t
+        JOIN variants v ON v.variant_id=t.variant_id
+        JOIN products p ON p.product_id=v.product_id
+        WHERE p.merchant_id=$1
+          AND t.transaction_type='TRANSFER'
+          AND t.created_at::date=CURRENT_DATE
+      `,[merchantId]),
+
+      // Transfers yesterday
+      pool.query(`
+        SELECT COUNT(*) total
+        FROM transactions t
+        JOIN variants v ON v.variant_id=t.variant_id
+        JOIN products p ON p.product_id=v.product_id
+        WHERE p.merchant_id=$1
+          AND t.transaction_type='TRANSFER'
+          AND t.created_at::date=CURRENT_DATE-1
+      `,[merchantId]),
+
+      // Transfer trend
+      pool.query(`
+        WITH days AS (
+          SELECT generate_series(
+            CURRENT_DATE-INTERVAL '6 days',
+            CURRENT_DATE,
+            INTERVAL '1 day'
+          )::date d
+        )
+        SELECT
+          days.d,
+          COALESCE(COUNT(t.transaction_id),0) total
+        FROM days
+        LEFT JOIN transactions t
+          ON t.created_at::date=days.d
+         AND t.transaction_type='TRANSFER'
+        LEFT JOIN variants v
+          ON v.variant_id=t.variant_id
+        LEFT JOIN products p
+          ON p.product_id=v.product_id
+         AND p.merchant_id=$1
+        GROUP BY days.d
+        ORDER BY days.d
+      `,[merchantId]),
+
+      // Total stock
+      pool.query(`
+        SELECT
+          COALESCE(SUM(quantity),0) total
+        FROM inventory_balance ib
+        JOIN variants v
+          ON v.variant_id=ib.variant_id
+        JOIN products p
+          ON p.product_id=v.product_id
+        WHERE p.merchant_id=$1
+      `,[merchantId]),
+
+      // Scans today
+      pool.query(`
+        SELECT COUNT(*) total
+        FROM tag_events te
+        JOIN tags tg
+          ON tg.tag_id=te.tag_id
+        JOIN variants v
+          ON v.variant_id=tg.variant_id
+        JOIN products p
+          ON p.product_id=v.product_id
+        WHERE p.merchant_id=$1
+          AND te.created_at::date=CURRENT_DATE
+      `,[merchantId]),
+
+      // Scans yesterday
+      pool.query(`
+        SELECT COUNT(*) total
+        FROM tag_events te
+        JOIN tags tg
+          ON tg.tag_id=te.tag_id
+        JOIN variants v
+          ON v.variant_id=tg.variant_id
+        JOIN products p
+          ON p.product_id=v.product_id
+        WHERE p.merchant_id=$1
+          AND te.created_at::date=CURRENT_DATE-1
+      `,[merchantId]),
+
+      // Scan trend
+      pool.query(`
+        WITH days AS(
+          SELECT generate_series(
+            CURRENT_DATE-INTERVAL '6 days',
+            CURRENT_DATE,
+            INTERVAL '1 day'
+          )::date d
+        )
+        SELECT
+          days.d,
+          COALESCE(COUNT(te.event_id),0) total
+        FROM days
+        LEFT JOIN tag_events te
+          ON te.created_at::date=days.d
+        LEFT JOIN tags tg
+          ON tg.tag_id=te.tag_id
+        LEFT JOIN variants v
+          ON v.variant_id=tg.variant_id
+        LEFT JOIN products p
+          ON p.product_id=v.product_id
+         AND p.merchant_id=$1
+        GROUP BY days.d
+        ORDER BY days.d
+      `,[merchantId]),
     ]);
 
+    const deliveryToday = Number(deliveriesToday.rows[0].total);
+    const deliveryYesterday = Number(deliveriesYesterday.rows[0].total);
+
+    const transferToday = Number(transfersToday.rows[0].total);
+    const transferYesterday = Number(transfersYesterday.rows[0].total);
+
+    const scanToday = Number(scansToday.rows[0].total);
+    const scanYesterday = Number(scansYesterday.rows[0].total);
+
+    const stockTotal = Number(totalStock.rows[0].total);
+
     res.json({
-      deliveriesToday: Number(deliveries.rows[0].count),
-      transfersInProgress: Number(transfers.rows[0].count),
-      totalStockAvailable: Number(totalStock.rows[0].total),
+      deliveriesToday: deliveryToday,
+      deliveriesDelta: deliveryToday - deliveryYesterday,
+      deliveriesTrend: deliveriesTrend.rows.map(r => Number(r.total)),
+
+      transfersInProgress: transferToday,
+      transfersDelta: transferToday - transferYesterday,
+      transfersTrend: transfersTrend.rows.map(r => Number(r.total)),
+
+      totalStockAvailable: stockTotal,
+      totalStockDelta: 0,
+      totalStockTrend: Array(7).fill(stockTotal),
+
+      scansToday: scanToday,
+      scansDelta: scanToday - scanYesterday,
+      scansTrend: scansTrend.rows.map(r => Number(r.total)),
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+
+  } catch(err){
+    console.error(err);
+    res.status(500).json({message:err.message});
   }
 });
 

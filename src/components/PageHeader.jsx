@@ -158,14 +158,14 @@ export default function PageHeader() {
           </div>
         )}
 
-        <button type="button" className="page-header-bell" aria-label="Notifications">
+        {/*<button type="button" className="page-header-bell" aria-label="Notifications">
           <Bell size={16} />
           <span className="page-header-bell-badge">3</span>
         </button>
 
         <button type="button" className="page-header-transfer-btn">
           New transfer
-        </button>
+        </button>*/}
       </header>
 
       {showBanner && (
