@@ -17,8 +17,40 @@ const STAT_CARDS = [
   { key: 'scans', label: 'Scans Today', unit: 'items', color: '#0d2d5e' },
 ];
 
+// Builds a hand-drawn sparkline path (line + filled area under it),
+// normalized against the min/max of the series — same approach used
+// in the reference dashboard mockup's spark() helper.
+function Sparkline({ data, color, width = 64, height = 22 }) {
+  const points = data && data.length > 0 ? data : [0, 0];
+  const max = Math.max(...points);
+  const min = Math.min(...points);
+  const range = max - min || 1; // avoid divide-by-zero when flat
+
+  const linePath = points
+    .map((v, i) => {
+      const x = (i * (width / (points.length - 1 || 1))).toFixed(1);
+      const y = (height - ((v - min) / range) * (height - 3) - 1.5).toFixed(1);
+      return `${i === 0 ? 'M' : 'L'}${x} ${y}`;
+    })
+    .join(' ');
+
+  const areaPath = `${linePath} L${width} ${height} L0 ${height} Z`;
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} fill="none">
+      <path d={areaPath} fill={color} opacity={0.1} />
+      <path
+        d={linePath}
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function StatCard({ label, value, unit, delta, trend, color }) {
-  const trendData = (trend && trend.length > 0 ? trend : [0, 0]).map((v, i) => ({ i, v }));
   const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
 
   return (
@@ -32,11 +64,7 @@ function StatCard({ label, value, unit, delta, trend, color }) {
           {Number(value).toLocaleString()} <span className="stat-card-v2-unit">{unit}</span>
         </p>
         <div className="stat-card-v2-sparkline">
-          <ResponsiveContainer width={70} height={32}>
-            <LineChart data={trendData}>
-              <Line type="monotone" dataKey="v" stroke={color} strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+          <Sparkline data={trend} color={color} />
         </div>
       </div>
     </div>
