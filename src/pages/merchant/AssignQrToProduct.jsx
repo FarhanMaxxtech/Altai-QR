@@ -1,25 +1,25 @@
 // src/pages/merchant/AssignQrToProduct.jsx
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { QrCode as QrCodeIcon, Trash2, X, Clock } from 'lucide-react';
+import { ScanBarcode, Camera, X } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
+import { useEffect } from 'react';
 import '../../styles/AssignQrToProduct.css';
-import '../../styles/ApproveQrProduct.css';
+
+const MAX_RANGE_SIZE = 500;
+const SUMMARY_PAGE_SIZE = 50;
 
 function displayName(sku, productName) {
   if (!sku && !productName) return '—';
   return `${productName} (${sku})`;
 }
 
-function formatTimestamp(iso) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+function badgeInfo(item) {
+  // A code that was previously checked out is being reused on a new label —
+  // everything else (unassigned / pending / first-time) counts as "New".
+  return item.status === 'checked_out'
+    ? { label: 'Used', className: 'aq-badge aq-badge-used' }
+    : { label: 'New', className: 'aq-badge aq-badge-new' };
 }
 
 export default function AssignQrToProduct() {
@@ -27,55 +27,38 @@ export default function AssignQrToProduct() {
   const [productId, setProductId] = useState('');
   const [variantId, setVariantId] = useState('');
 
+  // --- Scan station ---------------------------------------------------------
   const [scanCart, setScanCart] = useState([]);
-  const [qrUrlInput, setQrUrlInput] = useState('');
+  const [scanInput, setScanInput] = useState('');
   const [scanError, setScanError] = useState('');
-
-  const [batchNumber, setBatchNumber] = useState('');
-  const [expiryDate, setExpiryDate] = useState('');
+  const scanInputRef = useRef(null);
 
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const html5QrRef = useRef(null);
   const lastScannedRef = useRef('');
-  const qrUrlInputRef = useRef(null);
 
+  const [rangePrefix, setRangePrefix] = useState('');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const [rangeError, setRangeError] = useState('');
+  const [isAddingRange, setIsAddingRange] = useState(false);
+
+  // --- Assignment details -----------------------------------------------
+  const [batchNumber, setBatchNumber] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitMessage, setSubmitMessage] = useState('');
 
-  // --- Right sidebar (review & approve) state ------------------------------
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  // sidebar has two views: 'list' (all pending groups) or 'detail' (one variant's rows)
-  const [sidebarView, setSidebarView] = useState('list');
-
-  const [pendingGroups, setPendingGroups] = useState([]);
-  const [isLoadingGroups, setIsLoadingGroups] = useState(false);
-  const [groupsError, setGroupsError] = useState('');
-
-  const [reviewVariantId, setReviewVariantId] = useState(null);
-  const [reviewLabel, setReviewLabel] = useState('');
-  const [reviewRows, setReviewRows] = useState([]);
-  const [reviewSelected, setReviewSelected] = useState(new Set());
-  const [isLoadingReview, setIsLoadingReview] = useState(false);
-  const [reviewError, setReviewError] = useState('');
-  const [reviewStatusMessage, setReviewStatusMessage] = useState('');
-  const [isProcessingReview, setIsProcessingReview] = useState(false);
- // Whether ANY pending approvals exist right now — controls whether the
-  // "Log" button next to Submit is shown at all.
-  const [hasPendingApprovals, setHasPendingApprovals] = useState(false);
-  // True only while the sidebar was force-opened right after a Submit —
-  // the user must approve/reject before they're allowed to close it.
-  const [mustAct, setMustAct] = useState(false);
-
-  const refreshPendingFlag = () => {
-    apiFetch('/api/qrcode/pending-approvals')
-      .then((res) => res.json())
-      .then((data) => setHasPendingApprovals(Array.isArray(data) && data.length > 0))
-      .catch(() => {});
-  };
-
-  useEffect(() => {
-    refreshPendingFlag();
-  }, []);
+  // --- Summary Assign modal -----------------------------------------------
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [summaryVariantId, setSummaryVariantId] = useState(null);
+  const [summaryLabel, setSummaryLabel] = useState('');
+  const [summaryRows, setSummaryRows] = useState([]);
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState('');
+  const [summaryStatusMessage, setSummaryStatusMessage] = useState('');
+  const [isProcessingSummary, setIsProcessingSummary] = useState(false);
+  const [summaryPage, setSummaryPage] = useState(1);
 
   useEffect(() => {
     apiFetch('/api/products')
@@ -84,54 +67,61 @@ export default function AssignQrToProduct() {
       .catch((err) => console.error('Failed to load products:', err));
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (html5QrRef.current) html5QrRef.current.stop().catch(() => {});
-    };
-  }, []);
-
   const selectedProduct = products.find((p) => p.product_id === productId);
   const variantOptions = selectedProduct ? selectedProduct.variants : [];
+  const selectedVariant = variantOptions.find((v) => v.variant_id === variantId);
 
   const handleProductChange = (e) => {
     setProductId(e.target.value);
     setVariantId('');
   };
 
-  // Backend checks the value against BOTH serial_number and qr_value,
-  // so a single field/param can accept either — no need to distinguish.
-  const addToCart = async (value) => {
-    setScanError('');
+  // --- Scanning helpers -------------------------------------------------
 
-    const alreadyScanned = scanCart.some(
-      (item) => item.serial_number === value || item.qr_value === value
-    );
-    if (alreadyScanned) {
-      setScanError('This code has already been scanned in this batch.');
-      return;
+  // Looks up one or more serials/QR values, skipping ones already in the
+  // cart, and reports any that couldn't be recognized.
+  const addManyToCart = async (values) => {
+    setScanError('');
+    let current = [...scanCart];
+    const failures = [];
+
+    for (const raw of values) {
+      const value = raw.trim();
+      if (!value) continue;
+
+      const alreadyScanned = current.some(
+        (item) => item.serial_number === value || item.qr_value === value
+      );
+      if (alreadyScanned) continue;
+
+      try {
+        const res = await apiFetch(`/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`);
+        const result = await res.json();
+
+        if (!res.ok) {
+          failures.push(value);
+          continue;
+        }
+        current = [...current, result];
+      } catch (err) {
+        failures.push(value);
+        console.error(err);
+      }
     }
 
-    try {
-      const res = await apiFetch(`/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`);
-      const result = await res.json();
-
-      if (!res.ok) {
-        setScanError(result.message || 'Could not recognize this code.');
-        return;
-      }
-
-      setScanCart((prev) => [...prev, result]);
-    } catch (err) {
-      setScanError('Could not reach server. Check it is running.');
-      console.error(err);
+    setScanCart(current);
+    if (failures.length > 0) {
+      const shown = failures.slice(0, 5).join(', ');
+      const more = failures.length > 5 ? `, +${failures.length - 5} more` : '';
+      setScanError(`${failures.length} code(s) could not be recognized: ${shown}${more}`);
     }
   };
 
-  const handleQrUrlSubmit = (e) => {
+  const handleScanSubmit = (e) => {
     e.preventDefault();
-    if (!qrUrlInput.trim()) return;
-    addToCart(qrUrlInput.trim());
-    setQrUrlInput('');
+    if (!scanInput.trim()) return;
+    addManyToCart([scanInput.trim()]);
+    setScanInput('');
   };
 
   const removeFromCart = (qrId) => {
@@ -159,7 +149,7 @@ export default function AssignQrToProduct() {
 
     setTimeout(async () => {
       try {
-        const html5Qr = new Html5Qrcode('assign-qr-reader');
+        const html5Qr = new Html5Qrcode('assign-qr-camera-reader');
         html5QrRef.current = html5Qr;
 
         await html5Qr.start(
@@ -169,7 +159,7 @@ export default function AssignQrToProduct() {
             const trimmed = decodedText.trim();
             if (trimmed === lastScannedRef.current) return;
             lastScannedRef.current = trimmed;
-            addToCart(trimmed);
+            addManyToCart([trimmed]);
           },
           () => {}
         );
@@ -180,155 +170,95 @@ export default function AssignQrToProduct() {
     }, 0);
   };
 
-  // --- Sidebar: list of ALL pending groups (used by the "Pending" button,
-  // so users can always get back to a review they didn't finish acting on) ---
+  useEffect(() => {
+    return () => {
+      if (html5QrRef.current) html5QrRef.current.stop().catch(() => {});
+    };
+  }, []);
 
-  const loadPendingGroups = () => {
-    setIsLoadingGroups(true);
-    setGroupsError('');
-    apiFetch('/api/qrcode/pending-approvals')
-      .then((res) => res.json())
-      .then((data) => setPendingGroups(data))
-      .catch((err) => {
-        setGroupsError('Could not reach server. Check it is running.');
-        console.error(err);
-      })
-      .finally(() => setIsLoadingGroups(false));
-  };
+  // --- Serial range ----------------------------------------------------
 
-  const openPendingSidebar = () => {
-    setMustAct(false); // opened voluntarily via the Log button — closable anytime
-    setSidebarView('list');
-    setIsSidebarOpen(true);
-    loadPendingGroups();
-  };
+  const handleAddRange = async (e) => {
+    e.preventDefault();
+    setRangeError('');
 
-  const closeSidebar = () => {
-    if (mustAct) return; // compulsory review in progress — block close
-    setIsSidebarOpen(false);
-  };
+    const fromStr = rangeFrom.trim();
+    const toStr = rangeTo.trim();
 
-  const backToList = () => {
-    setSidebarView('list');
-    setReviewVariantId(null);
-    setReviewRows([]);
-    setReviewLabel('');
-    setReviewStatusMessage('');
-    setReviewError('');
-    loadPendingGroups();
-  };
-
-  // --- Sidebar: detail (one variant's pending rows) ------------------------
-
-  const loadReview = (varId, label) => {
-    setSidebarView('detail');
-    setReviewVariantId(varId);
-    if (label) setReviewLabel(label);
-    setIsLoadingReview(true);
-    setReviewError('');
-    apiFetch(`/api/qrcode/pending-approvals/${varId}`)
-      .then((res) => {
-        if (res.status === 404) return [];
-        return res.json();
-      })
-      .then((data) => {
-        setReviewRows(data);
-        setReviewSelected(new Set(data.map((r) => r.qr_id)));
-        if (data.length > 0) {
-          setReviewLabel(displayName(data[0].target_sku, data[0].target_product_name));
-        }
-      })
-      .catch((err) => {
-        setReviewError('Could not reach server. Check it is running.');
-        console.error(err);
-      })
-      .finally(() => setIsLoadingReview(false));
-  };
-
-  const openGroupFromList = (group) => {
-    setIsSidebarOpen(true);
-    loadReview(group.variant_id, displayName(group.sku, group.product_name));
-  };
-
-  const allReviewSelected = reviewRows.length > 0 && reviewSelected.size === reviewRows.length;
-
-  const toggleAllReview = () => {
-    setReviewSelected(allReviewSelected ? new Set() : new Set(reviewRows.map((r) => r.qr_id)));
-  };
-
-  const toggleOneReview = (qrId) => {
-    setReviewSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(qrId)) next.delete(qrId);
-      else next.add(qrId);
-      return next;
-    });
-  };
-
-  // Removes a single serial from this review batch — it's excluded from
-  // whatever Approve/Reject action runs next, without touching the server.
-  const removeReviewRow = (qrId) => {
-    setReviewRows((prev) => prev.filter((r) => r.qr_id !== qrId));
-    setReviewSelected((prev) => {
-      const next = new Set(prev);
-      next.delete(qrId);
-      return next;
-    });
-  };
-
-  const runReviewAction = async (action) => {
-    const selectedIds = Array.from(reviewSelected);
-    if (selectedIds.length === 0) {
-      setReviewStatusMessage('Select at least one serial number first.');
+    if (!/^\d+$/.test(fromStr) || !/^\d+$/.test(toStr)) {
+      setRangeError('"From" and "To" must be numbers only.');
       return;
     }
 
-    const confirmed = window.confirm(
-      action === 'approve'
-        ? `Approve ${selectedIds.length} unit(s) for ${reviewLabel}?`
-        : `Reject ${selectedIds.length} unit(s)? They will keep their previous product assignment.`
-    );
-    if (!confirmed) return;
+    const width = Math.max(fromStr.length, toStr.length);
+    const fromNum = parseInt(fromStr, 10);
+    const toNum = parseInt(toStr, 10);
 
-    setIsProcessingReview(true);
-    setReviewStatusMessage('');
+    if (fromNum > toNum) {
+      setRangeError('"From" must be less than or equal to "To".');
+      return;
+    }
+    if (toNum - fromNum + 1 > MAX_RANGE_SIZE) {
+      setRangeError(`Please scan ${MAX_RANGE_SIZE} codes or fewer at a time.`);
+      return;
+    }
+
+    const prefix = rangePrefix.trim();
+    const serials = [];
+    for (let n = fromNum; n <= toNum; n++) {
+      const padded = String(n).padStart(width, '0');
+      serials.push(prefix ? `${prefix}-${padded}` : padded);
+    }
+
+    setIsAddingRange(true);
     try {
-      const res = await apiFetch(`/api/qrcode/pending-approvals/${reviewVariantId}/${action}`, {
-        method: 'POST',
-        body: JSON.stringify({ qr_ids: selectedIds }),
-      });
-      const result = await res.json();
-
-      if (!res.ok) {
-        setReviewStatusMessage(result.message || `Could not ${action} the selected units.`);
-        return;
-      }
-
-      const count = action === 'approve' ? result.approved_count : result.rejected_count;
-      setReviewStatusMessage(`${count} unit(s) ${action === 'approve' ? 'approved' : 'rejected'}.`);
-
-      // The user has now made a decision — the compulsory lock is satisfied,
-      // sidebar can be closed from here on.
-      setMustAct(false);
-      refreshPendingFlag();
-
-      const remaining = reviewRows.filter((r) => !selectedIds.includes(r.qr_id));
-      if (remaining.length === 0) {
-        // Nothing left pending for this variant — go back to the list view
-        // (which will now reflect this group being gone).
-        setTimeout(() => backToList(), 600);
-      } else {
-        loadReview(reviewVariantId);
-      }
-    } catch (err) {
-      setReviewStatusMessage('Could not reach server. Check it is running.');
-      console.error(err);
+      await addManyToCart(serials);
+      setRangeFrom('');
+      setRangeTo('');
     } finally {
-      setIsProcessingReview(false);
+      setIsAddingRange(false);
     }
   };
 
-  // --- Submit assignment request -------------------------------------------
+  // --- Assignment submit -------------------------------------------------
+
+  const codesQueued = scanCart.length;
+  const targetLabel = selectedVariant ? displayName(selectedVariant.sku, selectedProduct.product_name) : null;
+  const isReady = codesQueued > 0 && Boolean(variantId);
+
+  const handleCancel = () => {
+    setScanCart([]);
+    setProductId('');
+    setVariantId('');
+    setBatchNumber('');
+    setExpiryDate('');
+    setScanError('');
+    setSubmitMessage('');
+  };
+
+  const loadSummary = (varId, fallbackLabel) => {
+    setSummaryVariantId(varId);
+    setSummaryLabel(fallbackLabel);
+    setSummaryPage(1);
+    setIsLoadingSummary(true);
+    setSummaryError('');
+    setSummaryStatusMessage('');
+    setIsSummaryOpen(true);
+
+    apiFetch(`/api/qrcode/pending-approvals/${varId}`)
+      .then((res) => (res.status === 404 ? [] : res.json()))
+      .then((data) => {
+        setSummaryRows(data);
+        if (data.length > 0) {
+          setSummaryLabel(displayName(data[0].target_sku, data[0].target_product_name));
+        }
+      })
+      .catch((err) => {
+        setSummaryError('Could not reach server. Check it is running.');
+        console.error(err);
+      })
+      .finally(() => setIsLoadingSummary(false));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -361,22 +291,18 @@ export default function AssignQrToProduct() {
         return;
       }
 
-      setSubmitMessage(`${result.requested_count} code(s) sent for approval.`);
-
-      // Force the sidebar open straight into this variant's review — the
-      // user must approve or reject before they can close it.
-      setReviewStatusMessage('');
-      setMustAct(true);
-      setIsSidebarOpen(true);
-      loadReview(variantId);
-      refreshPendingFlag();
+      const label = targetLabel;
+      const varId = variantId;
 
       setScanCart([]);
       setBatchNumber('');
       setExpiryDate('');
       setProductId('');
       setVariantId('');
-      qrUrlInputRef.current?.focus();
+      setSubmitMessage('');
+      scanInputRef.current?.focus();
+
+      loadSummary(varId, label);
     } catch (err) {
       setSubmitMessage('Could not reach server. Check it is running.');
       console.error(err);
@@ -385,234 +311,309 @@ export default function AssignQrToProduct() {
     }
   };
 
-  const lastScannedSerial = scanCart.length > 0 ? scanCart[scanCart.length - 1].serial_number : '';
-  const isValid = scanCart.length > 0 && Boolean(variantId);
+  // --- Summary modal actions ----------------------------------------------
+
+  const removeSummaryRow = (qrId) => {
+    setSummaryRows((prev) => prev.filter((r) => r.qr_id !== qrId));
+  };
+
+  const closeSummary = () => {
+    setIsSummaryOpen(false);
+    setSummaryRows([]);
+    setSummaryVariantId(null);
+  };
+
+  const runSummaryAction = async (action) => {
+    const qrIds = summaryRows.map((r) => r.qr_id);
+    if (qrIds.length === 0) return;
+
+    const confirmed = window.confirm(
+      action === 'approve'
+        ? `Confirm and submit ${qrIds.length} unit(s) for ${summaryLabel}?`
+        : `Reject ${qrIds.length} unit(s)? They will keep their previous product assignment.`
+    );
+    if (!confirmed) return;
+
+    setIsProcessingSummary(true);
+    setSummaryStatusMessage('');
+    try {
+      const res = await apiFetch(`/api/qrcode/pending-approvals/${summaryVariantId}/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({ qr_ids: qrIds }),
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        setSummaryStatusMessage(result.message || `Could not ${action} the selected units.`);
+        return;
+      }
+
+      const count = action === 'approve' ? result.approved_count : result.rejected_count;
+      setSummaryStatusMessage(`${count} unit(s) ${action === 'approve' ? 'confirmed' : 'rejected'}.`);
+      setSummaryRows([]);
+      setTimeout(() => closeSummary(), 900);
+    } catch (err) {
+      setSummaryStatusMessage('Could not reach server. Check it is running.');
+      console.error(err);
+    } finally {
+      setIsProcessingSummary(false);
+    }
+  };
+
+  const summaryTotalPages = Math.max(1, Math.ceil(summaryRows.length / SUMMARY_PAGE_SIZE));
+  const pagedSummaryRows = summaryRows.slice(
+    (summaryPage - 1) * SUMMARY_PAGE_SIZE,
+    summaryPage * SUMMARY_PAGE_SIZE
+  );
 
   return (
-    <div className="listing-page">
+    <div className="aq-page">
 
-      <div className="listing-card assign-qr-card">
-        <form onSubmit={handleSubmit} className="assign-qr-form">
-          <div className="assign-qr-grid">
-            <div className="form-group">
-                <label>
-                  Serial / Label Number(s) Quantity scanned:{' '}
-                  <span className="assign-qr-count">{scanCart.length}</span>
-                  <span className="required-asterisk">*</span>
-                </label>
-                <input
-                  type="text"
-                  className="assign-qr-serial-display"
-                  value={lastScannedSerial}
-                  placeholder="Scanned serial number will appear here"
-                  readOnly
-                  disabled
-                />
-              </div>
+      <div className="aq-layout">
+        {/* --- Left column: Scan station + scanned list --- */}
+        <div className="aq-left-col">
+          <section className="aq-scan-station">
+            <div className="aq-scan-station-header">
+              <h3>Scan station</h3>
+              <span className="aq-scanner-status">
+                <span className="aq-scanner-dot" />
+                Scanner ready
+              </span>
+            </div>
 
-            <div className="form-group form-group-wide">
-              <label>QR Code</label>
-              <div className="assign-qr-input-with-icon">
+            <form className="aq-scan-row" onSubmit={handleScanSubmit}>
+              <div className="aq-scan-input-wrap">
+                <ScanBarcode size={18} className="aq-scan-icon" />
                 <input
-                  ref={qrUrlInputRef}
+                  ref={scanInputRef}
                   type="text"
-                  value={qrUrlInput}
-                  onChange={(e) => setQrUrlInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleQrUrlSubmit(e);
-                  }}
-                  placeholder="Point scanner here, or paste/type a serial number or QR value..."
+                  value={scanInput}
+                  onChange={(e) => setScanInput(e.target.value)}
+                  placeholder="Point scanner here, or type a serial / QR value"
                   autoFocus
+                  disabled={isCameraOpen}
                 />
-                <button
-                  type="button"
-                  className="assign-qr-icon-btn"
-                  onClick={toggleCamera}
-                  aria-label="Scan with camera"
-                >
-                  <QrCodeIcon size={18} />
-                </button>
               </div>
-              <p className="assign-qr-hint">You can either enter the QR code url or scan the QR code.</p>
-
-              {isCameraOpen && (
-                <div className="assign-qr-camera-block">
-                  <div id="assign-qr-reader" className="assign-qr-reader-box" />
-                  <button type="button" className="btn-secondary" onClick={toggleCamera}>
-                    Stop Camera
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="form-group">
-              <label>Remark / Batch Number</label>
-              <input
-                type="text"
-                value={batchNumber}
-                onChange={(e) => setBatchNumber(e.target.value.slice(0, 255))}
-                maxLength={255}
-              />
-              <span className="assign-qr-char-count">{batchNumber.length} / 255</span>
-            </div>
-
-            <div className="form-group">
-              <label>Expiry Date</label>
-              <input
-                type="date"
-                value={expiryDate}
-                onChange={(e) => setExpiryDate(e.target.value)}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Product <span className="required-asterisk">*</span></label>
-              <select value={productId} onChange={handleProductChange}>
-                <option value="">-- Select Product --</option>
-                {products.map((p) => (
-                  <option key={p.product_id} value={p.product_id}>{p.product_name}</option>
-                ))}
-              </select>
-            </div>
-
-            {productId && (
-              <div className="form-group">
-                <label>Variant <span className="required-asterisk">*</span></label>
-                <select value={variantId} onChange={(e) => setVariantId(e.target.value)}>
-                  <option value="">-- Select Variant --</option>
-                  {variantOptions.map((v) => (
-                    <option key={v.variant_id} value={v.variant_id}>{v.sku}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-
-          {scanCart.length > 0 && (
-            <div className="assign-qr-scanned-list">
-              <div className="assign-qr-scanned-header">
-                <span>Scanned Codes ({scanCart.length})</span>
-                <button type="button" className="btn-clear-all" onClick={clearCart}>
-                  <Trash2 size={14} /> Clear
-                </button>
-              </div>
-              <ul>
-                {scanCart.map((item) => (
-                  <li key={item.qr_id}>
-                    <span className="assign-qr-serial">
-                      {item.serial_number}
-                      {item.status === 'checked_out' && (
-                        <span className="assign-qr-reused-badge"> (reused — was checked out)</span>
-                      )}
-                    </span>
-                    <button
-                      type="button"
-                      className="assign-qr-remove"
-                      onClick={() => removeFromCart(item.qr_id)}
-                      aria-label="Remove"
-                    >
-                      <X size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {scanError && <p className="error-text">{scanError}</p>}
-          {submitMessage && <p className="status-text">{submitMessage}</p>}
-
-          <div className="assign-qr-actions">
-            {hasPendingApprovals && (
+              <button type="submit" className="aq-btn-add" disabled={isCameraOpen}>
+                Add
+              </button>
               <button
                 type="button"
-                className="btn-pending-approvals"
-                onClick={openPendingSidebar}
+                className={`aq-btn-camera ${isCameraOpen ? 'aq-btn-camera-active' : ''}`}
+                onClick={toggleCamera}
+                aria-label={isCameraOpen ? 'Stop camera' : 'Use camera'}
               >
-                <Clock size={14} />
-                Log
+                <Camera size={18} />
               </button>
-            )}
-            <button type="submit" className="btn-primary" disabled={!isValid || isSubmitting}>
-              {isSubmitting ? 'Submitting…' : 'Submit'}
-            </button>
-          </div>
-        </form>
-      </div>
+            </form>
 
-      {/* --- Right sidebar: Review & Approve pending assignments --- */}
-      {isSidebarOpen && (
-        <div className="pending-sidebar-overlay" onClick={closeSidebar} />
-      )}
-      <aside className={`pending-sidebar ${isSidebarOpen ? 'pending-sidebar-open' : ''}`}>
-        <div className="pending-sidebar-header">
-          <h3>{sidebarView === 'list' ? 'Summary Product' : `History: ${reviewLabel}`}</h3>
-          <div className="pending-sidebar-header-actions">
-            {sidebarView === 'detail' && (
-              <span className="pending-sidebar-count">{reviewRows.length} pending</span>
+            {isCameraOpen && (
+              <div className="aq-camera-block">
+                <div id="assign-qr-camera-reader" className="aq-camera-reader-box" />
+                <button type="button" className="aq-btn-stop-camera" onClick={toggleCamera}>
+                  Stop Camera
+                </button>
+              </div>
             )}
-            {!mustAct && (
-              <button type="button" className="pending-sidebar-close" onClick={closeSidebar} aria-label="Close">
-                <X size={18} />
+
+            <div className="aq-scan-hints">
+              <span>ENTER to add · scans append automatically</span>
+              <span>No duplicates</span>
+            </div>
+
+            <div className="aq-divider" />
+
+            <p className="aq-range-label">Or key in a serial range</p>
+
+            <form className="aq-range-row" onSubmit={handleAddRange}>
+              <input
+                type="text"
+                className="aq-range-prefix"
+                value={rangePrefix}
+                onChange={(e) => setRangePrefix(e.target.value)}
+                placeholder="e.g. EW"
+              />
+              <div className="aq-range-field">
+                <span className="aq-range-field-label"></span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={rangeFrom}
+                  onChange={(e) => setRangeFrom(e.target.value)}
+                  placeholder="From"
+                />
+              </div>
+              <span className="aq-range-arrow">→</span>
+              <div className="aq-range-field">
+                <span className="aq-range-field-label"></span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={rangeTo}
+                  onChange={(e) => setRangeTo(e.target.value)}
+                  placeholder="To"
+                />
+              </div>
+              <button
+                type="submit"
+                className="aq-btn-add-range"
+                disabled={isAddingRange || !rangeFrom || !rangeTo}
+              >
+                {isAddingRange ? 'Adding…' : 'Add range'}
               </button>
-            )}
-          </div>
-        </div>
+            </form>
 
-        <div className="pending-sidebar-body">
-          {sidebarView === 'list' ? (
-            <>
-              {groupsError && <p className="error-text">{groupsError}</p>}
-              {isLoadingGroups ? (
-                <p className="empty-state">Loading…</p>
-              ) : pendingGroups.length === 0 ? (
-                <p className="empty-state">No pending assignments right now.</p>
-              ) : (
-                <ul className="pending-groups-list">
-                  {pendingGroups.map((g, index) => (
-                    <li key={g.variant_id} className="pending-group-row">
-                      <span className="pending-group-number">{index + 1}.</span>
+            <p className="aq-range-hint">Numbers only · prefix is optional · leading zeros kept</p>
+
+            {rangeError && <p className="aq-error-text aq-error-text-on-dark">{rangeError}</p>}
+            {scanError && <p className="aq-error-text aq-error-text-on-dark">{scanError}</p>}
+          </section>
+
+          <section className="aq-scanned-card">
+            <div className="aq-scanned-header">
+              <span className="aq-scanned-title">Scanned this session</span>
+              <span className="aq-scanned-count-badge">{scanCart.length}</span>
+              <div className="aq-scanned-header-spacer" />
+              <button type="button" className="aq-btn-clear-all" onClick={clearCart} disabled={scanCart.length === 0}>
+                Clear all
+              </button>
+            </div>
+
+            {scanCart.length === 0 ? (
+              <p className="aq-empty-state">No codes scanned yet. Scan a label or key in a range above.</p>
+            ) : (
+              <ul className="aq-scanned-list">
+                {scanCart.map((item, index) => {
+                  const badge = badgeInfo(item);
+                  return (
+                    <li key={item.qr_id} className="aq-scanned-row">
+                      <span className="aq-scanned-index">{String(index + 1).padStart(2, '0')}</span>
+                      <span className="aq-scanned-serial">{item.serial_number}</span>
+                      <span className={badge.className}>{badge.label}</span>
                       <button
                         type="button"
-                        className="pending-group-item"
-                        onClick={() => openGroupFromList(g)}
+                        className="aq-scanned-remove"
+                        onClick={() => removeFromCart(item.qr_id)}
+                        aria-label="Remove"
                       >
-                        <span className="pending-group-name">{displayName(g.sku, g.product_name)}</span>
-                        <span className="pending-group-meta">
-                          <span className="variant-count-badge">{g.pending_count} pending</span>
-                          <span className="pending-group-date">{formatTimestamp(g.last_requested_at)}</span>
-                        </span>
+                        <X size={14} />
                       </button>
                     </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          ) : (
-            <>
-              {/*<button type="button" className="btn-secondary pending-back-btn" onClick={backToList}>
-                &larr; Back to all pending
-              </button>*/}
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        </div>
 
-              {mustAct && (
-                <p className="status-text">
-                  Please approve or reject these units before closing.
-                </p>
-              )}
-              {reviewError && <p className="error-text">{reviewError}</p>}
-              {reviewStatusMessage && <p className="status-text">{reviewStatusMessage}</p>}
+        {/* --- Right column: Assignment details --- */}
+        <section className="aq-details-card">
+          <h3>Assignment details</h3>
 
-              {isLoadingReview ? (
-                <p className="empty-state">Loading…</p>
-              ) : reviewRows.length === 0 ? (
-                <p className="empty-state">No pending assignments found — they may have already been processed.</p>
+          <div className="aq-field">
+            <label>Product <span className="required-asterisk">*</span></label>
+            <select value={productId} onChange={handleProductChange}>
+              <option value="">— Select product —</option>
+              {products.map((p) => (
+                <option key={p.product_id} value={p.product_id}>{p.product_name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="aq-field">
+            <label>Variant <span className="required-asterisk">*</span></label>
+            <select
+              value={variantId}
+              onChange={(e) => setVariantId(e.target.value)}
+              disabled={!productId}
+            >
+              <option value="">{productId ? '— Select variant —' : 'Select a product first'}</option>
+              {variantOptions.map((v) => (
+                <option key={v.variant_id} value={v.variant_id}>{v.sku}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="aq-field">
+            <div className="aq-field-label-row">
+              <label>Remark / Batch Number</label>
+              <span className="aq-char-count">{batchNumber.length} / 255</span>
+            </div>
+            <input
+              type="text"
+              value={batchNumber}
+              onChange={(e) => setBatchNumber(e.target.value.slice(0, 255))}
+              placeholder="e.g. BATCH-2026-07"
+              maxLength={255}
+            />
+          </div>
+
+          <div className="aq-field">
+            <label>Expiry Date</label>
+            <input
+              type="date"
+              value={expiryDate}
+              onChange={(e) => setExpiryDate(e.target.value)}
+            />
+          </div>
+
+          <div className="aq-queue-summary">
+            <span className="aq-queue-count">
+              {codesQueued} code{codesQueued === 1 ? '' : 's'} queued
+              {targetLabel && <span className="aq-queue-target"> → {targetLabel}</span>}
+            </span>
+            <span className={`aq-status-pill ${isReady ? 'aq-status-pill-ready' : ''}`}>
+              {isReady ? 'Ready' : 'Incomplete'}
+            </span>
+          </div>
+
+          {submitMessage && <p className="aq-error-text">{submitMessage}</p>}
+
+          <div className="aq-details-actions">
+            <button type="button" className="aq-btn-secondary" onClick={handleCancel}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="aq-btn-primary"
+              onClick={handleSubmit}
+              disabled={!isReady || isSubmitting}
+            >
+              {isSubmitting ? 'Assigning…' : `Assign ${codesQueued} code${codesQueued === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </section>
+      </div>
+
+      {/* --- Summary Assign modal --- */}
+      {isSummaryOpen && (
+        <div className="aq-modal-overlay">
+          <div className="aq-modal-panel">
+            <div className="aq-modal-header">
+              <div className="aq-modal-header-left">
+                <h3>Summary Assign: {summaryLabel}</h3>
+                <span className="aq-pending-badge">{summaryRows.length} pending</span>
+              </div>
+              <button type="button" className="aq-modal-close" onClick={closeSummary} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="aq-modal-body">
+              {summaryError && <p className="aq-error-text">{summaryError}</p>}
+              {summaryStatusMessage && <p className="aq-status-text">{summaryStatusMessage}</p>}
+
+              {isLoadingSummary ? (
+                <p className="aq-empty-state">Loading…</p>
+              ) : summaryRows.length === 0 ? (
+                <p className="aq-empty-state">No pending assignments — they may have already been processed.</p>
               ) : (
                 <>
-                  <div className="pending-review-table-wrapper">
-                    <table className="products-flat-table approve-qr-table">
+                  <div className="aq-summary-table-wrapper">
+                    <table className="aq-summary-table">
                       <thead>
                         <tr>
-                          <th className="approve-qr-checkbox-col">No.</th>
+                          <th>No.</th>
                           <th>Serial Number</th>
                           <th>New Product Name</th>
                           <th>Previous Product Name</th>
@@ -620,21 +621,21 @@ export default function AssignQrToProduct() {
                         </tr>
                       </thead>
                       <tbody>
-                        {reviewRows.map((r, index) => (
+                        {pagedSummaryRows.map((r, i) => (
                           <tr key={r.qr_id}>
-                            <td className="approve-qr-checkbox-col">{index + 1}</td>
-                            <td className="approve-qr-serial-cell">{r.serial_number}</td>
+                            <td>{(summaryPage - 1) * SUMMARY_PAGE_SIZE + i + 1}</td>
+                            <td className="aq-summary-serial-cell">{r.serial_number}</td>
                             <td>{displayName(r.target_sku, r.target_product_name)}</td>
                             <td>
                               {r.previous_sku
                                 ? displayName(r.previous_sku, r.previous_product_name)
-                                : <span className="muted-dash">— (first assignment)</span>}
+                                : <span className="aq-muted-dash">— (first assignment)</span>}
                             </td>
                             <td>
                               <button
                                 type="button"
-                                className="btn-remove-small"
-                                onClick={() => removeReviewRow(r.qr_id)}
+                                className="aq-btn-remove-row"
+                                onClick={() => removeSummaryRow(r.qr_id)}
                               >
                                 Remove
                               </button>
@@ -645,30 +646,54 @@ export default function AssignQrToProduct() {
                     </table>
                   </div>
 
-                  <div className="approve-qr-actions pending-sidebar-actions">
-                    <button
-                      type="button"
-                      className="btn-remove-small approve-qr-reject-btn"
-                      onClick={() => runReviewAction('reject')}
-                      disabled={isProcessingReview || reviewSelected.size === 0}
-                    >
-                      Reject Selected ({reviewSelected.size})
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => runReviewAction('approve')}
-                      disabled={isProcessingReview || reviewSelected.size === 0}
-                    >
-                      {isProcessingReview ? 'Processing…' : `Approve Selected (${reviewSelected.size})`}
-                    </button>
-                  </div>
+                  {summaryTotalPages > 1 && (
+                    <div className="aq-summary-pagination">
+                      <button
+                        type="button"
+                        className="aq-btn-secondary"
+                        onClick={() => setSummaryPage((p) => Math.max(1, p - 1))}
+                        disabled={summaryPage <= 1}
+                      >
+                        Previous
+                      </button>
+                      <span className="aq-summary-pagination-status">
+                        Page {summaryPage} of {summaryTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        className="aq-btn-secondary"
+                        onClick={() => setSummaryPage((p) => Math.min(summaryTotalPages, p + 1))}
+                        disabled={summaryPage >= summaryTotalPages}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
-            </>
-          )}
+            </div>
+
+            <div className="aq-modal-footer">
+              <button
+                type="button"
+                className="aq-btn-reject"
+                onClick={() => runSummaryAction('reject')}
+                disabled={isProcessingSummary || summaryRows.length === 0}
+              >
+                Reject Selected ({summaryRows.length})
+              </button>
+              <button
+                type="button"
+                className="aq-btn-primary"
+                onClick={() => runSummaryAction('approve')}
+                disabled={isProcessingSummary || summaryRows.length === 0}
+              >
+                {isProcessingSummary ? 'Processing…' : `Confirm & Submit (${summaryRows.length})`}
+              </button>
+            </div>
+          </div>
         </div>
-      </aside>
+      )}
     </div>
   );
 }

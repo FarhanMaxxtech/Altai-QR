@@ -59,7 +59,7 @@ router.get('/scan-lookup', async (req, res) => {
        FROM qr_codes qc
        LEFT JOIN variants v ON v.variant_id = qc.variant_id
        LEFT JOIN products p ON p.product_id = v.product_id
-       WHERE (qc.serial_number = $1 OR qc.qr_value = $1) AND qc.assigned_user_id = $2
+       WHERE (UPPER(qc.serial_number) = UPPER($1) OR qc.qr_value = $1) AND qc.assigned_user_id = $2
        ORDER BY qc.created_at DESC
        LIMIT 1`,
       [value, req.user.user_id]

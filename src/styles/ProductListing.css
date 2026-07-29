@@ -467,3 +467,367 @@
   font-weight: 700;
   color: #0d2d5e;
 }
+
+
+/* --- New Product Listing (variant rows) ------------------------------ */
+
+.pl-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pl-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pl-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  min-width: 240px;
+  color: #9ca3af;
+}
+
+.pl-search input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13.5px;
+  color: #111827;
+  flex: 1;
+}
+
+.pl-category-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pl-pill {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pl-pill:hover {
+  background: #f7f9f4;
+}
+
+.pl-pill-active {
+  background: #1e4010;
+  border-color: #1e4010;
+  color: #fff;
+}
+
+.pl-toolbar-spacer {
+  flex: 1;
+}
+
+.pl-export-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.pl-export-buttons button {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pl-export-buttons button:hover {
+  background: #f7f9f4;
+}
+
+.pl-add-product-btn {
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: none;
+  background: #2f8f1e;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pl-add-product-btn:hover {
+  background: #267417;
+}
+
+.pl-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.pl-table-wrapper {
+  overflow-x: auto;
+}
+
+.pl-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pl-table th {
+  text-align: left;
+  padding: 14px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #9ca3af;
+  background: #fafbfa;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.pl-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 13.5px;
+  vertical-align: middle;
+}
+
+.pl-table tbody tr:hover {
+  background: #fafcf9;
+}
+
+.pl-col-qty,
+.pl-col-updated,
+.pl-col-actions {
+  white-space: nowrap;
+}
+
+.pl-empty-cell {
+  text-align: center;
+  padding: 40px 16px !important;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.pl-product-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.pl-avatar {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 9px;
+  background: #eef8e8;
+  color: #2f8f1e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pl-product-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pl-product-name {
+  font-weight: 700;
+  color: #111827;
+}
+
+.pl-product-sub {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: #9ca3af;
+}
+
+.pl-desc-cell {
+  color: #6b7280;
+  max-width: 260px;
+}
+
+.pl-attr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 280px;
+}
+
+.pl-attr-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #f0f4ec;
+  color: #4a5c40;
+  white-space: nowrap;
+}
+
+.pl-qty-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 700;
+  font-size: 12.5px;
+}
+
+.pl-qty-zero {
+  background: #fbe8e4;
+  color: #b3341e;
+}
+
+.pl-qty-low {
+  background: #fbe9ce;
+  color: #8a5a12;
+}
+
+.pl-qty-healthy {
+  background: #eef8e8;
+  color: #2f8f1e;
+}
+
+.pl-col-updated {
+  color: #9ca3af;
+  font-size: 12.5px;
+}
+
+.pl-actions-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pl-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1px solid #2f8f1e;
+  background: #fff;
+  color: #2f8f1e;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pl-edit-btn:hover {
+  background: #eef8e8;
+}
+
+.pl-scan-btn {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #4a5c40;
+  cursor: pointer;
+}
+
+.pl-scan-btn:hover {
+  border-color: #2f8f1e;
+  color: #2f8f1e;
+  background: #eef8e8;
+}
+
+.pl-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 16px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.pl-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.pl-footer-left select {
+  padding: 5px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.pl-pagination {
+  display: flex;
+  gap: 4px;
+}
+
+.pl-pagination button {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pl-pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pl-page-active {
+  background: #1e4010 !important;
+  border-color: #1e4010 !important;
+  color: #fff !important;
+}
+
+@media (max-width: 900px) {
+  .pl-toolbar-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pl-search {
+    min-width: 0;
+  }
+}

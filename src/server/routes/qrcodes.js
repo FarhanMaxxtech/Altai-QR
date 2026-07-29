@@ -212,7 +212,7 @@ router.get('/lookup', async (req, res) => {
        FROM qr_codes qc
        JOIN variants v ON v.variant_id = qc.variant_id
        JOIN products p ON p.product_id = v.product_id
-       WHERE qc.serial_number = $1`,
+       WHERE UPPER(qc.serial_number) = UPPER($1)`,
       [serial_number]
     );
 

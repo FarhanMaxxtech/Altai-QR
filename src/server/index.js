@@ -15,6 +15,7 @@ import merchantQrcodesRouter from './routes/merchant-qrcodes.js';
 import productGroupsRouter from './routes/product-groups.js';
 import stockBalanceRouter from './routes/stock-balance.js';
 import merchantRouter from './routes/merchant.js';
+import variantsRouter from './routes/variants.js';
 
 dotenv.config();
 
@@ -36,6 +37,7 @@ app.use('/api/product-groups', requireAuth, productGroupsRouter);
 app.use('/api/stock-balance', requireAuth, stockBalanceRouter);
 app.use('/api/transactions', requireAuth, transactionsRouter);
 app.use('/api/merchant', requireAuth, merchantRouter);
+app.use('/api/variants', requireAuth, variantsRouter);
 
 // Protected — Super Admin only
 app.use('/api/superadmin', requireAuth, requireSuperAdmin, superadminRouter);

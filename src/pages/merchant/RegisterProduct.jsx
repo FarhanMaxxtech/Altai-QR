@@ -4,7 +4,7 @@ import { PackageCheck } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import '../../styles/AssetRegistry.css';
 
-const DRAFT_STORAGE_KEY = 'register-product-draft-v1';
+const DRAFT_STORAGE_KEY = 'register-product-draft-v2';
 
 function productPrefix(name) {
   if (!name) return 'PROD';
@@ -40,15 +40,7 @@ function makeEmptyVariant() {
   };
 }
 
-const handleSingleVariant = () => {
-  setVariantDrafts((prev) => [
-    { ...prev[0], variant_id: prev[0]?.variant_id || crypto.randomUUID() },
-  ]);
-};
 
-const updateAttributeKeyFromSelect = (variantId, attrId, value) => {
-  updateAttribute(variantId, attrId, 'key', value === 'Custom' ? '' : value);
-};
 
 function makeEmptyProductForm() {
   return { name: '', skuPrefix: '', category: '', description: '', reorderPoint: '' };
@@ -63,18 +55,26 @@ export default function RegisterProduct() {
 
   const [lastRegistered, setLastRegistered] = useState(null);
 
-  useEffect(() => {
-    const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
-    if (!raw) return;
-    try {
-      const draft = JSON.parse(raw);
-      if (draft.productForm) setProductForm(draft.productForm);
-      if (draft.variantDrafts) setVariantDrafts(draft.variantDrafts);
-      setAutoSkuPrefix(false);
-    } catch (err) {
-      console.error('Failed to restore draft:', err);
+useEffect(() => {
+  const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+  if (!raw) return;
+  try {
+    const draft = JSON.parse(raw);
+    if (draft.productForm) setProductForm(draft.productForm);
+    if (draft.variantDrafts) {
+      // Self-heal: a variant with no SKU text should always be treated
+      // as auto-generated, regardless of what autoSku was saved as.
+      const normalized = draft.variantDrafts.map((v) => ({
+        ...v,
+        autoSku: !v.sku || v.sku.trim() === '' ? true : v.autoSku,
+      }));
+      setVariantDrafts(normalized);
     }
-  }, []);
+    setAutoSkuPrefix(false);
+  } catch (err) {
+    console.error('Failed to restore draft:', err);
+  }
+}, []);
 
   useEffect(() => {
     apiFetch('/api/products/categories')
@@ -82,6 +82,16 @@ export default function RegisterProduct() {
       .then((data) => setCategoryOptions(data))
       .catch((err) => console.error('Failed to load categories:', err));
   }, []);
+
+const handleSingleVariant = () => {
+  setVariantDrafts((prev) => [
+    { ...prev[0], variant_id: prev[0]?.variant_id || crypto.randomUUID() },
+  ]);
+};
+
+const updateAttributeKeyFromSelect = (variantId, attrId, value) => {
+  updateAttribute(variantId, attrId, 'key', value === 'Custom' ? '' : value);
+};
 
   // --- Product-level field handlers ----------------------------------------
 
@@ -136,11 +146,15 @@ const duplicateVariantDraft = (variantId) => {
     );
   };
 
-  const handleSkuFieldChange = (variantId, value) => {
-    setVariantDrafts((prev) =>
-      prev.map((v) => (v.variant_id === variantId ? { ...v, sku: value, autoSku: false } : v))
-    );
-  };
+const handleSkuFieldChange = (variantId, value) => {
+  setVariantDrafts((prev) =>
+    prev.map((v) =>
+      v.variant_id === variantId
+        ? { ...v, sku: value, autoSku: value.trim() === '' }
+        : v
+    )
+  );
+};
 
 const addAttribute = (variantId) => {
   setVariantDrafts((prev) =>
@@ -192,27 +206,25 @@ const addAttribute = (variantId) => {
     if (!productForm.name.trim()) return;
     if (variantDrafts.length === 0) return;
 
-    const missingSku = variantDrafts.some((v) => !v.sku.trim());
-    if (missingSku) {
-      alert('Every variant needs a SKU.');
-      return;
-    }
+    const missingSku = variantDrafts.some(
+    (v, i) => !computeVariantSku(v, i, productForm.skuPrefix).trim()
+  );
+  if (missingSku) {
+    alert('Every variant needs a SKU.');
+    return;
+  }
 
     const payload = {
-      product_name: productForm.name.trim(),
-      product_description: productForm.description.trim(),
-      // NOTE: product_category and reorder_point aren't yet columns on the
-      // `products` table / accepted by POST /api/products — sending them
-      // now is forward-compatible but they won't persist until the backend
-      // is updated.
-      product_category: productForm.category.trim(),
-      reorder_point: productForm.reorderPoint ? Number(productForm.reorderPoint) : null,
-      variants: variantDrafts.map((v, i) => ({
-  ...v,
-  sku: computeVariantSku(v, i, productForm.skuPrefix),
-  opening_qty: v.openingQty ? Number(v.openingQty) : 0,
-})),
-    };
+    product_name: productForm.name.trim(),
+    product_description: productForm.description.trim(),
+    product_category: productForm.category.trim(),
+    reorder_point: productForm.reorderPoint ? Number(productForm.reorderPoint) : null,
+    variants: variantDrafts.map((v, i) => ({
+      ...v,
+      sku: computeVariantSku(v, i, productForm.skuPrefix),
+      opening_qty: v.openingQty ? Number(v.openingQty) : 0,
+    })),
+  };
 
     try {
       const res = await apiFetch('/api/products', {
@@ -300,7 +312,7 @@ const addAttribute = (variantId) => {
                 value={productForm.description}
                 onChange={handleProductFieldChange}
                 placeholder="Short description shown in listings"
-                rows={3}
+                rows={2}
               />
             </div>
 
@@ -426,7 +438,7 @@ const addAttribute = (variantId) => {
           />
         </div>
 
-        <div className="form-group">
+        {/*<div className="form-group">
           <label>Opening Qty</label>
           <input
             type="number" min="0"
@@ -434,7 +446,7 @@ const addAttribute = (variantId) => {
             onChange={(e) => updateVariant(variant.variant_id, 'openingQty', e.target.value)}
             placeholder="0"
           />
-        </div>
+        </div>*/}
 
         <div className="form-group">
           <label>SKU {variant.autoSku && <span className="field-auto-tag">auto</span>}</label>
@@ -497,13 +509,15 @@ const addAttribute = (variantId) => {
       </aside>
 
       {lastRegistered && (
-        <section className="just-registered-card register-product-full-span">
-          <div className="just-registered-header">
-            <PackageCheck size={18} />
-            <h2>Just Registered</h2>
-          </div>
+  <section className="just-registered-card register-product-full-span">
+    <div className="just-registered-header">
+      <span className="just-registered-icon">
+        <PackageCheck size={18} />
+      </span>
+      <h2>Just Registered</h2>
+    </div>
 
-          <div className="product-block">
+    <div className="product-block">
             <div className="product-block-header">
               <h3>{lastRegistered.product_name}</h3>
               <span className="variant-count-badge">

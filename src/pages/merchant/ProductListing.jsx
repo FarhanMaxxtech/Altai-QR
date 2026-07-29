@@ -2,7 +2,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+import { Search, ScanBarcode, Pencil } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
+import { formatRelativeTime } from '../../utils/dateFormat';
+import EditVariantModal from '../../components/EditVariantModal';
 import '../../styles/ProductListing.css';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
@@ -10,97 +13,108 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 function attributesObjectToArray(attributesObject) {
   if (!attributesObject) return [];
   return Object.entries(attributesObject).map(([key, value]) => ({
-    id: crypto.randomUUID(),
+    id: `${key}-${value}`,
     key,
     value,
   }));
 }
 
-function flattenForExport(products) {
-  const rows = [];
-  products.forEach((p) => {
-    p.variants.forEach((v) => {
-      const attrs = attributesObjectToArray(v.attributes)
-        .map((a) => `${a.key}: ${a.value}`)
-        .join(', ');
-      rows.push({
-        'Product Name': p.product_name,
-        'Product Description': p.product_description || '',
-        SKU: v.sku,
-        Attributes: attrs,
-        'Price (RM)': v.price ? Number(v.price).toFixed(2) : '',
-        Qty: v.in_stock_count ?? 0,
-        Remarks: v.remarks || '',
-      });
-    });
-  });
-  return rows;
+function initialsOf(name) {
+  if (!name) return '—';
+  return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function quantityClass(qty) {
+  if (!qty) return 'pl-qty-zero';
+  if (qty < 5) return 'pl-qty-low';
+  return 'pl-qty-healthy';
+}
+
+function flattenForExport(rows) {
+  return rows.map(({ product, variant }) => ({
+    'Product Name': product.product_name,
+    SKU: variant.sku,
+    Category: product.product_category || '',
+    Description: product.product_description || '',
+    Attributes: attributesObjectToArray(variant.attributes)
+      .map((a) => `${a.key}: ${a.value}`)
+      .join(', '),
+    Quantity: variant.in_stock_count ?? 0,
+    Updated: formatRelativeTime(variant.updated_at),
+  }));
 }
 
 export default function ProductListing() {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
-
-  const [nameFilter, setNameFilter] = useState('');
-  const [skuFilter, setSkuFilter] = useState('');
-  const [appliedName, setAppliedName] = useState('');
-  const [appliedSku, setAppliedSku] = useState('');
-
-  const [sortAsc, setSortAsc] = useState(true);
+  const [search, setSearch] = useState('');
+  const [activeCategory, setActiveCategory] = useState('All');
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
+  const [editingRow, setEditingRow] = useState(null); // { product, variant } | null
 
-  useEffect(() => {
+  const loadProducts = () => {
     apiFetch('/api/products')
       .then((res) => res.json())
       .then((data) => setProducts(data))
       .catch((err) => console.error('Failed to load products:', err));
+  };
+
+  useEffect(() => {
+    loadProducts();
   }, []);
 
-  const handleSearch = (e) => {
-    e.preventDefault();
-    setAppliedName(nameFilter.trim().toLowerCase());
-    setAppliedSku(skuFilter.trim().toLowerCase());
-    setPage(1);
-  };
-
-  const handleClear = () => {
-    setNameFilter('');
-    setSkuFilter('');
-    setAppliedName('');
-    setAppliedSku('');
-    setPage(1);
-  };
-
-  const filteredProducts = useMemo(() => {
-    let result = products.filter((p) => {
-      const nameMatch = !appliedName || p.product_name.toLowerCase().includes(appliedName);
-      const skuMatch = !appliedSku || p.variants.some((v) => v.sku.toLowerCase().includes(appliedSku));
-      return nameMatch && skuMatch;
+  const categories = useMemo(() => {
+    const set = new Set();
+    products.forEach((p) => {
+      if (p.product_category) set.add(p.product_category);
     });
+    return ['All', ...Array.from(set).sort()];
+  }, [products]);
 
-    result = [...result].sort((a, b) =>
-      sortAsc
-        ? a.product_name.localeCompare(b.product_name)
-        : b.product_name.localeCompare(a.product_name)
-    );
+  const rows = useMemo(() => {
+    const flat = [];
+    products.forEach((p) => {
+      (p.variants || []).forEach((v) => flat.push({ product: p, variant: v }));
+    });
+    return flat;
+  }, [products]);
 
-    return result;
-  }, [products, appliedName, appliedSku, sortAsc]);
+  const filteredRows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return rows
+      .filter(({ product, variant }) => {
+        const categoryMatch = activeCategory === 'All' || product.product_category === activeCategory;
+        const searchMatch =
+          !term ||
+          product.product_name.toLowerCase().includes(term) ||
+          variant.sku.toLowerCase().includes(term);
+        return categoryMatch && searchMatch;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.variant.updated_at || b.variant.created_at) -
+          new Date(a.variant.updated_at || a.variant.created_at)
+      );
+  }, [rows, activeCategory, search]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
-  const pagedProducts = filteredProducts.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => setPage(1), [search, activeCategory]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const pagedRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
 
   const handlePageChange = (next) => {
     if (next < 1 || next > totalPages) return;
     setPage(next);
   };
 
+  // --- Export handlers -------------------------------------------------
+
   const handleCopy = async () => {
-    const rows = flattenForExport(filteredProducts);
-    if (rows.length === 0) return;
-    const header = Object.keys(rows[0]).join('\t');
-    const body = rows.map((r) => Object.values(r).join('\t')).join('\n');
+    const exportRows = flattenForExport(filteredRows);
+    if (exportRows.length === 0) return;
+    const header = Object.keys(exportRows[0]).join('\t');
+    const body = exportRows.map((r) => Object.values(r).join('\t')).join('\n');
     try {
       await navigator.clipboard.writeText(`${header}\n${body}`);
       alert('Copied to clipboard.');
@@ -111,13 +125,13 @@ export default function ProductListing() {
   };
 
   const handleCsv = () => {
-    const rows = flattenForExport(filteredProducts);
-    if (rows.length === 0) return;
-    const header = Object.keys(rows[0]).join(',');
-    const body = rows
+    const exportRows = flattenForExport(filteredRows);
+    if (exportRows.length === 0) return;
+    const header = Object.keys(exportRows[0]).join(',');
+    const body = exportRows
       .map((r) => Object.values(r).map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
       .join('\n');
-    const blob = new Blob([`${header}\n${body}`], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['\uFEFF' + header + '\n' + body], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -127,9 +141,9 @@ export default function ProductListing() {
   };
 
   const handleExcel = () => {
-    const rows = flattenForExport(filteredProducts);
-    if (rows.length === 0) return;
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const exportRows = flattenForExport(filteredRows);
+    if (exportRows.length === 0) return;
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Products');
     XLSX.writeFile(workbook, 'products.xlsx');
@@ -137,110 +151,182 @@ export default function ProductListing() {
 
   const handlePrint = () => window.print();
 
+  // --- Edit modal --------------------------------------------------------
+
+  const handleVariantSaved = (updatedVariant) => {
+    setProducts((prev) =>
+      prev.map((p) => ({
+        ...p,
+        variants: p.variants.map((v) =>
+          v.variant_id === updatedVariant.variant_id ? { ...v, ...updatedVariant } : v
+        ),
+      }))
+    );
+    setEditingRow(null);
+  };
+
   return (
-    <div className="listing-page">
+    <div className="pl-page">
+      <div className="pl-toolbar-row">
+        <div className="pl-search">
+          <Search size={16} />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search product or SKU"
+          />
+        </div>
 
-      <div className="listing-card">
-        <form className="listing-filter-grid" onSubmit={handleSearch}>
-          <div className="form-group">
-            <label>Product Name</label>
-            <input
-              type="text"
-              value={nameFilter}
-              onChange={(e) => setNameFilter(e.target.value)}
-              placeholder="e.g. Jacket"
-            />
-          </div>
-          {/* <div className="form-group">
-            <label>SKU</label>
-            <input
-              type="text"
-              value={skuFilter}
-              onChange={(e) => setSkuFilter(e.target.value)}
-              placeholder="e.g. JACK-V1"
-            />
-          </div> */}
-          <div className="listing-filter-actions">
-            <button type="submit" className="btn-search">Search</button>
-            <button type="button" className="btn-clear" onClick={handleClear}>Clear</button>
-          </div>
-          <div className="listing-add-action">
-            <button type="button" className="btn-add-product" onClick={() => navigate('/registry')}>
-              + Add Product
+        <div className="pl-category-pills">
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              className={`pl-pill ${activeCategory === cat ? 'pl-pill-active' : ''}`}
+              onClick={() => setActiveCategory(cat)}
+            >
+              {cat}
             </button>
-          </div>
-        </form>
+          ))}
+        </div>
 
-        <div className="listing-toolbar">
-          <div className="entries-control">
+        <div className="pl-toolbar-spacer" />
+
+        <div className="pl-export-buttons">
+          <button type="button" onClick={handleCopy}>Copy</button>
+          <button type="button" onClick={handleCsv}>CSV</button>
+          <button type="button" onClick={handleExcel}>Excel</button>
+          <button type="button" onClick={handlePrint}>Print</button>
+        </div>
+
+        <button type="button" className="pl-add-product-btn" onClick={() => navigate('/registry')}>
+          + Add product
+        </button>
+      </div>
+
+      <div className="pl-card">
+        <div className="pl-table-wrapper">
+          <table className="pl-table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Description</th>
+                <th>Variants</th>
+                <th className="pl-col-qty">Quantity</th>
+                <th className="pl-col-updated">Updated</th>
+                <th className="pl-col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedRows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="pl-empty-cell">
+                    {products.length === 0 ? 'No products registered yet.' : 'No products match your search.'}
+                  </td>
+                </tr>
+              ) : (
+                pagedRows.map(({ product, variant }) => {
+                  const qty = variant.in_stock_count ?? 0;
+                  const attrs = attributesObjectToArray(variant.attributes);
+                  return (
+                    <tr key={variant.variant_id}>
+                      <td>
+                        <div className="pl-product-cell">
+                          <span className="pl-avatar">{initialsOf(product.product_name)}</span>
+                          <div className="pl-product-meta">
+                            <span className="pl-product-name">{product.product_name}</span>
+                            <span className="pl-product-sub">
+                              {variant.sku}
+                              {product.product_category && <> · {product.product_category}</>}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="pl-desc-cell">{product.product_description || '—'}</td>
+                      <td>
+                        <div className="pl-attr-chips">
+                          {attrs.length === 0 ? (
+                            <span className="muted-dash">—</span>
+                          ) : (
+                            attrs.map((a) => (
+                              <span key={a.id} className="pl-attr-chip">
+                                {a.key}: {a.value}
+                              </span>
+                            ))
+                          )}
+                        </div>
+                      </td>
+                      <td className="pl-col-qty">
+                        <span className={`pl-qty-badge ${quantityClass(qty)}`}>{qty}</span>
+                      </td>
+                      <td className="pl-col-updated">{formatRelativeTime(variant.updated_at)}</td>
+                      <td className="pl-col-actions">
+                        <div className="pl-actions-cell">
+                          <button
+                            type="button"
+                            className="pl-edit-btn"
+                            onClick={() => setEditingRow({ product, variant })}
+                          >
+                            <Pencil size={13} /> Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="pl-scan-btn"
+                            onClick={() => navigate('/assign-qr')}
+                            aria-label="Assign QR"
+                          >
+                            <ScanBarcode size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="pl-footer">
+          <div className="pl-footer-left">
             <span>Show</span>
             <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
               {PAGE_SIZE_OPTIONS.map((n) => (
                 <option key={n} value={n}>{n}</option>
               ))}
             </select>
-            <span>entries</span>
+            <span>entries · Showing {pagedRows.length} of {filteredRows.length}</span>
           </div>
 
-          <div className="export-buttons">
-            <button type="button" onClick={handleCopy}>Copy</button>
-            <button type="button" onClick={handleCsv}>CSV</button>
-            <button type="button" onClick={handleExcel}>Excel</button>
-            <button type="button" onClick={handlePrint}>Print</button>
-          </div>
-        </div>
-
-        {pagedProducts.length === 0 ? (
-          <p className="empty-state">
-            {products.length === 0 ? 'No products registered yet.' : 'No products match your search.'}
-          </p>
-        ) : (
-          <table className="products-flat-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>
-                  <button type="button" className="sort-toggle" onClick={() => setSortAsc((prev) => !prev)}>
-                    Product Name {sortAsc ? '↑' : '↓'}
+          {totalPages > 1 && (
+            <div className="pl-pagination">
+              <button disabled={page <= 1} onClick={() => handlePageChange(page - 1)}>‹</button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .slice(Math.max(0, page - 3), Math.max(0, page - 3) + 5)
+                .map((n) => (
+                  <button
+                    key={n}
+                    className={n === page ? 'pl-page-active' : ''}
+                    onClick={() => handlePageChange(n)}
+                  >
+                    {n}
                   </button>
-                </th>
-                <th>Product Description</th>
-                <th>Variants</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagedProducts.map((product, index) => (
-                <tr key={product.product_id}>
-                  <td>{(page - 1) * pageSize + index + 1}.</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="product-link"
-                      onClick={() => navigate(`/listing/${product.product_id}`)}
-                    >
-                      {product.product_name}
-                    </button>
-                  </td>
-                  <td>{product.product_description || '—'}</td>
-                  <td>{product.variants.length}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-        {filteredProducts.length > 0 && (
-          <div className="pagination-bar">
-            <button className="btn-secondary" onClick={() => handlePageChange(page - 1)} disabled={page <= 1}>
-              Previous
-            </button>
-            <span className="pagination-status">Page {page} of {totalPages}</span>
-            <button className="btn-secondary" onClick={() => handlePageChange(page + 1)} disabled={page >= totalPages}>
-              Next
-            </button>
-          </div>
-        )}
+                ))}
+              <button disabled={page >= totalPages} onClick={() => handlePageChange(page + 1)}>›</button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {editingRow && (
+        <EditVariantModal
+          product={editingRow.product}
+          variant={editingRow.variant}
+          onClose={() => setEditingRow(null)}
+          onSaved={handleVariantSaved}
+        />
+      )}
     </div>
   );
 }

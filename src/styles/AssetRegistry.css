@@ -530,27 +530,44 @@
 
 /* --- Just Registered card (matches Product Listing / Product Balance theme) --- */
 
+/* --- Just Registered card (green theme, matches Product Details / Next Steps cards) --- */
+
 .just-registered-card {
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-top: 3px solid #2563eb;
-  border-radius: 8px;
-  padding: 20px 24px;
+  border: 1px solid #eceae3;
+  border-radius: 18px;
+  padding: 26px 30px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
+  box-shadow: 0 1px 3px rgba(16, 24, 16, 0.04);
 }
 
 .just-registered-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #0d2d5e;
+  gap: 10px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0efe9;
+}
+
+.just-registered-icon {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 9px;
+  background: #eef8e8;
+  color: #2e7d14;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .just-registered-header h2 {
   margin: 0;
   font-size: 1.05rem;
+  font-weight: 700;
+  color: #111827;
 }
 
 .just-registered-card .product-block {
@@ -564,22 +581,25 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .just-registered-card .product-block-header h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
   color: #111827;
 }
 
 .just-registered-card .variant-count-badge {
-  background: #6b7280;
-  color: #fff;
-  border-radius: 6px;
-  padding: 2px 9px;
-  font-size: 0.78rem;
+  background: #eef8e8;
+  color: #2e7d14;
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 0.72rem;
   font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .just-registered-card .product-description {
@@ -591,6 +611,8 @@
 
 .variant-table-wrapper {
   overflow-x: auto;
+  border: 1px solid #f0efe9;
+  border-radius: 12px;
 }
 
 .just-registered-card .variant-list-table {
@@ -600,61 +622,39 @@
 
 .just-registered-card .variant-list-table th,
 .just-registered-card .variant-list-table td {
-  padding: 10px 14px;
+  padding: 12px 16px;
   text-align: left;
-  border-bottom: 1px solid #e5e7eb;
-  font-size: 0.88rem;
+  border-bottom: 1px solid #f0efe9;
+  font-size: 0.86rem;
   white-space: nowrap;
 }
 
 .just-registered-card .variant-list-table th {
-  background: #f8f9fb;
-  color: #374151;
-  font-weight: 600;
+  background: #f7f9f4;
+  color: #6b7280;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.just-registered-card .variant-list-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .just-registered-card .variant-list-table tbody tr:hover {
-  background: #f8f9fb;
+  background: #f7fbf3;
 }
 
 .sku-badge {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 12px;
-  font-weight: 600;
-  color: #0d2d5e;
-  background: rgba(13, 45, 94, 0.08);
-  padding: 3px 8px;
-  border-radius: 6px;
-}
-
-.color-swatch-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.just-registered-card .variant-color-dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid #d1d5db;
-  margin: 0;
-}
-
-.color-hex {
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
-  color: #6b7280;
-}
-
-.price-badge {
-  display: inline-block;
   font-weight: 700;
-  color: #0d2d5e;
-}
-
-.muted-dash {
-  color: #9ca3af;
+  color: #2e7d14;
+  background: #eef8e8;
+  padding: 3px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
 }
 
 /* --- Two-column Register Product layout ---------------------------------- */
@@ -680,7 +680,7 @@
 .product-details-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 10px;
   margin-bottom: 8px;
 }
 
@@ -811,7 +811,7 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #a49b82;
-  margin-bottom: 6px;
+  margin-bottom: 0px;
 }
 
 .required-asterisk {
@@ -825,7 +825,7 @@
   background: #f7f6f1;
   border: 1px solid #e8e6dc;
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 9px 12px;
   font-size: 14.5px;
   color: #1f2937;
   transition: border-color 0.15s, background 0.15s;

@@ -1,0 +1,301 @@
+/* src/styles/EditVariantModal.css — matches the RegisterProduct green theme */
+
+.evm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 16, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 24px;
+}
+
+.evm-panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #eceae3;
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(16, 24, 16, 0.25);
+}
+
+/* --- Header --- */
+
+.evm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid #f0efe9;
+}
+
+.evm-header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #111827;
+  letter-spacing: -0.01em;
+}
+
+.evm-subtitle {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: #9ca3af;
+}
+
+.evm-close {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  display: flex;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.evm-close:hover {
+  color: #111827;
+  background: #f7f6f1;
+}
+
+/* --- Body --- */
+
+.evm-body {
+  padding: 22px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Attribute card — mirrors .variant-card from AssetRegistry/RegisterProduct */
+
+.evm-card {
+  background: #fff;
+  border: 1px solid #eceae3;
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.evm-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -18px -20px 0;
+  padding: 14px 20px;
+  background: #f8f9f6;
+  border-bottom: 1px solid #f0efe9;
+  border-radius: 14px 14px 0 0;
+}
+
+.evm-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.evm-add-attribute {
+  background: none;
+  border: 1px dashed #2e7d14;
+  color: #2e7d14;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.evm-add-attribute:hover {
+  background: #eef8e8;
+}
+
+.evm-attributes-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.evm-empty-attrs {
+  margin: 0;
+  font-size: 12.5px;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.evm-attribute-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.evm-attribute-key-select {
+  padding: 8px 10px;
+  border: 1px solid #b7c7a6;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1f2937;
+  background: #f7f6f1;
+  min-width: 140px;
+  flex: 0 0 auto;
+}
+
+.evm-attribute-row input {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  border: 1px solid #e8e6dc;
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: #1f2937;
+  background: #f7f6f1;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.evm-attribute-row input::placeholder {
+  color: #a3a99c;
+}
+
+.evm-attribute-row input:focus {
+  outline: none;
+  background: #fff;
+  border-color: #b7c7a6;
+  box-shadow: 0 0 0 3px rgba(46, 125, 20, 0.08);
+}
+
+.evm-icon-remove {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid #e5e4e7;
+  background: #fff;
+  color: #9ca3af;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.evm-icon-remove:hover {
+  border-color: #dc2626;
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+/* --- Price / SKU / Remarks fields --- */
+
+.evm-fields-row {
+  display: flex;
+  gap: 16px;
+}
+
+.evm-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.evm-field-wide {
+  flex: 1 1 100%;
+}
+
+.evm-field label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a49b82;
+}
+
+.evm-required {
+  color: #c2410c;
+}
+
+.evm-field input {
+  padding: 9px 12px;
+  border: 1px solid #e8e6dc;
+  border-radius: 10px;
+  font-size: 14.5px;
+  color: #1f2937;
+  background: #f7f6f1;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.evm-field input::placeholder {
+  color: #a3a99c;
+}
+
+.evm-field input:focus {
+  outline: none;
+  background: #fff;
+  border-color: #b7c7a6;
+  box-shadow: 0 0 0 3px rgba(46, 125, 20, 0.08);
+}
+
+/* --- Footer actions --- */
+
+.evm-error-text {
+  margin: 0;
+  font-size: 13px;
+  color: #dc2626;
+}
+
+.evm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #f0efe9;
+  padding-top: 18px;
+}
+
+.evm-btn-secondary {
+  background: #fff;
+  border: 1px solid #d8d5c8;
+  color: #1f2937;
+  border-radius: 9px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.evm-btn-secondary:hover {
+  background: #faf9f5;
+}
+
+.evm-btn-primary {
+  background: #1e4010;
+  color: #fff;
+  border: none;
+  border-radius: 9px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.evm-btn-primary:hover:not(:disabled) {
+  background: #163009;
+}
+
+.evm-btn-primary:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+@media (max-width: 480px) {
+  .evm-fields-row {
+    flex-direction: column;
+  }
+}

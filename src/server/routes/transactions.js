@@ -133,9 +133,7 @@ router.get('/scan-lookup', async (req, res) => {
     req.query.qr_value?.trim();
 
   if (!value) {
-    return res.status(400).json({
-      message: 'serial_number or qr_value is required.'
-    });
+    return res.status(400).json({ message: 'serial_number or qr_value is required.' });
   }
 
   try {
@@ -155,7 +153,7 @@ router.get('/scan-lookup', async (req, res) => {
       JOIN variants v ON v.variant_id = qc.variant_id
       JOIN products p ON p.product_id = v.product_id
       WHERE
-          (qc.serial_number = $1 OR qc.qr_value = $1)
+          (UPPER(qc.serial_number) = UPPER($1) OR qc.qr_value = $1)
       AND p.merchant_id = $2
       ORDER BY qc.created_at DESC
       LIMIT 1
