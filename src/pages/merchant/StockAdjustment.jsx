@@ -1,38 +1,51 @@
-// src/pages/StockAdjustment.jsx
+// src/pages/merchant/StockAdjustment.jsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
-import { PackageSearch, ScanBarcode, X } from 'lucide-react';
+import { ScanBarcode, X, ChevronDown, ChevronRight, RotateCcw, Download } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
-import TableControls from '../../components/TableControls';
-import { exportRowsToExcel, exportRowsToCsv, exportRowsToPdf } from '../../utils/tableExport';
-import { formatDateTime } from '../../utils/dateFormat';
+import { exportRowsToCsv } from '../../utils/tableExport';
 import '../../styles/StockAdjustment.css';
 
-function attributesObjectToArray(attributesObject) {
-  if (!attributesObject) return [];
-  return Object.entries(attributesObject).map(([key, value]) => ({
-    id: crypto.randomUUID(),
-    key,
-    value,
-  }));
+function attrsToArray(attributes) {
+  if (!attributes) return [];
+  return Object.entries(attributes).map(([key, value]) => ({ key, value }));
 }
 
-function formatVariation(attributesObject) {
-  const arr = attributesObjectToArray(attributesObject);
-  return arr.length > 0 ? arr.map((a) => `${a.key}: ${a.value}`).join(', ') : '—';
+// "sizes" if every variant only varies by one attribute like "Size",
+// otherwise falls back to the generic "variants".
+function variantGroupLabel(variants) {
+  const keys = new Set();
+  variants.forEach((v) => Object.keys(v.attributes || {}).forEach((k) => keys.add(k)));
+  if (keys.size === 1) {
+    const key = [...keys][0].toLowerCase();
+    return key.endsWith('s') ? key : `${key}s`;
+  }
+  return 'variants';
 }
 
-// Client-side safety net on top of the backend's ORDER BY last_movement DESC
-// — keeps the table correctly ordered by the full timestamp even after
-// client-side product/variant filtering, and treats rows with no movement
-// yet (null last_movement) as the oldest, not the newest.
-function sortByLastMovementDesc(rows) {
-  return [...rows].sort((a, b) => {
-    const aTime = a.last_movement ? new Date(a.last_movement).getTime() : -Infinity;
-    const bTime = b.last_movement ? new Date(b.last_movement).getTime() : -Infinity;
-    return bTime - aTime;
-  });
+function variantLabel(variant, sharedKey) {
+  const attrs = attrsToArray(variant.attributes);
+  if (attrs.length === 0) return variant.sku;
+  if (sharedKey && attrs.length === 1) return attrs[0].value;
+  return attrs.map((a) => `${a.key}: ${a.value}`).join(', ');
+}
+
+// Per-store cell coloring: needs a per-store threshold (reorder / #stores).
+function cellHealth(qty, threshold) {
+  if (qty === 0) return 'zero';
+  if (threshold == null) return 'healthy';
+  if (qty <= threshold * 0.5) return 'critical';
+  if (qty < threshold) return 'low';
+  return 'healthy';
+}
+
+// Row-level health: compares the product's full total against its own reorder point.
+function rowHealth(total, reorder) {
+  if (reorder == null) return 'healthy';
+  if (total <= reorder * 0.5) return 'critical';
+  if (total < reorder) return 'low';
+  return 'healthy';
 }
 
 export default function StockAdjustment() {
@@ -40,19 +53,17 @@ export default function StockAdjustment() {
   const [stores, setStores] = useState([]);
   const [products, setProducts] = useState([]);
 
-  const [productFilter, setProductFilter] = useState('');
-  const [variantFilter, setVariantFilter] = useState('');
+  // --- Filters -----------------------------------------------------------
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [skuFilter, setSkuFilter] = useState('');
   const [storeFilter, setStoreFilter] = useState('');
+  const [stockState, setStockState] = useState('all'); // all | low | critical
 
-  const [rows, setRows] = useState([]);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
+  // --- Expand state --------------------------------------------------------
+  const [expandedRows, setExpandedRows] = useState({});
+  const [allExpanded, setAllExpanded] = useState(false);
 
-  const [pageSize, setPageSize] = useState(10);
-  const [page, setPage] = useState(1);
-
-  // --- Scan-to-search state ------------------------------------------------
+  // --- Scan-to-search --------------------------------------------------------
   const [scanInput, setScanInput] = useState('');
   const [scanError, setScanError] = useState('');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -78,64 +89,132 @@ export default function StockAdjustment() {
     };
   }, []);
 
-  const variantOptions = useMemo(() => {
-    if (!productFilter) return [];
-    const product = products.find((p) => p.product_id === productFilter);
-    return product ? product.variants : [];
-  }, [products, productFilter]);
+  // --- One row per product, with per-store quantities summed across variants
+  const rows = useMemo(() => {
+    return products.map((product) => {
+      const variants = product.variants || [];
+      const storeQtys = {};
+      stores.forEach((s) => { storeQtys[s.store_id] = 0; });
+      variants.forEach((v) => {
+        Object.entries(v.balances || {}).forEach(([storeId, qty]) => {
+          storeQtys[storeId] = (storeQtys[storeId] || 0) + Number(qty);
+        });
+      });
+      const totalAll = Object.values(storeQtys).reduce((a, c) => a + c, 0);
 
-  const handleProductChange = (e) => {
-    setProductFilter(e.target.value);
-    setVariantFilter('');
-  };
+      const keys = new Set();
+      variants.forEach((v) => Object.keys(v.attributes || {}).forEach((k) => keys.add(k)));
+      const sharedKey = keys.size === 1 ? [...keys][0] : null;
 
-  // Runs the actual search against explicit filter values, so callers
-  // (scan handler) can pass fresh values without waiting on setState.
-  const performSearch = ({ product_id, variant_id, store_id }) => {
-    setIsLoading(true);
-    setErrorMessage('');
-
-    const params = new URLSearchParams();
-    if (store_id) params.set('store_id', store_id);
-
-    apiFetch(`/api/stock-balance?${params.toString()}`)
-      .then((res) => res.json())
-      .then((data) => {
-        let filtered = data;
-
-        if (variant_id) {
-          filtered = filtered.filter((r) => r.variant_id === variant_id);
-        } else if (product_id) {
-          const productVariants = products.find((p) => p.product_id === product_id);
-          const variantIds = new Set((productVariants?.variants || []).map((v) => v.variant_id));
-          filtered = filtered.filter((r) => variantIds.has(r.variant_id));
-        }
-
-        setRows(sortByLastMovementDesc(filtered));
-        setHasSearched(true);
-        setPage(1);
-      })
-      .catch((err) => {
-        setErrorMessage('Could not reach server. Check it is running.');
-        console.error(err);
-      })
-      .finally(() => setIsLoading(false));
-  };
-
-  const runSearch = (e) => {
-    e.preventDefault();
-    performSearch({
-      product_id: productFilter,
-      variant_id: variantFilter,
-      store_id: storeFilter,
+      return {
+        product,
+        variants,
+        storeQtys,
+        totalAll,
+        groupLabel: variantGroupLabel(variants),
+        sharedKey,
+        primarySku: variants[0]?.sku || '—',
+      };
     });
+  }, [products, stores]);
+
+  const categories = useMemo(() => {
+    const set = new Set();
+    products.forEach((p) => { if (p.product_category) set.add(p.product_category); });
+    return Array.from(set).sort();
+  }, [products]);
+
+  const skuOptions = useMemo(
+    () => rows.map((r) => ({ value: r.product.product_id, label: r.primarySku })),
+    [rows]
+  );
+
+  const visibleStoreIds = storeFilter ? [storeFilter] : stores.map((s) => s.store_id);
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((r) => {
+      if (categoryFilter && r.product.product_category !== categoryFilter) return false;
+      if (skuFilter && r.product.product_id !== skuFilter) return false;
+
+      const visibleTotal = visibleStoreIds.reduce((a, id) => a + (r.storeQtys[id] || 0), 0);
+      const reorder = r.product.reorder_point;
+
+      if (stockState === 'low') return reorder != null && visibleTotal < reorder;
+      if (stockState === 'critical') return reorder != null && visibleTotal <= reorder * 0.5;
+      return true;
+    });
+  }, [rows, categoryFilter, skuFilter, stockState, visibleStoreIds]);
+
+  // --- Stats ---------------------------------------------------------------
+  const stats = useMemo(() => {
+    let unitsOnHand = 0;
+    let belowReorder = 0;
+
+    filteredRows.forEach((r) => {
+      const visibleTotal = visibleStoreIds.reduce((a, id) => a + (r.storeQtys[id] || 0), 0);
+      unitsOnHand += visibleTotal;
+      if (r.product.reorder_point != null && visibleTotal < r.product.reorder_point) {
+        belowReorder += 1;
+      }
+    });
+
+    const storeTotals = stores.map((s) =>
+      filteredRows.reduce((a, r) => a + (r.storeQtys[s.store_id] || 0), 0)
+    );
+    const storesWithZero = storeTotals.filter((t) => t === 0).length;
+
+    return {
+      matched: filteredRows.length,
+      total: rows.length,
+      unitsOnHand,
+      belowReorder,
+      storesWithZero,
+      storeTotals,
+      grandTotal: storeTotals.reduce((a, c) => a + c, 0),
+    };
+  }, [filteredRows, rows.length, stores, visibleStoreIds]);
+
+  // --- Handlers --------------------------------------------------------------
+
+  const resetFilters = () => {
+    setCategoryFilter('');
+    setSkuFilter('');
+    setStoreFilter('');
+    setStockState('all');
   };
 
-  // --- Scan handling ---------------------------------------------------------
+  const toggleRow = (productId) => {
+    setExpandedRows((prev) => ({ ...prev, [productId]: !prev[productId] }));
+  };
+
+  const toggleAllRows = () => {
+    if (allExpanded) {
+      setExpandedRows({});
+      setAllExpanded(false);
+    } else {
+      const next = {};
+      filteredRows.forEach((r) => { next[r.product.product_id] = true; });
+      setExpandedRows(next);
+      setAllExpanded(true);
+    }
+  };
+
+  const handleExportCsv = () => {
+    const exportRows = [];
+    filteredRows.forEach((r) => {
+      const row = { Product: r.product.product_name, SKU: r.primarySku };
+      stores.forEach((s) => { row[s.location] = r.storeQtys[s.store_id] || 0; });
+      row.Total = r.totalAll;
+      row['Reorder At'] = r.product.reorder_point ?? '';
+      exportRows.push(row);
+    });
+    exportRowsToCsv(exportRows, 'inventory-balance.csv');
+  };
+
+  // --- Scan-to-search --------------------------------------------------------
 
   const handleScanResult = async (value) => {
     setScanError('');
-
     try {
       const res = await apiFetch(`/api/transactions/scan-lookup?serial_number=${encodeURIComponent(value)}`);
       const result = await res.json();
@@ -145,18 +224,10 @@ export default function StockAdjustment() {
         return;
       }
 
-      // Auto-select product, variant, and (if the unit is currently in a
-      // store) that store, then immediately run the search with those
-      // values — no need to wait for a second click.
-      setProductFilter(result.product_id);
-      setVariantFilter(result.variant_id);
+      setCategoryFilter('');
+      setSkuFilter(result.product_id);
       setStoreFilter(result.current_store_id || '');
-
-      performSearch({
-        product_id: result.product_id,
-        variant_id: result.variant_id,
-        store_id: result.current_store_id || '',
-      });
+      setStockState('all');
     } catch (err) {
       setScanError('Could not reach server. Check it is running.');
       console.error(err);
@@ -185,7 +256,7 @@ export default function StockAdjustment() {
 
     setTimeout(async () => {
       try {
-        const html5Qr = new Html5Qrcode('stock-adjustment-qr-reader');
+        const html5Qr = new Html5Qrcode('ib-qr-reader');
         html5QrRef.current = html5Qr;
 
         await html5Qr.start(
@@ -211,38 +282,10 @@ export default function StockAdjustment() {
     setScanError('');
   };
 
-  const exportRows = useMemo(
-    () =>
-      rows.map((r) => ({
-        Store: r.store_name,
-        'SKU ID': r.sku,
-        'Product Name': r.product_name,
-        Variation: formatVariation(r.attributes),
-        'Price (RM)': r.price ? Number(r.price).toFixed(2) : '',
-        Balance: r.qty,
-        Date: formatDateTime(r.last_movement),
-      })),
-    [rows]
-  );
-
-  const handleExportExcel = () => exportRowsToExcel(exportRows, 'product-balance.xlsx', 'Product Balance');
-  const handleExportCsv = () => exportRowsToCsv(exportRows, 'product-balance.csv');
-  const handleExportPdf = () => exportRowsToPdf(exportRows, 'product-balance.pdf', 'Product Balance');
-
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
-  const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
-
-  const handlePageChange = (next) => {
-    if (next < 1 || next > totalPages) return;
-    setPage(next);
-  };
-
   return (
-    <div className="stock-adjustment">
-      <section className="balance-card">
-
-
-        {/* --- Scan-to-search row ------------------------------------------- */}
+    <div className="ib-page">
+      {/* --- Scan-to-search ---------------------------------------------- */}
+      {/*<section className="balance-card">
         <div className="scan-search-row">
           {!isCameraOpen ? (
             <>
@@ -254,7 +297,6 @@ export default function StockAdjustment() {
                   value={scanInput}
                   onChange={(e) => setScanInput(e.target.value)}
                   placeholder="Point scanner here or type serial number / QR value to auto-search..."
-                  autoFocus
                 />
                 {scanInput && (
                   <button type="button" className="sm-input-clear" onClick={clearScan} aria-label="Clear input">
@@ -268,7 +310,7 @@ export default function StockAdjustment() {
             </>
           ) : (
             <div className="scan-search-camera-active">
-              <div id="stock-adjustment-qr-reader" className="qr-reader-box" />
+              <div id="ib-qr-reader" className="qr-reader-box" />
               <button type="button" className="btn-secondary" onClick={toggleCamera}>
                 Stop Camera
               </button>
@@ -276,134 +318,237 @@ export default function StockAdjustment() {
           )}
         </div>
         {scanError && <p className="error-text">{scanError}</p>}
+      </section>*/}
 
-        <div className="or-divider-row">
-          <span className="or-divider">or filter manually</span>
+      {/* --- Filter row ------------------------------------------------------ */}
+      <section className="ib-filter-card">
+        <div className="ib-field">
+          <label>Category</label>
+          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+            <option value="">All categories</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
         </div>
 
-        <form className="balance-filter-grid" onSubmit={runSearch}>
-          <div className="form-group">
-            <label>Product</label>
-            <select value={productFilter} onChange={handleProductChange}>
-              <option value="">-- All Products --</option>
-              {products.map((p) => (
-                <option key={p.product_id} value={p.product_id}>{p.product_name}</option>
-              ))}
-            </select>
-          </div>
+        <div className="ib-field">
+          <label>SKU</label>
+          <select value={skuFilter} onChange={(e) => setSkuFilter(e.target.value)}>
+            <option value="">All SKUs</option>
+            {skuOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
 
-          <div className="form-group">
-            <label>SKU / Variant</label>
-            <select
-              value={variantFilter}
-              onChange={(e) => setVariantFilter(e.target.value)}
-              disabled={!productFilter}
-            >
-              <option value="">-- All Variants --</option>
-              {variantOptions.map((v) => (
-                <option key={v.variant_id} value={v.variant_id}>
-                  {v.sku} ({formatVariation(v.attributes)})
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="ib-field">
+          <label>Store</label>
+          <select value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)}>
+            <option value="">All stores</option>
+            {stores.map((s) => (
+              <option key={s.store_id} value={s.store_id}>{s.location}</option>
+            ))}
+          </select>
+        </div>
 
-          <div className="form-group">
-            <label>Store</label>
-            <select value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)}>
-              <option value="">-- All Stores --</option>
-              {stores.map((s) => (
-                <option key={s.store_id} value={s.store_id}>{s.location}</option>
-              ))}
-            </select>
+        <div className="ib-field">
+          <label>Stock State</label>
+          <div className="ib-segmented">
+            {[['all', 'All'], ['low', 'Low'], ['critical', 'Critical']].map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                className={`ib-segmented-btn ${stockState === val ? 'ib-segmented-btn-active' : ''}`}
+                onClick={() => setStockState(val)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+        </div>
 
-          <div className="balance-filter-actions">
-            <button type="submit" className="btn-primary" disabled={isLoading}>
-              {isLoading ? 'Searching…' : 'Search'}
-            </button>
-          </div>
-        </form>
-
-        {errorMessage && <p className="error-text">{errorMessage}</p>}
+        <button type="button" className="ib-reset-btn" onClick={resetFilters}>
+          <RotateCcw size={14} />
+          Reset
+        </button>
       </section>
 
-      <section className="balance-card">
-        <div className="balance-results-header">
-          <h2>Results {hasSearched ? `(${rows.length})` : ''}</h2>
+      {/* --- Stats row --------------------------------------------------------- */}
+      <section className="ib-stats-grid">
+        <div className="ib-stat-card">
+          <span className="ib-stat-label">SKUs Matched</span>
+          <div className="ib-stat-row">
+            <span className="ib-stat-value">{stats.matched}</span>
+            <span className="ib-stat-unit">of {stats.total}</span>
+          </div>
+        </div>
+        <div className="ib-stat-card">
+          <span className="ib-stat-label">Units on Hand</span>
+          <div className="ib-stat-row">
+            <span className="ib-stat-value">{stats.unitsOnHand}</span>
+            <span className="ib-stat-unit">units</span>
+          </div>
+        </div>
+        <div className="ib-stat-card">
+          <span className="ib-stat-label">Below Reorder</span>
+          <div className="ib-stat-row">
+            <span className={`ib-stat-value ${stats.belowReorder > 0 ? 'ib-stat-value-warning' : ''}`}>
+              {stats.belowReorder}
+            </span>
+            <span className="ib-stat-unit">SKUs</span>
+          </div>
+        </div>
+        <div className="ib-stat-card">
+          <span className="ib-stat-label">Stores with Zero</span>
+          <div className="ib-stat-row">
+            <span className="ib-stat-value">{stats.storesWithZero}</span>
+            <span className="ib-stat-unit">locations</span>
+          </div>
+        </div>
+      </section>
+
+      {/* --- Table --------------------------------------------------------------- */}
+      <section className="ib-table-card">
+        <div className="ib-table-header">
+          <h2>Balance by store</h2>
+          <span className="ib-badge-count">{filteredRows.length} SKUs</span>
+          <button type="button" className="ib-expand-btn" onClick={toggleAllRows}>
+            {allExpanded ? 'Collapse sizes' : 'Expand sizes'}
+          </button>
+          <div className="ib-spacer" />
+          <div className="ib-legend">
+            <span className="ib-legend-item"><span className="ib-legend-dot ib-legend-dot-healthy" />healthy</span>
+            <span className="ib-legend-item"><span className="ib-legend-dot ib-legend-dot-low" />low</span>
+            <span className="ib-legend-item"><span className="ib-legend-dot ib-legend-dot-critical" />critical</span>
+          </div>
+          <button type="button" className="ib-export-btn" onClick={handleExportCsv} disabled={filteredRows.length === 0}>
+            <Download size={14} />
+            Export CSV
+          </button>
         </div>
 
-        {!hasSearched ? (
-          <p className="empty-state">Scan a code or choose your filters and click Search to view balances.</p>
-        ) : rows.length === 0 ? (
-          <p className="empty-state">No stock found for this query.</p>
+        {stores.length === 0 ? (
+          <p className="empty-state">No stores configured yet.</p>
+        ) : filteredRows.length === 0 ? (
+          <p className="empty-state">No products match your filters.</p>
         ) : (
-          <>
-            <TableControls
-              pageSize={pageSize}
-              onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
-              onExportExcel={handleExportExcel}
-              onExportCsv={handleExportCsv}
-              onExportPdf={handleExportPdf}
-              disabled={exportRows.length === 0}
-            />
-
-            <table className="balance-table" style={{ maxWidth: 'none' }}>
+          <div className="ib-table-wrapper">
+            <table className="ib-table">
               <thead>
                 <tr>
-                  <th>Store</th>
-                  <th>SKU ID</th>
-                  <th>Product Name</th>
-                  <th>Variation</th>
-                  <th>Price (RM)</th>
-                  <th>Balance</th>
-                  <th>Date</th>
+                  <th className="ib-col-product">Product</th>
+                  <th>SKU</th>
+                  {stores.map((s) => (
+                    <th key={s.store_id} className="ib-col-store">{s.location}</th>
+                  ))}
+                  <th className="ib-col-total">Total</th>
+                  <th className="ib-col-reorder">Reorder At</th>
                 </tr>
               </thead>
               <tbody>
-                {pagedRows.map((r) => (
-                  <tr key={`${r.variant_id}-${r.store_id}`}>
-                    <td data-label="Store">
-                      <button
-                        type="button"
-                        className="product-link"
-                        onClick={() =>
-                          navigate(`/stock-balance/${r.variant_id}/${r.store_id}`, {
-                            state: {
-                              product_name: r.product_name,
-                              sku: r.sku,
-                              store_name: r.store_name,
-                              price: r.price,
-                              attributes: r.attributes,
-                              qty: r.qty,
-                            },
-                          })
-                        }
-                      >
-                        {r.store_name}
-                      </button>
-                    </td>
-                    <td data-label="SKU ID">{r.sku}</td>
-                    <td data-label="Product Name">{r.product_name}</td>
-                    <td data-label="Variation">{formatVariation(r.attributes)}</td>
-                    <td data-label="Price (RM)">{r.price ? Number(r.price).toFixed(2) : '—'}</td>
-                    <td data-label="Balance"><span className="balance-badge">{r.qty}</span></td>
-                    <td data-label="Date">{formatDateTime(r.last_movement)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                {filteredRows.map((r) => {
+                  const productId = r.product.product_id;
+                  const isOpen = !!expandedRows[productId];
+                  const reorder = r.product.reorder_point;
+                  const health = rowHealth(r.totalAll, reorder);
+                  const perStoreThreshold = reorder != null && stores.length > 0 ? reorder / stores.length : null;
+                  const barPct = reorder ? Math.min(100, (r.totalAll / (reorder * 3)) * 100) : 0;
 
-            <div className="tc-pagination-bar">
-              <button className="btn-secondary" onClick={() => handlePageChange(page - 1)} disabled={page <= 1}>
-                Previous
-              </button>
-              <span className="tc-pagination-status">Page {page} of {totalPages}</span>
-              <button className="btn-secondary" onClick={() => handlePageChange(page + 1)} disabled={page >= totalPages}>
-                Next
-              </button>
-            </div>
-          </>
+                  return (
+                    <React.Fragment key={productId}>
+                      <tr className="ib-row-product" onClick={() => toggleRow(productId)}>
+                        <td className="ib-col-product">
+                          <span className="ib-caret">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+                          <span className={`ib-dot ib-dot-${health}`} />
+                          <span className="ib-product-name">{r.product.product_name}</span>
+                          <span className="ib-variant-count">{r.variants.length} {r.groupLabel}</span>
+                        </td>
+                        <td className="ib-sku-cell">{r.primarySku}</td>
+                        {stores.map((s) => {
+                          const qty = r.storeQtys[s.store_id] || 0;
+                          const health2 = cellHealth(qty, perStoreThreshold);
+                          const dimmed = storeFilter && storeFilter !== s.store_id;
+                          return (
+                            <td key={s.store_id} className="ib-col-store">
+                              <span className={`ib-cell ib-cell-${health2} ${dimmed ? 'ib-cell-dimmed' : ''}`}>
+                                {qty}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td className="ib-col-total ib-total-value">{r.totalAll}</td>
+                        <td className="ib-col-reorder">
+                          {reorder != null ? (
+                            <div className="ib-reorder-cell">
+                              <span className={`ib-reorder-bar ib-reorder-bar-${health}`}>
+                                <span className="ib-reorder-bar-fill" style={{ width: `${barPct}%` }} />
+                              </span>
+                              <span className="ib-reorder-value">{reorder}</span>
+                            </div>
+                          ) : (
+                            <span className="muted-dash">—</span>
+                          )}
+                        </td>
+                      </tr>
+
+                      {isOpen && r.variants.map((v) => {
+                        const vTotal = stores.reduce((a, s) => a + (v.balances?.[s.store_id] || 0), 0);
+                        return (
+                          <tr key={v.variant_id} className="ib-row-variant">
+                            <td className="ib-col-product ib-subrow-label">
+                              <span className="ib-subrow-tick" />
+                              {variantLabel(v, r.sharedKey)}
+                            </td>
+                            <td className="ib-sku-cell ib-subrow-sku">{v.sku}</td>
+                            {stores.map((s) => {
+                              const qty = v.balances?.[s.store_id] || 0;
+                              const dimmed = storeFilter && storeFilter !== s.store_id;
+                              return (
+                                <td
+                                  key={s.store_id}
+                                  className={`ib-col-store ib-subcell ${qty === 0 ? 'ib-subcell-zero' : ''} ${dimmed ? 'ib-cell-dimmed' : ''}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (qty === 0) return;
+                                    navigate(`/stock-balance/${v.variant_id}/${s.store_id}`, {
+                                      state: {
+                                        product_name: r.product.product_name,
+                                        sku: v.sku,
+                                        store_name: s.location,
+                                        price: v.price,
+                                        attributes: v.attributes,
+                                        qty,
+                                      },
+                                    });
+                                  }}
+                                >
+                                  {qty}
+                                </td>
+                              );
+                            })}
+                            <td className="ib-col-total ib-subrow-total">{vTotal}</td>
+                            <td className="ib-col-reorder"></td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td className="ib-col-product ib-footer-label">Total on hand</td>
+                  <td></td>
+                  {stores.map((s, i) => (
+                    <td key={s.store_id} className="ib-col-store ib-footer-value">{stats.storeTotals[i]}</td>
+                  ))}
+                  <td className="ib-col-total ib-footer-total">{stats.grandTotal}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         )}
       </section>
     </div>

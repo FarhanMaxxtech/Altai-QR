@@ -1,253 +1,413 @@
 // src/pages/StoreManagement.jsx
 import React, { useState, useMemo, useEffect } from 'react';
+import { Store, Pencil } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import '../../styles/StoreManagement.css';
 
-const STATUS_OPTIONS = ['Active', 'Inactive'];
+const TYPE_OPTIONS = ['Flagship', 'Retail', 'Warehouse', 'Pop-up'];
+const STATUS_OPTIONS = ['Active', 'Opening soon', 'Inactive'];
 
-// Client-side placeholder — once the backend exists, this should be a
-// real Postgres sequence, same reasoning as the SKU sequence issue earlier.
-function generateStoreId(existingStores) {
-  const nextNumber = existingStores.length + 1;
-  return `STR-${String(nextNumber).padStart(4, '0')}`;
+function emptyForm() {
+  return {
+    location: '',
+    store_code: '',
+    type: 'Retail',
+    status: 'Opening soon',
+    manager_name: '',
+    phone: '',
+    address: '',
+    opening_hours: '10:00 - 22:00',
+  };
 }
 
-const emptyForm = { location: '', email: '', phone: '', status: 'Active' };
+function statusBadgeClass(status) {
+  if (status === 'Active') return 'sm2-badge sm2-badge-active';
+  if (status === 'Opening soon') return 'sm2-badge sm2-badge-pending';
+  return 'sm2-badge sm2-badge-inactive';
+}
 
 export default function StoreManagement() {
   const [stores, setStores] = useState([]);
+  const [balanceRows, setBalanceRows] = useState([]);
+  const [totalVariants, setTotalVariants] = useState(0);
 
-  useEffect(() => {
+  const [selectedStoreId, setSelectedStoreId] = useState(null);
+  const [mode, setMode] = useState('view'); // 'view' | 'edit' | 'create'
+  const [form, setForm] = useState(emptyForm());
+  const [statusMessage, setStatusMessage] = useState('');
+
+  const loadStores = () => {
     apiFetch('/api/stores')
       .then((res) => res.json())
-      .then((data) => setStores(data))
+      .then((data) => {
+        setStores(data);
+        if (data.length > 0 && !selectedStoreId) {
+          setSelectedStoreId(data[0].store_id);
+        } else if (data.length === 0) {
+          setMode('create');
+          setForm(emptyForm());
+        }
+      })
       .catch((err) => console.error('Failed to load stores:', err));
+  };
+
+  useEffect(() => {
+    loadStores();
+    apiFetch('/api/stock-balance')
+      .then((res) => res.json())
+      .then((data) => setBalanceRows(data))
+      .catch((err) => console.error('Failed to load stock balance:', err));
+    apiFetch('/api/products')
+      .then((res) => res.json())
+      .then((data) => setTotalVariants(data.reduce((sum, p) => sum + (p.variants?.length || 0), 0)))
+      .catch((err) => console.error('Failed to load products:', err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [form, setForm] = useState(emptyForm);
-  const [editingStoreId, setEditingStoreId] = useState(null);
-  const [statusMessage, setStatusMessage] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  const selectedStore = stores.find((s) => s.store_id === selectedStoreId) || null;
 
-  const handleChange = (e) => {
+  const unitsByStore = useMemo(() => {
+    const map = {};
+    balanceRows.forEach((row) => {
+      map[row.store_id] = map[row.store_id] || { units: 0, skus: new Set() };
+      map[row.store_id].units += Number(row.qty) || 0;
+      if (Number(row.qty) > 0) map[row.store_id].skus.add(row.variant_id);
+    });
+    return map;
+  }, [balanceRows]);
+
+  const selectedStats = selectedStoreId
+    ? {
+        units: unitsByStore[selectedStoreId]?.units || 0,
+        skus: unitsByStore[selectedStoreId]?.skus.size || 0,
+      }
+    : { units: 0, skus: 0 };
+
+  // --- Selection / navigation --------------------------------------------
+
+  const handleSelectStore = (store) => {
+    setSelectedStoreId(store.store_id);
+    setMode('view');
+    setStatusMessage('');
+  };
+
+  const handleNewStore = () => {
+    setSelectedStoreId(null);
+    setMode('create');
+    setForm(emptyForm());
+    setStatusMessage('');
+  };
+
+  const handleEditStore = () => {
+    if (!selectedStore) return;
+    setForm({
+      location: selectedStore.location || '',
+      store_code: selectedStore.store_code || '',
+      type: selectedStore.type || 'Retail',
+      status: selectedStore.status || 'Active',
+      manager_name: selectedStore.manager_name || '',
+      phone: selectedStore.phone || '',
+      address: selectedStore.address || '',
+      opening_hours: selectedStore.opening_hours || '',
+    });
+    setMode('edit');
+    setStatusMessage('');
+  };
+
+  const handleCancel = () => {
+    setStatusMessage('');
+    if (mode === 'create') {
+      if (stores.length > 0) {
+        setSelectedStoreId(stores[0].store_id);
+        setMode('view');
+      }
+    } else {
+      setMode('view');
+    }
+  };
+
+  const handleFieldChange = (e) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const resetForm = () => {
-    setForm(emptyForm);
-    setEditingStoreId(null);
-  };
+  const isValid = form.location.trim() && form.store_code.trim() && form.manager_name.trim();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setStatusMessage('');
+    if (!isValid) return;
 
-    if (!form.location.trim() || !form.email.trim() || !form.phone.trim()) {
-      setStatusMessage('Fill in outlet location, email, and phone number.');
-      return;
-    }
-
-    if (editingStoreId) {
-      try {
-        const res = await apiFetch(`/api/stores/${editingStoreId}`, {
-          method: 'PUT',
-          body: JSON.stringify(form),
-        });
-        const result = await res.json();
-
-        if (!res.ok) {
-          setStatusMessage(result.message || 'Could not update store.');
-          return;
-        }
-
-        setStores((prev) =>
-          prev.map((s) => (s.store_id === editingStoreId ? result : s))
-        );
-        setStatusMessage('Store updated.');
-      } catch (err) {
-        setStatusMessage('Could not reach server. Check it is running.');
-        console.error(err);
-      }
-    } else {
+    if (mode === 'create') {
       try {
         const res = await apiFetch('/api/stores', {
           method: 'POST',
           body: JSON.stringify(form),
         });
-        const savedStore = await res.json();
-        setStores((prev) => [...prev, savedStore]);
-        setStatusMessage('Store added.');
-      } catch (err) {
-        setStatusMessage('Failed to add store.');
-      }
-    }
-
-    resetForm();
-  };
-
-  const handleEdit = (store) => {
-    setEditingStoreId(store.store_id);
-    setForm({
-      location: store.location,
-      email: store.email,
-      phone: store.phone,
-      status: store.status,
-    });
-    setStatusMessage('');
-  };
-
-  const handleRemove = async (storeId) => {
-    const confirmed = window.confirm('Remove this store? This cannot be undone.');
-    if (!confirmed) return;
-
-    try {
-      const res = await apiFetch(`/api/stores/${storeId}`, { method: 'DELETE' });
-      if (!res.ok) {
         const result = await res.json();
-        setStatusMessage(result.message || 'Could not remove store.');
-        return;
+        if (!res.ok) {
+          setStatusMessage(result.message || 'Could not create store.');
+          return;
+        }
+        setStores((prev) => [...prev, result]);
+        setSelectedStoreId(result.store_id);
+        setMode('view');
+        setStatusMessage('Store created.');
+      } catch (err) {
+        setStatusMessage('Could not reach server. Check it is running.');
+        console.error(err);
       }
-      setStores((prev) => prev.filter((s) => s.store_id !== storeId));
-      if (editingStoreId === storeId) resetForm();
-    } catch (err) {
-      setStatusMessage('Could not reach server. Check it is running.');
-      console.error(err);
+    } else if (mode === 'edit' && selectedStore) {
+      try {
+        const res = await apiFetch(`/api/stores/${selectedStore.store_id}`, {
+          method: 'PUT',
+          body: JSON.stringify(form),
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          setStatusMessage(result.message || 'Could not update store.');
+          return;
+        }
+        setStores((prev) => prev.map((s) => (s.store_id === result.store_id ? result : s)));
+        setMode('view');
+        setStatusMessage('Store updated.');
+      } catch (err) {
+        setStatusMessage('Could not reach server. Check it is running.');
+        console.error(err);
+      }
     }
   };
 
-  const filteredStores = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
-    if (!term) return stores;
-
-    return stores.filter((s) =>
-      [s.store_id, s.location, s.email, s.phone].some((field) =>
-        field.toLowerCase().includes(term)
-      )
-    );
-  }, [stores, searchTerm]);
+  const showHeader = mode === 'create' || selectedStore;
+  const showStats = mode !== 'create' && selectedStore;
+  const readOnly = mode === 'view';
 
   return (
-    <div className="store-management">
-      <section className="store-form-section">
-        <h2>{editingStoreId ? 'Edit Store' : 'Add New Store'}</h2>
+    <div className="sm2-layout">
+      {/* --- Left: locations list --- */}
+      <aside className="sm2-sidebar">
+        <div className="sm2-sidebar-header">
+          <h2>Locations</h2>
+          <span className="sm2-count-badge">{stores.length}</span>
+        </div>
 
-        <form className="store-form" onSubmit={handleSubmit}>
-          <div className="form-group form-group-wide">
-            <label htmlFor="location">Location / Outlet</label>
-            <input
-              id="location"
-              name="location"
-              type="text"
-              value={form.location}
-              onChange={handleChange}
-              placeholder="e.g. Branch C - Johor Bahru"
-              required
-            />
-          </div>
+        <div className="sm2-list">
+          {stores.length === 0 ? (
+            <p className="sm2-empty-list">No stores yet.</p>
+          ) : (
+            stores.map((store) => {
+              const stats = unitsByStore[store.store_id];
+              const isActive = store.store_id === selectedStoreId && mode !== 'create';
+              return (
+                <button
+                  key={store.store_id}
+                  type="button"
+                  className={`sm2-store-card ${isActive ? 'sm2-store-card-active' : ''}`}
+                  onClick={() => handleSelectStore(store)}
+                >
+                  <div className="sm2-store-card-top">
+                    <span className="sm2-store-card-name">{store.location}</span>
+                    <span className={statusBadgeClass(store.status)}>{store.status}</span>
+                  </div>
+                  <div className="sm2-store-card-bottom">
+                    <span className="sm2-store-card-meta">
+                      {store.store_code}
+                      {store.type ? ` · ${store.type}` : ''}
+                    </span>
+                    <span className="sm2-store-card-units">{stats?.units || 0} units</span>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
 
-          <div className="form-group">
-            <label htmlFor="email">Email Address</label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              value={form.email}
-              onChange={handleChange}
-              placeholder="store@maxxtech.com"
-              required
-            />
-          </div>
+        <button type="button" className="sm2-add-store-btn" onClick={handleNewStore}>
+          + New store
+        </button>
+      </aside>
 
-          <div className="form-group">
-            <label htmlFor="phone">Phone Number</label>
-            <input
-              id="phone"
-              name="phone"
-              type="tel"
-              value={form.phone}
-              onChange={handleChange}
-              placeholder="03-1234 5678"
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="status">Status</label>
-            <select id="status" name="status" value={form.status} onChange={handleChange}>
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" className="btn-primary">
-              {editingStoreId ? 'Update Store' : 'Add Store'}
-            </button>
-            {editingStoreId && (
-              <button type="button" className="btn-secondary" onClick={resetForm}>
-                Cancel
+      {/* --- Right: details --- */}
+      <section className="sm2-detail">
+        {showHeader && (
+          <div className="sm2-detail-header">
+            <div className="sm2-detail-icon">
+              <Store size={20} />
+            </div>
+            <div className="sm2-detail-heading">
+              <h2>{mode === 'create' ? 'New store' : selectedStore.location}</h2>
+              <p>
+                {mode === 'create'
+                  ? 'Fill in the details to add a location'
+                  : `${selectedStore.store_code || '—'} · ${selectedStore.type || '—'} · ${selectedStore.manager_name || '—'}`}
+              </p>
+            </div>
+            {mode !== 'create' && (
+              <button type="button" className="sm2-edit-btn" onClick={handleEditStore} disabled={mode === 'edit'}>
+                <Pencil size={14} />
+                Edit store
               </button>
             )}
           </div>
-        </form>
+        )}
 
-        {statusMessage && <p className="status-text">{statusMessage}</p>}
-      </section>
+        {showStats && (
+          <div className="sm2-stats-row">
+            <div className="sm2-stat-card">
+              <span className="sm2-stat-label">Units on hand</span>
+              <div className="sm2-stat-value-row">
+                <span className="sm2-stat-value">{selectedStats.units}</span>
+                <span className="sm2-stat-unit">units</span>
+              </div>
+            </div>
+            <div className="sm2-stat-card">
+              <span className="sm2-stat-label">SKUs stocked</span>
+              <div className="sm2-stat-value-row">
+                <span className="sm2-stat-value">{selectedStats.skus}</span>
+                <span className="sm2-stat-unit">of {totalVariants}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
-      <section className="store-list-section">
-        <div className="store-list-header">
-          <h2>All Stores ({filteredStores.length})</h2>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search by ID, location, email, or phone..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
+        {showHeader && (
+          <form className="sm2-form-card" onSubmit={handleSubmit}>
+            <div className="sm2-form-card-header">
+              <h3>Store details</h3>
+              <span className={`sm2-mode-tag sm2-mode-tag-${mode}`}>
+                {mode === 'view' ? 'Read only' : mode === 'edit' ? 'Editing' : 'New'}
+              </span>
+            </div>
 
-        {filteredStores.length === 0 ? (
-          <p className="empty-state">No stores match your search.</p>
-        ) : (
-          <table className="stores-table">
-            <thead>
-              <tr>
-                <th>No.</th>
-                <th>Store ID</th>
-                <th>Location / Outlet</th>
-                <th>Email</th>
-                <th>Phone Number</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredStores.map((store, index) => (
-                <tr key={store.store_id}>
-                  <td>{index + 1}</td>
-                  <td>{store.store_id}</td>
-                  <td>{store.location}</td>
-                  <td>{store.email}</td>
-                  <td>{store.phone}</td>
-                  <td>
-                    <span
-                      className={`status-badge ${
-                        store.status === 'Active' ? 'status-active' : 'status-inactive'
-                      }`}
-                    >
-                      {store.status}
-                    </span>
-                  </td>
-                  <td className="actions-cell">
-                    <button className="btn-link" onClick={() => handleEdit(store)}>Edit</button>
-    <button className="btn-link btn-link-danger" onClick={() => handleRemove(store.store_id)}>Remove</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            <div className="sm2-form-grid">
+              <div className="sm2-field">
+                <label>
+                  Store name <span className="sm2-required">*</span>
+                </label>
+                <input
+                  name="location"
+                  type="text"
+                  value={readOnly ? selectedStore.location : form.location}
+                  onChange={handleFieldChange}
+                  placeholder="e.g. Mont Kiara"
+                  readOnly={readOnly}
+                  required
+                />
+              </div>
+
+              <div className="sm2-field">
+                <label>
+                  Store code <span className="sm2-required">*</span>
+                </label>
+                <input
+                  name="store_code"
+                  type="text"
+                  className="sm2-mono-input"
+                  value={readOnly ? selectedStore.store_code || '' : form.store_code}
+                  onChange={handleFieldChange}
+                  placeholder="MY-XX-00"
+                  readOnly={readOnly}
+                  required
+                />
+              </div>
+
+              <div className="sm2-field">
+                <label>Type</label>
+                {readOnly ? (
+                  <input type="text" value={selectedStore.type || '—'} readOnly />
+                ) : (
+                  <select name="type" value={form.type} onChange={handleFieldChange}>
+                    {TYPE_OPTIONS.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="sm2-field">
+                <label>Status</label>
+                {readOnly ? (
+                  <input type="text" value={selectedStore.status} readOnly />
+                ) : (
+                  <select name="status" value={form.status} onChange={handleFieldChange}>
+                    {STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="sm2-field">
+                <label>
+                  Manager <span className="sm2-required">*</span>
+                </label>
+                <input
+                  name="manager_name"
+                  type="text"
+                  value={readOnly ? selectedStore.manager_name || '' : form.manager_name}
+                  onChange={handleFieldChange}
+                  placeholder="Full name"
+                  readOnly={readOnly}
+                  required
+                />
+              </div>
+
+              <div className="sm2-field">
+                <label>Phone</label>
+                <input
+                  name="phone"
+                  type="tel"
+                  className="sm2-mono-input"
+                  value={readOnly ? selectedStore.phone || '' : form.phone}
+                  onChange={handleFieldChange}
+                  placeholder="+60 3-0000 0000"
+                  readOnly={readOnly}
+                />
+              </div>
+
+              <div className="sm2-field sm2-field-wide">
+                <label>Address</label>
+                <input
+                  name="address"
+                  type="text"
+                  value={readOnly ? selectedStore.address || '' : form.address}
+                  onChange={handleFieldChange}
+                  placeholder="Street, postcode, state"
+                  readOnly={readOnly}
+                />
+              </div>
+
+              <div className="sm2-field">
+                <label>Opening hours</label>
+                <input
+                  name="opening_hours"
+                  type="text"
+                  className="sm2-mono-input"
+                  value={readOnly ? selectedStore.opening_hours || '' : form.opening_hours}
+                  onChange={handleFieldChange}
+                  placeholder="10:00 - 22:00"
+                  readOnly={readOnly}
+                />
+              </div>
+            </div>
+
+            {statusMessage && <p className="sm2-status-text">{statusMessage}</p>}
+
+            {(mode === 'edit' || mode === 'create') && (
+              <div className="sm2-form-actions">
+                <span className="sm2-form-hint">
+                  {isValid ? 'Name, code and manager are set.' : 'Name, code and manager are required.'}
+                </span>
+                <div className="sm2-form-actions-buttons">
+                  <button type="button" className="sm2-btn-secondary" onClick={handleCancel}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="sm2-btn-primary" disabled={!isValid}>
+                    {mode === 'create' ? 'Create store' : 'Save changes'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </form>
         )}
       </section>
     </div>

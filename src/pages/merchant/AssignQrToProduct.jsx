@@ -431,7 +431,7 @@ export default function AssignQrToProduct() {
                 className="aq-range-prefix"
                 value={rangePrefix}
                 onChange={(e) => setRangePrefix(e.target.value)}
-                placeholder="e.g. EW"
+                placeholder="eg: EW"
               />
               <div className="aq-range-field">
                 <span className="aq-range-field-label"></span>
