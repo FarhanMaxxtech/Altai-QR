@@ -99,15 +99,21 @@ router.put('/:id', async (req, res) => {
 
 
 router.post('/', async (req, res) => {
-  const { product_name, product_description, variants } = req.body;
+  const { product_name, product_description, product_category, reorder_point, variants } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const productResult = await client.query(
-      `INSERT INTO products (product_name, product_description, merchant_id)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [product_name, product_description || null, req.user.merchant_id]
+      `INSERT INTO products (product_name, product_description, product_category, reorder_point, merchant_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [
+        product_name,
+        product_description || null,
+        product_category || null,
+        reorder_point ?? null,
+        req.user.merchant_id,
+      ]
     );
     const product = productResult.rows[0];
 
