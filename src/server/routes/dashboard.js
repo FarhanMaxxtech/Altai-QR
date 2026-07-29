@@ -202,6 +202,7 @@ router.get('/tags-per-store', async (req, res) => {
   }
 });
 
+// src/server/routes/dashboard.js
 router.get('/low-stock', async (req, res) => {
   try {
     const result = await pool.query(
@@ -215,7 +216,13 @@ router.get('/low-stock', async (req, res) => {
        LIMIT 20`,
       [LOW_STOCK_THRESHOLD, req.user.merchant_id]
     );
-    res.json(result.rows.map((r) => ({ item: `${r.product_name} (${r.sku})`, store: r.store, qty: r.quantity })));
+    // Return fields separately so the UI can lay them out in their own columns.
+    res.json(result.rows.map((r) => ({
+      product_name: r.product_name,
+      sku: r.sku,
+      store: r.store,
+      qty: r.quantity,
+    })));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -1,6 +1,7 @@
 // src/components/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../utils/api';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LineChart, Line,
@@ -9,6 +10,7 @@ import StockMovementCard from '../../components/StockMovementCard';
 import '../../styles/Dashboard.css';
 
 const LOW_STOCK_THRESHOLD = 10;
+const CRITICAL_THRESHOLD = LOW_STOCK_THRESHOLD / 2;
 
 const STAT_CARDS = [
   { key: 'deliveries', label: 'Deliveries Today', unit: 'in-store', color: '#d97706' },
@@ -170,22 +172,66 @@ useEffect(() => {
           )}
         </div>
 
-        <div className="chart-card">
-          <h3>Low Stock Items (below {LOW_STOCK_THRESHOLD})</h3>
-          {lowStock.length === 0 ? (
-            <p className="empty-state">No low stock items.</p>
-          ) : (
-            <ul className="low-stock-list">
-              {lowStock.map((entry, i) => (
-                <li key={i} className="low-stock-item">
-                  <span className="low-stock-item-name">{entry.item}</span>
-                  <span className="low-stock-item-store">{entry.store}</span>
-                  <span className="low-stock-item-qty">{entry.qty} left</span>
-                </li>
-              ))}
-            </ul>
-          )}
+        <section className="low-stock-card">
+        <div className="low-stock-card-header">
+          <div className="low-stock-card-title">
+            <h3>Low stock</h3>
+            {lowStock.length > 0 && (
+              <span className="low-stock-count-badge">
+                {lowStock.length} BELOW {LOW_STOCK_THRESHOLD}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="low-stock-open-balance-link"
+            onClick={() => navigate('/stock-balance')}
+          >
+            Open balance →
+          </button>
         </div>
+
+        {lowStock.length === 0 ? (
+          <p className="empty-state">No low stock items.</p>
+        ) : (
+          <div className="low-stock-table-wrapper">
+            <table className="low-stock-table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th>Store</th>
+                  <th className="low-stock-col-onhand">On hand</th>
+                  <th className="low-stock-col-action">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lowStock.map((entry, i) => (
+                  <tr key={i}>
+                    <td className="low-stock-product-cell">{entry.product_name}</td>
+                    <td className="low-stock-sku-cell">{entry.sku}</td>
+                    <td>{entry.store}</td>
+                    <td className="low-stock-col-onhand">
+                      <span className={`low-stock-qty ${entry.qty <= CRITICAL_THRESHOLD ? 'low-stock-qty-critical' : 'low-stock-qty-warning'}`}>
+                        {entry.qty} left
+                      </span>
+                    </td>
+                    <td className="low-stock-col-action">
+                      <button
+                        type="button"
+                        className="low-stock-restock-btn"
+                        onClick={() => navigate('/stock')}
+                      >
+                        Restock
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
       </div>
     </div>
   );
