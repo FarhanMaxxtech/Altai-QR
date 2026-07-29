@@ -25,7 +25,7 @@
 .listing-card {
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-top: 3px solid #2563eb;
+  /*border-top: 3px solid #2563eb;*/
   border-radius: 8px;
   padding: 24px;
   display: flex;

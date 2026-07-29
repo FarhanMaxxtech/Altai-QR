@@ -11,6 +11,11 @@ function productPrefix(name) {
   return name.replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'PROD';
 }
 
+function computeVariantSku(variant, index, skuPrefix) {
+  if (!variant.autoSku) return variant.sku;
+  return `${skuPrefix || 'PROD'}-V${index + 1}`;
+}
+
 function attributesObjectToArray(attributesObject) {
   if (!attributesObject) return [];
   return Object.entries(attributesObject).map(([key, value]) => ({
@@ -20,16 +25,30 @@ function attributesObjectToArray(attributesObject) {
   }));
 }
 
-function makeEmptyVariant(index, skuPrefix) {
+// near the top, with the other constants
+const ATTRIBUTE_PRESETS = ['Model', 'Color', 'Capacity', 'Material', 'Pack Size'];
+
+function makeEmptyVariant() {
   return {
     variant_id: crypto.randomUUID(),
     attributes: [],
     price: '',
-    sku: `${skuPrefix}-V${index}`,
+    openingQty: '',
+    sku: '',
     autoSku: true,
     remarks: '',
   };
 }
+
+const handleSingleVariant = () => {
+  setVariantDrafts((prev) => [
+    { ...prev[0], variant_id: prev[0]?.variant_id || crypto.randomUUID() },
+  ]);
+};
+
+const updateAttributeKeyFromSelect = (variantId, attrId, value) => {
+  updateAttribute(variantId, attrId, 'key', value === 'Custom' ? '' : value);
+};
 
 function makeEmptyProductForm() {
   return { name: '', skuPrefix: '', category: '', description: '', reorderPoint: '' };
@@ -38,7 +57,7 @@ function makeEmptyProductForm() {
 export default function RegisterProduct() {
   const [productForm, setProductForm] = useState(makeEmptyProductForm());
   const [autoSkuPrefix, setAutoSkuPrefix] = useState(true);
-  const [variantDrafts, setVariantDrafts] = useState([makeEmptyVariant(1, '')]);
+  const [variantDrafts, setVariantDrafts] = useState([makeEmptyVariant()]);
   const [draftSavedMessage, setDraftSavedMessage] = useState('');
   const [categoryOptions, setCategoryOptions] = useState([]);
 
@@ -66,27 +85,21 @@ export default function RegisterProduct() {
 
   // --- Product-level field handlers ----------------------------------------
 
-  const handleProductFieldChange = (e) => {
-    const { name, value } = e.target;
-    setProductForm((prev) => ({ ...prev, [name]: value }));
+const handleProductFieldChange = (e) => {
+  const { name, value } = e.target;
+  setProductForm((prev) => ({ ...prev, [name]: value }));
 
-    if (name === 'name' && autoSkuPrefix) {
-      const nextPrefix = productPrefix(value);
-      setProductForm((prev) => ({ ...prev, skuPrefix: nextPrefix }));
-      setVariantDrafts((prev) =>
-        prev.map((v, i) => (v.autoSku ? { ...v, sku: `${nextPrefix}-V${i + 1}` } : v))
-      );
-    }
-  };
+  if (name === 'name' && autoSkuPrefix) {
+    const nextPrefix = productPrefix(value); // productPrefix() already .toUpperCase()s
+    setProductForm((prev) => ({ ...prev, skuPrefix: nextPrefix }));
+  }
+};
 
-  const handleSkuPrefixChange = (e) => {
-    const value = e.target.value;
-    setAutoSkuPrefix(false); // user has taken manual control of the prefix
-    setProductForm((prev) => ({ ...prev, skuPrefix: value }));
-    setVariantDrafts((prev) =>
-      prev.map((v, i) => (v.autoSku ? { ...v, sku: `${value}-V${i + 1}` } : v))
-    );
-  };
+const handleSkuPrefixChange = (e) => {
+  const value = e.target.value.toUpperCase();
+  setAutoSkuPrefix(false); // user has taken manual control of the prefix
+  setProductForm((prev) => ({ ...prev, skuPrefix: value }));
+};
 
   // --- Variant-level handlers ------------------------------------------------
 
@@ -98,22 +111,24 @@ export default function RegisterProduct() {
     setVariantDrafts((prev) => prev.filter((v) => v.variant_id !== variantId));
   };
 
-  const duplicateVariantDraft = (variantId) => {
-    setVariantDrafts((prev) => {
-      const source = prev.find((v) => v.variant_id === variantId);
-      if (!source) return prev;
+const duplicateVariantDraft = (variantId) => {
+  setVariantDrafts((prev) => {
+    const idx = prev.findIndex((v) => v.variant_id === variantId);
+    if (idx === -1) return prev;
+    const source = prev[idx];
+    const sourceSku = computeVariantSku(source, idx, productForm.skuPrefix);
 
-      const newIndex = prev.length + 1;
-      const copy = {
-        ...source,
-        variant_id: crypto.randomUUID(),
-        attributes: source.attributes.map((attr) => ({ ...attr, id: crypto.randomUUID() })),
-        sku: source.autoSku ? `${productForm.skuPrefix}-V${newIndex}` : `${source.sku}-COPY`,
-      };
+    const copy = {
+      ...source,
+      variant_id: crypto.randomUUID(),
+      attributes: source.attributes.map((attr) => ({ ...attr, id: crypto.randomUUID() })),
+      autoSku: false,
+      sku: `${sourceSku}-COPY`,
+    };
 
-      return [...prev, copy];
-    });
-  };
+    return [...prev, copy];
+  });
+};
 
   const updateVariant = (variantId, field, value) => {
     setVariantDrafts((prev) =>
@@ -127,15 +142,21 @@ export default function RegisterProduct() {
     );
   };
 
-  const addAttribute = (variantId) => {
-    setVariantDrafts((prev) =>
-      prev.map((v) =>
-        v.variant_id === variantId
-          ? { ...v, attributes: [...v.attributes, { id: crypto.randomUUID(), key: '', value: '' }] }
-          : v
-      )
-    );
-  };
+const addAttribute = (variantId) => {
+  setVariantDrafts((prev) =>
+    prev.map((v) =>
+      v.variant_id === variantId
+        ? {
+            ...v,
+            attributes: [
+              ...v.attributes,
+              { id: crypto.randomUUID(), key: ATTRIBUTE_PRESETS[0], value: '' }, // 'Model'
+            ],
+          }
+        : v
+    )
+  );
+};
 
   const updateAttribute = (variantId, attrId, field, value) => {
     setVariantDrafts((prev) =>
@@ -186,7 +207,11 @@ export default function RegisterProduct() {
       // is updated.
       product_category: productForm.category.trim(),
       reorder_point: productForm.reorderPoint ? Number(productForm.reorderPoint) : null,
-      variants: variantDrafts.map((v) => ({ ...v })),
+      variants: variantDrafts.map((v, i) => ({
+  ...v,
+  sku: computeVariantSku(v, i, productForm.skuPrefix),
+  opening_qty: v.openingQty ? Number(v.openingQty) : 0,
+})),
     };
 
     try {
@@ -267,19 +292,6 @@ export default function RegisterProduct() {
               <p className="field-hint">Pick from the list, or just type a new category name.</p>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="category">Category <span className="required-asterisk">*</span></label>
-              <input
-                id="category"
-                name="category"
-                type="text"
-                value={productForm.category}
-                onChange={handleProductFieldChange}
-                placeholder="Knitwear"
-                required
-              />
-            </div>
-
             <div className="form-group form-group-wide">
               <label htmlFor="description">Description</label>
               <textarea
@@ -307,106 +319,147 @@ export default function RegisterProduct() {
           </div>
 
           <div className="variants-block">
-            <div className="variants-header">
-              <h3>Variants</h3>
-              <button type="button" className="btn-secondary" onClick={addVariantDraft}>
-                + Add Variant
-              </button>
-            </div>
+                <div className="variants-header">
+  <h3>
+    <span className="variants-title-text">Variants</span>
+    <span className="variants-count-badge">
+      {variantDrafts.length} VARIANT{variantDrafts.length === 1 ? '' : 'S'}
+    </span>
+  </h3>
+  <div className="variants-header-actions">
+    <button type="button" className="btn-single-variant" onClick={handleSingleVariant}>
+      Single variant
+    </button>
+    <button type="button" className="btn-add-variant" onClick={addVariantDraft}>
+      + Add Variant
+    </button>
+  </div>
+</div>
 
-            {variantDrafts.map((variant, index) => (
-              <div key={variant.variant_id} className="variant-card">
-                <div className="variant-card-header">
-                  <span className="variant-index">Variant {index + 1}</span>
-                  <button
-                    type="button"
-                    className="btn-secondary btn-copy-variant"
-                    onClick={() => duplicateVariantDraft(variant.variant_id)}
-                  >
-                    Duplicate
-                  </button>
-                </div>
+                {variantDrafts.map((variant, index) => {
+  const displaySku = computeVariantSku(variant, index, productForm.skuPrefix);
+  return (
+    <div key={variant.variant_id} className="variant-card">
+      <div className="variant-card-header">
+        <span className="variant-index">
+          <span className="variant-index-number">{index + 1}</span>
+          Variant {index + 1}
+        </span>
+        <div className="variant-card-header-actions">
+          <span className="variant-sku-badge">{displaySku}</span>
+          <button
+            type="button"
+            className="variant-duplicate-btn"
+            onClick={() => duplicateVariantDraft(variant.variant_id)}
+          >
+            Duplicate
+          </button>
+          {variantDrafts.length > 1 && (
+            <button
+              type="button"
+              className="btn-icon-remove"
+              onClick={() => removeVariantDraft(variant.variant_id)}
+              aria-label="Remove variant"
+            >
+              &times;
+            </button>
+          )}
+        </div>
+      </div>
 
-                <div className="attributes-block">
-                  {variant.attributes.map((attr) => (
-                    <div key={attr.id} className="attribute-row">
-                      <input
-                        type="text"
-                        placeholder="Attribute Name"
-                        value={attr.key}
-                        onChange={(e) => updateAttribute(variant.variant_id, attr.id, 'key', e.target.value)}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Attribute Value"
-                        value={attr.value}
-                        onChange={(e) => updateAttribute(variant.variant_id, attr.id, 'value', e.target.value)}
-                      />
-                      <button
-                        type="button"
-                        className="btn-remove-small"
-                        onClick={() => removeAttribute(variant.variant_id, attr.id)}
-                      >
-                        &times;
+      {/* attribute rows unchanged from before */}
+      <div className="attributes-block">
+                      {variant.attributes.map((attr) => {
+                        const isCustom = !ATTRIBUTE_PRESETS.includes(attr.key);
+                        return (
+                          <div key={attr.id} className="attribute-row">
+                            <select
+                              className="attribute-key-select"
+                              value={isCustom ? 'Custom' : attr.key}
+                              onChange={(e) => updateAttributeKeyFromSelect(variant.variant_id, attr.id, e.target.value)}
+                            >
+                              {ATTRIBUTE_PRESETS.map((preset) => (
+                                <option key={preset} value={preset}>{preset}</option>
+                              ))}
+                              <option value="Custom">Custom...</option>
+                            </select>
+
+                            {isCustom && (
+                              <input
+                                type="text"
+                                placeholder="Attribute name"
+                                value={attr.key}
+                                onChange={(e) => updateAttribute(variant.variant_id, attr.id, 'key', e.target.value)}
+                              />
+                            )}
+
+                            <input
+                              type="text"
+                              placeholder="e.g. Standard"
+                              value={attr.value}
+                              onChange={(e) => updateAttribute(variant.variant_id, attr.id, 'value', e.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="btn-icon-remove"
+                              onClick={() => removeAttribute(variant.variant_id, attr.id)}
+                              aria-label="Remove attribute"
+                            >
+                              &times;
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <button type="button" className="btn-add-attribute" onClick={() => addAttribute(variant.variant_id)}>
+                        + Add Attribute
                       </button>
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    className="btn-add-attribute"
-                    onClick={() => addAttribute(variant.variant_id)}
-                  >
-                    + Add Attribute
-                  </button>
-                </div>
 
-                <div className="variant-fields-row">
-                  <div className="form-group">
-                    <label>Price (RM)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={variant.price}
-                      onChange={(e) => updateVariant(variant.variant_id, 'price', e.target.value)}
-                      placeholder="0.00"
-                    />
-                  </div>
+      <div className="variant-fields-row">
+        <div className="form-group">
+          <label>Price (RM)</label>
+          <input
+            type="number" min="0" step="0.01"
+            value={variant.price}
+            onChange={(e) => updateVariant(variant.variant_id, 'price', e.target.value)}
+            placeholder="0.00"
+          />
+        </div>
 
-                  <div className="form-group">
-                    <label>SKU</label>
-                    <input
-                      type="text"
-                      value={variant.sku}
-                      onChange={(e) => handleSkuFieldChange(variant.variant_id, e.target.value)}
-                    />
-                  </div>
-                </div>
+        <div className="form-group">
+          <label>Opening Qty</label>
+          <input
+            type="number" min="0"
+            value={variant.openingQty}
+            onChange={(e) => updateVariant(variant.variant_id, 'openingQty', e.target.value)}
+            placeholder="0"
+          />
+        </div>
 
-                <div className="form-group form-group-wide">
-                  <label>Remarks</label>
-                  <input
-                    type="text"
-                    value={variant.remarks}
-                    onChange={(e) => updateVariant(variant.variant_id, 'remarks', e.target.value)}
-                    placeholder="Optional notes for this variant"
-                  />
-                </div>
+        <div className="form-group">
+          <label>SKU {variant.autoSku && <span className="field-auto-tag">auto</span>}</label>
+          <input
+            type="text"
+            value={displaySku}
+            onChange={(e) => handleSkuFieldChange(variant.variant_id, e.target.value)}
+          />
+        </div>
+      </div>
 
-                {variantDrafts.length > 1 && (
-                  <div className="variant-delete-row">
-                    <button
-                      type="button"
-                      className="btn-remove"
-                      onClick={() => removeVariantDraft(variant.variant_id)}
-                    >
-                      Delete Variant
-                    </button>
-                  </div>
-                )}
+      {/* remarks unchanged */}
+                          <div className="form-group form-group-wide">
+                      <label>Remarks</label>
+                      <input
+                        type="text"
+                        value={variant.remarks}
+                        onChange={(e) => updateVariant(variant.variant_id, 'remarks', e.target.value)}
+                        placeholder="Optional notes for this variant"
+                      />
+                    </div>
+    </div>
+  );
+})}
               </div>
-            ))}
-          </div>
 
           <div className="product-form-actions">
             {draftSavedMessage && <span className="status-text">{draftSavedMessage}</span>}

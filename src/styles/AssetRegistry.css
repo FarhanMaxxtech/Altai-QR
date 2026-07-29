@@ -14,7 +14,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  background: #f8f9fb;
+  background: #ffffff;
   border: 1px solid #e5e4e7;
   border-radius: 8px;
   padding: 16px;
@@ -88,8 +88,9 @@
 
 /* Variants block */
 .variants-block {
-  border-top: 1px solid #e5e4e7;
-  padding-top: 16px;
+  border-top: 1px solid #f0efe9;
+  padding-top: 20px;
+  margin-top: 4px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -100,33 +101,120 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  margin-bottom: 14px;
 }
 
 .variants-header h3 {
-  margin: 0;
-  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.variants-count-badge {
+  background: #eef8e8;
+  color: #2e7d14;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+.variants-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.variants-header .btn-secondary {
+  background: #fff;
+  border: 1px solid #d8d5c8;
+  color: #a49b82;
+  border-radius: 9px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.variants-header .btn-secondary:hover {
+  background: #f7f6f1;
+  border-color: #daded6;
 }
 
 .variant-card {
   background: #fff;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 14px;
+  border: 1px solid #eceae3;
+  border-radius: 14px;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .variant-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0efe9;
+}
+
+.variant-card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.variant-sku-badge {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0d2d5e;
+  background: rgba(13, 45, 94, 0.08);
+  padding: 4px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
 }
 
 .variant-index {
-  font-weight: 600;
-  font-size: 13px;
-  color: #0d2d5e;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.variant-index-number {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #eef8e8;
+  color: #2e7d14;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon-remove {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid #e5e4e7;
+  background: #fff;
+  color: #9ca3af;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.btn-icon-remove:hover {
+  border-color: #dc2626;
+  color: #dc2626;
+  background: #fef2f2;
 }
 
 .variant-fields-row {
@@ -139,7 +227,7 @@
 .attributes-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
 .section-label {
@@ -152,7 +240,7 @@
 
 .attribute-row {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
 }
 
@@ -162,13 +250,25 @@
   border: 1px solid #d1d5db;
   border-radius: 6px;
   font-size: 13px;
+  background: #f7f6f1;
+}
+
+.attribute-key-select {
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #f7f6f1;
+  min-width: 140px;
+  flex: 0 0 auto;
 }
 
 .btn-add-attribute {
   align-self: flex-start;
   background: none;
   border: 1px dashed #9ca3af;
-  color: #374151;
+  border-color: #2e7d14;
+  color: #2e7d14;
   border-radius: 6px;
   padding: 5px 10px;
   font-size: 12px;
@@ -176,7 +276,16 @@
 }
 
 .btn-add-attribute:hover {
-  background: #f3f4f6;
+  background: #eef8e8;
+}
+
+.field-auto-tag {
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
 }
 
 .btn-remove-small {
@@ -354,8 +463,18 @@
 }
 
 .btn-copy-variant {
-  padding: 4px 12px;
-  font-size: 0.8rem;
+  background: #fff;
+  border: 1px solid #d8d5c8;
+  color: #1e4010;
+  border-radius: 9px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.btn-copy-variant:hover {
+  background: #f7f6f1;
+  border-color: #b7c7a6;
 }
 
 @media (max-width: 640px) {
@@ -545,6 +664,7 @@
   grid-template-columns: 1.6fr 1fr;
   gap: 20px;
   align-items: start;
+  
 }
 
 .register-product-full-span {
@@ -657,4 +777,342 @@
   margin: 4px 0 0;
   font-size: 11px;
   color: #9ca3af;
+}
+
+/* --- Register Product: card shell ----------------------------------------- */
+
+.product-details-card,
+.next-steps-card {
+  background: #fff;
+  border: 1px solid #eceae3;
+  border-radius: 18px;
+  padding: 28px 32px;
+  box-shadow: 0 1px 3px rgba(16, 24, 16, 0.04);
+}
+
+.product-details-card h2,
+.next-steps-card h2 {
+  margin: 0 0 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #f0efe9;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #111827;
+  letter-spacing: -0.01em;
+}
+
+/* --- Form fields: labels + inputs ------------------------------------------ */
+
+.product-details-grid .form-group label,
+.variant-card .form-group label,
+.attributes-block .section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a49b82;
+  margin-bottom: 6px;
+}
+
+.required-asterisk {
+  color: #c2410c;
+}
+
+.product-details-grid input,
+.product-details-grid textarea,
+.variant-card input,
+.variant-card textarea {
+  background: #f7f6f1;
+  border: 1px solid #e8e6dc;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 14.5px;
+  color: #1f2937;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.product-details-grid input::placeholder,
+.product-details-grid textarea::placeholder,
+.variant-card input::placeholder {
+  color: #a3a99c;
+}
+
+.product-details-grid input:focus,
+.product-details-grid textarea:focus,
+.variant-card input:focus {
+  outline: none;
+  background: #fff;
+  border-color: #b7c7a6;
+  box-shadow: 0 0 0 3px rgba(46, 125, 20, 0.08);
+}
+
+/* --- Bottom action bar ------------------------------------------------------ */
+
+.product-form-actions {
+  border-top: 1px solid #f0efe9;
+  padding-top: 20px;
+  margin-top: 8px;
+}
+
+.product-form-actions .btn-secondary {
+  background: #fff;
+  border: 1px solid #d8d5c8;
+  color: #1f2937;
+  border-radius: 9px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+.product-form-actions .btn-secondary:hover {
+  background: #faf9f5;
+}
+
+.product-form-actions .btn-primary {
+  background: #1e4010;
+  border-radius: 9px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.product-form-actions .btn-primary:hover {
+  background: #163009;
+}
+
+/* --- Next Steps panel ------------------------------------------------------- */
+
+.next-steps-card {
+  padding: 28px 30px;
+}
+
+.next-steps-intro {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: #6b7280;
+  margin: 0 0 22px;
+}
+
+.next-steps-intro strong {
+  color: #111827;
+  font-weight: 700;
+}
+
+.next-steps-list {
+  gap: 10px;
+}
+
+.next-steps-item {
+  background: #f7f6f1;
+  border-radius: 11px;
+  padding: 13px 16px;
+  gap: 13px;
+}
+
+.next-steps-badge {
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid #2e7d14;
+  color: #2e7d14;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: #fff;
+}
+
+.next-steps-item span:last-child {
+  font-size: 13.5px;
+  color: #1f2937;
+  font-weight: 500;
+}
+
+/* --- Variants header: "VARIANTS" label + count badge + action buttons --- */
+
+.variants-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.variants-title-text {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.variants-count-badge {
+  background: #eef8e8;
+  color: #2e7d14;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+.variants-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-single-variant {
+  background: #fff;
+  border: 1px dashed #d1d5db;
+  color: #6b7280;
+  border-radius: 9px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-single-variant:hover {
+  background: #f7f6f1;
+  border-color: #b7c7a6;
+  color: #374151;
+}
+
+.btn-add-variant {
+  background: #fff;
+  border: 1px solid #d8d5c8;
+  color: #111827;
+  border-radius: 9px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-add-variant:hover {
+  background: #f7f6f1;
+  border-color: #b7c7a6;
+}
+
+/* --- Variant card: tinted header strip bleeding to card edges --- */
+
+.variant-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: -18px -20px 14px;
+  padding: 14px 20px;
+  background: #f8f9f6;
+  border-bottom: 1px solid #f0efe9;
+  border-radius: 14px 14px 0 0;
+}
+
+.variant-index {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #111827;
+}
+
+.variant-index-number {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #eef8e8;
+  color: #2e7d14;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.variant-card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.variant-sku-badge {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  background: #eceae3;
+  padding: 4px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.variant-duplicate-btn {
+  background: #fff;
+  border: 1px solid #2e7d14;
+  color: #2e7d14;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.variant-duplicate-btn:hover {
+  background: #eef8e8;
+}
+
+.btn-icon-remove {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid #e5e4e7;
+  background: #fff;
+  color: #9ca3af;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.btn-icon-remove:hover {
+  border-color: #dc2626;
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+/* --- Attribute row: preset dropdown + value input --- */
+
+.attribute-key-select {
+  padding: 8px 10px;
+  border: 1px solid #b7c7a6;
+  border-radius: 8px;
+  font-size: 13.5px;
+  background: #f7f6f1;
+  min-width: 150px;
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.btn-add-attribute {
+  border-color: #2e7d14;
+  color: #2e7d14;
+}
+
+.btn-add-attribute:hover {
+  background: #eef8e8;
+}
+
+/* --- "auto" tag next to SKU label --- */
+
+.field-auto-tag {
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
 }
