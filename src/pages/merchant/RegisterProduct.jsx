@@ -1,13 +1,10 @@
 // src/pages/merchant/RegisterProduct.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PackageCheck } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import '../../styles/AssetRegistry.css';
 
-function randomColor() {
-  const hex = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
-  return `#${hex}`;
-}
+const DRAFT_STORAGE_KEY = 'register-product-draft-v1';
 
 function productPrefix(name) {
   if (!name) return 'PROD';
@@ -23,60 +20,97 @@ function attributesObjectToArray(attributesObject) {
   }));
 }
 
-function makeEmptyVariant(index, productName) {
+function makeEmptyVariant(index, skuPrefix) {
   return {
     variant_id: crypto.randomUUID(),
     attributes: [],
     price: '',
-    sku: `${productPrefix(productName)}-V${index}`,
+    sku: `${skuPrefix}-V${index}`,
     autoSku: true,
     remarks: '',
-    color: randomColor(),
   };
 }
 
-export default function RegisterProduct() {
-  const [productForm, setProductForm] = useState({ name: '', description: '' });
-  const [variantDrafts, setVariantDrafts] = useState([makeEmptyVariant(1, '')]);
+function makeEmptyProductForm() {
+  return { name: '', skuPrefix: '', category: '', description: '', reorderPoint: '' };
+}
 
-  // Just-registered product, shown for immediate verification. No fetch —
-  // the POST response already contains the full product + variants.
+export default function RegisterProduct() {
+  const [productForm, setProductForm] = useState(makeEmptyProductForm());
+  const [autoSkuPrefix, setAutoSkuPrefix] = useState(true);
+  const [variantDrafts, setVariantDrafts] = useState([makeEmptyVariant(1, '')]);
+  const [draftSavedMessage, setDraftSavedMessage] = useState('');
+  const [categoryOptions, setCategoryOptions] = useState([]);
+
   const [lastRegistered, setLastRegistered] = useState(null);
+
+  useEffect(() => {
+    const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const draft = JSON.parse(raw);
+      if (draft.productForm) setProductForm(draft.productForm);
+      if (draft.variantDrafts) setVariantDrafts(draft.variantDrafts);
+      setAutoSkuPrefix(false);
+    } catch (err) {
+      console.error('Failed to restore draft:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    apiFetch('/api/products/categories')
+      .then((res) => res.json())
+      .then((data) => setCategoryOptions(data))
+      .catch((err) => console.error('Failed to load categories:', err));
+  }, []);
+
+  // --- Product-level field handlers ----------------------------------------
 
   const handleProductFieldChange = (e) => {
     const { name, value } = e.target;
     setProductForm((prev) => ({ ...prev, [name]: value }));
 
-    if (name === 'name') {
+    if (name === 'name' && autoSkuPrefix) {
+      const nextPrefix = productPrefix(value);
+      setProductForm((prev) => ({ ...prev, skuPrefix: nextPrefix }));
       setVariantDrafts((prev) =>
-        prev.map((v, i) =>
-          v.autoSku ? { ...v, sku: `${productPrefix(value)}-V${i + 1}` } : v
-        )
+        prev.map((v, i) => (v.autoSku ? { ...v, sku: `${nextPrefix}-V${i + 1}` } : v))
       );
     }
   };
 
+  const handleSkuPrefixChange = (e) => {
+    const value = e.target.value;
+    setAutoSkuPrefix(false); // user has taken manual control of the prefix
+    setProductForm((prev) => ({ ...prev, skuPrefix: value }));
+    setVariantDrafts((prev) =>
+      prev.map((v, i) => (v.autoSku ? { ...v, sku: `${value}-V${i + 1}` } : v))
+    );
+  };
+
+  // --- Variant-level handlers ------------------------------------------------
+
   const addVariantDraft = () => {
-    setVariantDrafts((prev) => [...prev, makeEmptyVariant(prev.length + 1, productForm.name)]);
+    setVariantDrafts((prev) => [...prev, makeEmptyVariant(prev.length + 1, productForm.skuPrefix)]);
   };
 
   const removeVariantDraft = (variantId) => {
     setVariantDrafts((prev) => prev.filter((v) => v.variant_id !== variantId));
   };
 
-  const copyVariantDraft = (variantId) => {
+  const duplicateVariantDraft = (variantId) => {
     setVariantDrafts((prev) => {
       const source = prev.find((v) => v.variant_id === variantId);
       if (!source) return prev;
+
       const newIndex = prev.length + 1;
       const copy = {
         ...source,
         variant_id: crypto.randomUUID(),
         attributes: source.attributes.map((attr) => ({ ...attr, id: crypto.randomUUID() })),
-        sku: source.autoSku
-          ? `${productPrefix(productForm.name)}-V${newIndex}`
-          : `${source.sku}-COPY`,
+        sku: source.autoSku ? `${productForm.skuPrefix}-V${newIndex}` : `${source.sku}-COPY`,
       };
+
       return [...prev, copy];
     });
   };
@@ -87,20 +121,11 @@ export default function RegisterProduct() {
     );
   };
 
-  const toggleAutoSku = (variantId, checked) => {
+  const handleSkuFieldChange = (variantId, value) => {
     setVariantDrafts((prev) =>
-      prev.map((v, i) => {
-        if (v.variant_id !== variantId) return v;
-        return {
-          ...v,
-          autoSku: checked,
-          sku: checked ? `${productPrefix(productForm.name)}-V${i + 1}` : v.sku,
-        };
-      })
+      prev.map((v) => (v.variant_id === variantId ? { ...v, sku: value, autoSku: false } : v))
     );
   };
-
-  const handleAutoColor = (variantId) => updateVariant(variantId, 'color', randomColor());
 
   const addAttribute = (variantId) => {
     setVariantDrafts((prev) =>
@@ -132,6 +157,14 @@ export default function RegisterProduct() {
     );
   };
 
+  // --- Save draft / submit ---------------------------------------------------
+
+  const handleSaveDraft = () => {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ productForm, variantDrafts }));
+    setDraftSavedMessage('Draft saved on this device.');
+    setTimeout(() => setDraftSavedMessage(''), 3000);
+  };
+
   const handleProductSubmit = async (e) => {
     e.preventDefault();
 
@@ -147,6 +180,12 @@ export default function RegisterProduct() {
     const payload = {
       product_name: productForm.name.trim(),
       product_description: productForm.description.trim(),
+      // NOTE: product_category and reorder_point aren't yet columns on the
+      // `products` table / accepted by POST /api/products — sending them
+      // now is forward-compatible but they won't persist until the backend
+      // is updated.
+      product_category: productForm.category.trim(),
+      reorder_point: productForm.reorderPoint ? Number(productForm.reorderPoint) : null,
       variants: variantDrafts.map((v) => ({ ...v })),
     };
 
@@ -155,6 +194,7 @@ export default function RegisterProduct() {
         method: 'POST',
         body: JSON.stringify(payload),
       });
+
       const result = await res.json();
 
       if (!res.ok) {
@@ -162,8 +202,10 @@ export default function RegisterProduct() {
         return;
       }
 
-      setLastRegistered(result); // <-- shows immediately below, no refetch
-      setProductForm({ name: '', description: '' });
+      setLastRegistered(result);
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      setProductForm(makeEmptyProductForm());
+      setAutoSkuPrefix(true);
       setVariantDrafts([makeEmptyVariant(1, '')]);
     } catch (err) {
       alert('Could not reach server. Check it is running.');
@@ -172,32 +214,96 @@ export default function RegisterProduct() {
   };
 
   return (
-    <div className="asset-registry">
-      <section className="registry-form-section">
-        <form className="product-form" onSubmit={handleProductSubmit}>
-          <div className="form-group">
-            <label htmlFor="name">Product Name</label>
-            <input
-              id="name"
-              name="name"
-              type="text"
-              value={productForm.name}
-              onChange={handleProductFieldChange}
-              placeholder="e.g. Cotton T-Shirt"
-              required
-            />
-          </div>
+    <div className="register-product-layout">
+      <section className="listing-card product-details-card">
+        <h2>Product Details</h2>
 
-          <div className="form-group form-group-wide">
-            <label htmlFor="description">Product Description</label>
-            <textarea
-              id="description"
-              name="description"
-              value={productForm.description}
-              onChange={handleProductFieldChange}
-              placeholder="Optional notes about the product overall"
-              rows={2}
-            />
+        <form className="product-form" onSubmit={handleProductSubmit}>
+          <div className="product-details-grid">
+            <div className="form-group form-group-wide">
+              <label htmlFor="name">Product Name <span className="required-asterisk">*</span></label>
+              <input
+                id="name"
+                name="name"
+                type="text"
+                value={productForm.name}
+                onChange={handleProductFieldChange}
+                placeholder="e.g. Merino Turtle Neck"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="skuPrefix">SKU Prefix <span className="required-asterisk">*</span></label>
+              <input
+                id="skuPrefix"
+                name="skuPrefix"
+                type="text"
+                value={productForm.skuPrefix}
+                onChange={handleSkuPrefixChange}
+                placeholder="TURT"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="category">Category <span className="required-asterisk">*</span></label>
+              <input
+                id="category"
+                name="category"
+                type="text"
+                list="category-options"
+                value={productForm.category}
+                onChange={handleProductFieldChange}
+                placeholder="Select existing or type a new category"
+                autoComplete="off"
+                required
+              />
+              <datalist id="category-options">
+                {categoryOptions.map((cat) => (
+                  <option key={cat} value={cat} />
+                ))}
+              </datalist>
+              <p className="field-hint">Pick from the list, or just type a new category name.</p>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="category">Category <span className="required-asterisk">*</span></label>
+              <input
+                id="category"
+                name="category"
+                type="text"
+                value={productForm.category}
+                onChange={handleProductFieldChange}
+                placeholder="Knitwear"
+                required
+              />
+            </div>
+
+            <div className="form-group form-group-wide">
+              <label htmlFor="description">Description</label>
+              <textarea
+                id="description"
+                name="description"
+                value={productForm.description}
+                onChange={handleProductFieldChange}
+                placeholder="Short description shown in listings"
+                rows={3}
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="reorderPoint">Reorder Point</label>
+              <input
+                id="reorderPoint"
+                name="reorderPoint"
+                type="number"
+                min="0"
+                value={productForm.reorderPoint}
+                onChange={handleProductFieldChange}
+                placeholder="10"
+              />
+            </div>
           </div>
 
           <div className="variants-block">
@@ -212,39 +318,27 @@ export default function RegisterProduct() {
               <div key={variant.variant_id} className="variant-card">
                 <div className="variant-card-header">
                   <span className="variant-index">Variant {index + 1}</span>
-                  <div className="variant-card-actions">
-                    <button
-                      type="button"
-                      className="btn-secondary btn-copy-variant"
-                      onClick={() => copyVariantDraft(variant.variant_id)}
-                    >
-                      Copy
-                    </button>
-                    {variantDrafts.length > 1 && (
-                      <button
-                        type="button"
-                        className="btn-remove"
-                        onClick={() => removeVariantDraft(variant.variant_id)}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-copy-variant"
+                    onClick={() => duplicateVariantDraft(variant.variant_id)}
+                  >
+                    Duplicate
+                  </button>
                 </div>
 
                 <div className="attributes-block">
-                  <label className="section-label">Attributes</label>
                   {variant.attributes.map((attr) => (
                     <div key={attr.id} className="attribute-row">
                       <input
                         type="text"
-                        placeholder="Attribute name (e.g. Size)"
+                        placeholder="Attribute Name"
                         value={attr.key}
                         onChange={(e) => updateAttribute(variant.variant_id, attr.id, 'key', e.target.value)}
                       />
                       <input
                         type="text"
-                        placeholder="Value (e.g. Large)"
+                        placeholder="Attribute Value"
                         value={attr.value}
                         onChange={(e) => updateAttribute(variant.variant_id, attr.id, 'value', e.target.value)}
                       />
@@ -257,7 +351,11 @@ export default function RegisterProduct() {
                       </button>
                     </div>
                   ))}
-                  <button type="button" className="btn-add-attribute" onClick={() => addAttribute(variant.variant_id)}>
+                  <button
+                    type="button"
+                    className="btn-add-attribute"
+                    onClick={() => addAttribute(variant.variant_id)}
+                  >
                     + Add Attribute
                   </button>
                 </div>
@@ -280,31 +378,8 @@ export default function RegisterProduct() {
                     <input
                       type="text"
                       value={variant.sku}
-                      onChange={(e) => updateVariant(variant.variant_id, 'sku', e.target.value)}
-                      disabled={variant.autoSku}
+                      onChange={(e) => handleSkuFieldChange(variant.variant_id, e.target.value)}
                     />
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={variant.autoSku}
-                        onChange={(e) => toggleAutoSku(variant.variant_id, e.target.checked)}
-                      />
-                      Auto-generate SKU
-                    </label>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Color</label>
-                    <div className="color-row">
-                      <input
-                        type="color"
-                        value={variant.color}
-                        onChange={(e) => updateVariant(variant.variant_id, 'color', e.target.value)}
-                      />
-                      <button type="button" className="btn-secondary" onClick={() => handleAutoColor(variant.variant_id)}>
-                        Auto
-                      </button>
-                    </div>
                   </div>
                 </div>
 
@@ -317,18 +392,59 @@ export default function RegisterProduct() {
                     placeholder="Optional notes for this variant"
                   />
                 </div>
+
+                {variantDrafts.length > 1 && (
+                  <div className="variant-delete-row">
+                    <button
+                      type="button"
+                      className="btn-remove"
+                      onClick={() => removeVariantDraft(variant.variant_id)}
+                    >
+                      Delete Variant
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
 
-          <button type="submit" className="btn-primary btn-submit-product">
-            Save Product & All Variants
-          </button>
+          <div className="product-form-actions">
+            {draftSavedMessage && <span className="status-text">{draftSavedMessage}</span>}
+            <button type="button" className="btn-secondary" onClick={handleSaveDraft}>
+              Save Draft
+            </button>
+            <button type="submit" className="btn-primary btn-submit-product">
+              Register Product
+            </button>
+          </div>
         </form>
       </section>
 
+      <aside className="listing-card next-steps-card">
+        <h2>Next Steps</h2>
+        <p className="next-steps-intro">
+          After registering, print QR labels for each variant and bind them in{' '}
+          <strong>Assign QR to Product</strong>. Stock only becomes visible in Balance once at
+          least one code is bound.
+        </p>
+        <ol className="next-steps-list">
+          <li className="next-steps-item">
+            <span className="next-steps-badge">1</span>
+            <span>Print QR labels per variant</span>
+          </li>
+          <li className="next-steps-item">
+            <span className="next-steps-badge">2</span>
+            <span>Bind codes in Assign QR to Product</span>
+          </li>
+          <li className="next-steps-item">
+            <span className="next-steps-badge">3</span>
+            <span>Receive first delivery into a store</span>
+          </li>
+        </ol>
+      </aside>
+
       {lastRegistered && (
-        <section className="just-registered-card">
+        <section className="just-registered-card register-product-full-span">
           <div className="just-registered-header">
             <PackageCheck size={18} />
             <h2>Just Registered</h2>
@@ -351,7 +467,6 @@ export default function RegisterProduct() {
                   <tr>
                     <th>SKU</th>
                     <th>Attributes</th>
-                    <th>Color</th>
                     <th>Price (RM)</th>
                     <th>Remarks</th>
                   </tr>
@@ -369,12 +484,6 @@ export default function RegisterProduct() {
                             ? attributesArray.map((a) => `${a.key}: ${a.value}`).join(', ')
                             : <span className="muted-dash">—</span>}
                         </td>
-                        <td data-label="Color">
-                          <span className="color-swatch-row">
-                            <span className="variant-color-dot" style={{ background: variant.color }} />
-                            <span className="color-hex">{variant.color}</span>
-                          </span>
-                        </td>
                         <td data-label="Price (RM)">
                           {variant.price
                             ? <span className="price-badge">{Number(variant.price).toFixed(2)}</span>
@@ -388,10 +497,6 @@ export default function RegisterProduct() {
               </table>
             </div>
           </div>
-
-          <p className="section-hint">
-            Head to Product InfoCenter → Product Listing to see all registered products.
-          </p>
         </section>
       )}
     </div>

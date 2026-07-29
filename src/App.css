@@ -25,6 +25,7 @@
     flex: 1 1 auto;
     overflow-y: auto;
     padding: 0;
+    background-color: #F4F7F1;
 }
 
 .page-header {

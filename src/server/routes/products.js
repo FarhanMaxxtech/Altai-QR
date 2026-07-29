@@ -4,11 +4,23 @@ import pool from '../db.js';
 const router = express.Router();
 
 router.get('/', async (req, res) => {
+  const { product_name, product_description, product_category, reorder_point, variants } = req.body;
+  const client = await pool.connect();
   try {
-    const productsResult = await pool.query(
-      'SELECT * FROM products WHERE merchant_id = $1 ORDER BY created_at DESC',
-      [req.user.merchant_id]
+    await client.query('BEGIN');
+
+    const productResult = await client.query(
+      `INSERT INTO products (product_name, product_description, product_category, reorder_point, merchant_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [
+        product_name,
+        product_description || null,
+        product_category || null,
+        reorder_point ?? null,
+        req.user.merchant_id,
+      ]
     );
+    const product = productResult.rows[0];
     const variantsResult = await pool.query(
       `SELECT v.* FROM variants v
        JOIN products p ON p.product_id = v.product_id
@@ -67,24 +79,36 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/categories', async (req, res) => {
   try {
-    const productResult = await pool.query(
-      'SELECT * FROM products WHERE product_id = $1 AND merchant_id = $2',
-      [req.params.id, req.user.merchant_id]
+    const result = await pool.query(
+      `SELECT DISTINCT product_category FROM products
+       WHERE merchant_id = $1 AND product_category IS NOT NULL AND product_category <> ''
+       ORDER BY product_category`,
+      [req.user.merchant_id]
     );
-    if (productResult.rows.length === 0) {
-      return res.status(404).json({ message: 'Product not found' });
-    }
-    const variantsResult = await pool.query(
-      'SELECT * FROM variants WHERE product_id = $1',
-      [req.params.id]
-    );
-    res.json({ ...productResult.rows[0], variants: variantsResult.rows });
+    res.json(result.rows.map((r) => r.product_category));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
+
+router.put('/:id', async (req, res) => {
+  const { product_name, product_description, product_category, reorder_point } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE products SET product_name=$1, product_description=$2, product_category=$3, reorder_point=$4
+       WHERE product_id=$5 AND merchant_id=$6 RETURNING *`,
+      [product_name, product_description, product_category || null, reorder_point ?? null, req.params.id, req.user.merchant_id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Product not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
 
 router.post('/', async (req, res) => {
   const { product_name, product_description, variants } = req.body;
