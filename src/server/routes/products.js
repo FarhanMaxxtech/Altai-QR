@@ -4,23 +4,11 @@ import pool from '../db.js';
 const router = express.Router();
 
 router.get('/', async (req, res) => {
-  const { product_name, product_description, product_category, reorder_point, variants } = req.body;
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-
-    const productResult = await client.query(
-      `INSERT INTO products (product_name, product_description, product_category, reorder_point, merchant_id)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [
-        product_name,
-        product_description || null,
-        product_category || null,
-        reorder_point ?? null,
-        req.user.merchant_id,
-      ]
+    const productsResult = await pool.query(
+      'SELECT * FROM products WHERE merchant_id = $1 ORDER BY created_at DESC',
+      [req.user.merchant_id]
     );
-    const product = productResult.rows[0];
     const variantsResult = await pool.query(
       `SELECT v.* FROM variants v
        JOIN products p ON p.product_id = v.product_id
@@ -155,21 +143,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
-  const { product_name, product_description } = req.body;
-  try {
-    const result = await pool.query(
-      `UPDATE products SET product_name=$1, product_description=$2
-       WHERE product_id=$3 AND merchant_id=$4 RETURNING *`,
-      [product_name, product_description, req.params.id, req.user.merchant_id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ message: 'Product not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
-
 router.delete('/:id', async (req, res) => {
   try {
     await pool.query(
@@ -183,4 +156,3 @@ router.delete('/:id', async (req, res) => {
 });
 
 export default router;
-
