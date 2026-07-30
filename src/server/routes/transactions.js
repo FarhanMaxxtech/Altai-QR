@@ -96,13 +96,35 @@ router.post('/move', async (req, res) => {
       );
     }
 
-    if (transaction_type !== 'CHECKOUT') {
+        if (transaction_type !== 'CHECKOUT') {
       await client.query(
         `INSERT INTO inventory_balance (variant_id, store_id, quantity)
          VALUES ($1, $2, $3)
          ON CONFLICT (variant_id, store_id)
          DO UPDATE SET quantity = inventory_balance.quantity + $3`,
         [variant_id, to_store_id, qty]
+      );
+    }
+
+    // --- Sync variants.quantity the same way as scan-move -----------------
+    if (transaction_type === 'RECEIVE') {
+      await client.query(
+        `UPDATE variants SET quantity = quantity + $1 WHERE variant_id = $2`,
+        [qty, variant_id]
+      );
+    } else if (transaction_type === 'CHECKOUT') {
+      const variantRow = await client.query(
+        `SELECT quantity FROM variants WHERE variant_id = $1 FOR UPDATE`,
+        [variant_id]
+      );
+      const currentQty = variantRow.rows[0]?.quantity || 0;
+      if (qty > currentQty) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: `Only ${currentQty} units available for this variant.` });
+      }
+      await client.query(
+        `UPDATE variants SET quantity = quantity - $1 WHERE variant_id = $2`,
+        [qty, variant_id]
       );
     }
 
@@ -264,6 +286,33 @@ router.post('/scan-move', async (req, res) => {
       );
     }
     // ----------------------------------------------------------------------
+
+    // ----------------------------------------------------------------------
+
+    // --- Keep variants.quantity (the merchant's total on-hand count) in
+    // sync too. RECEIVE brings new stock in, CHECKOUT takes it out of the
+    // business entirely — TRANSFER just moves it between stores, so the
+    // total is unaffected and variants.quantity is left alone.
+    if (transaction_type === 'RECEIVE') {
+      await client.query(
+        `UPDATE variants SET quantity = quantity + $1 WHERE variant_id = $2`,
+        [qty, variant_id]
+      );
+    } else if (transaction_type === 'CHECKOUT') {
+      const variantRow = await client.query(
+        `SELECT quantity FROM variants WHERE variant_id = $1 FOR UPDATE`,
+        [variant_id]
+      );
+      const currentQty = variantRow.rows[0]?.quantity || 0;
+      if (qty > currentQty) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: `Only ${currentQty} units available for this variant.` });
+      }
+      await client.query(
+        `UPDATE variants SET quantity = quantity - $1 WHERE variant_id = $2`,
+        [qty, variant_id]
+      );
+    }
 
     if (transaction_type === 'RECEIVE') {
       await client.query(
