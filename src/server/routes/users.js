@@ -1,22 +1,27 @@
 import express from 'express';
 import pool from '../db.js';
+import { buildPresetPermissions, permissionsToModuleList } from '../../utils/permissionPresets.js';
 
 const router = express.Router();
 
 router.get('/', async (req, res) => {
   try {
-    // Super Admin can see everyone (needed for QRGenerator's merchant picker);
-    // everyone else only sees their own merchant's staff.
-    const result = req.user.role === 'super_admin'
-      ? await pool.query(
-          `SELECT user_id, name, email, role, phone, profile_picture, modules, merchant_id, created_at
-           FROM users ORDER BY created_at DESC`
-        )
-      : await pool.query(
-          `SELECT user_id, name, email, role, phone, profile_picture, modules, merchant_id, created_at
-           FROM users WHERE merchant_id = $1 ORDER BY created_at DESC`,
-          [req.user.merchant_id]
-        );
+    const isSuperAdmin = req.user.role === 'super_admin';
+    const scopeClause = isSuperAdmin ? '' : 'WHERE u.merchant_id = $1';
+    const params = isSuperAdmin ? [] : [req.user.merchant_id];
+
+    const result = await pool.query(
+      `SELECT u.user_id, u.name, u.email, u.role, u.phone, u.profile_picture,
+              u.modules, u.permissions, u.permission_preset, u.merchant_id,
+              u.created_at, u.last_seen,
+              COALESCE(array_agg(usa.store_id) FILTER (WHERE usa.store_id IS NOT NULL), '{}') AS store_ids
+       FROM users u
+       LEFT JOIN user_store_access usa ON usa.user_id = u.user_id
+       ${scopeClause}
+       GROUP BY u.user_id
+       ORDER BY u.created_at DESC`,
+      params
+    );
 
     res.json(result.rows);
   } catch (err) {
@@ -37,6 +42,124 @@ router.delete('/:id', async (req, res) => {
     res.status(204).send();
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+// PUT apply a permission preset — recomputes the full permissions map from
+// scratch (any per-cell overrides are reset).
+router.put('/:id/preset', async (req, res) => {
+  const { preset } = req.body;
+  if (!preset) return res.status(400).json({ message: 'preset is required.' });
+
+  const permissions = buildPresetPermissions(preset);
+  const modules = permissionsToModuleList(permissions);
+  const isSuperAdmin = req.user.role === 'super_admin';
+
+  try {
+    const result = isSuperAdmin
+      ? await pool.query(
+          `UPDATE users SET permission_preset = $2, permissions = $3::jsonb, modules = $4::jsonb
+           WHERE user_id = $1
+           RETURNING user_id, permission_preset, permissions, modules`,
+          [req.params.id, preset, JSON.stringify(permissions), JSON.stringify(modules)]
+        )
+      : await pool.query(
+          `UPDATE users SET permission_preset = $3, permissions = $4::jsonb, modules = $5::jsonb
+           WHERE user_id = $1 AND merchant_id = $2
+           RETURNING user_id, permission_preset, permissions, modules`,
+          [req.params.id, req.user.merchant_id, preset, JSON.stringify(permissions), JSON.stringify(modules)]
+        );
+
+    if (result.rows.length === 0) return res.status(404).json({ message: 'User not found.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// PUT grant/revoke a single module+action cell — "click a cell to grant or
+// revoke". Clears permission_preset since the result no longer matches a
+// clean preset once a cell has been hand-edited.
+router.put('/:id/permission', async (req, res) => {
+  const { module: moduleName, action, granted } = req.body;
+  if (!moduleName || !action) {
+    return res.status(400).json({ message: 'module and action are required.' });
+  }
+  const isSuperAdmin = req.user.role === 'super_admin';
+
+  try {
+    const userResult = await pool.query(
+      isSuperAdmin
+        ? 'SELECT permissions FROM users WHERE user_id = $1'
+        : 'SELECT permissions FROM users WHERE user_id = $1 AND merchant_id = $2',
+      isSuperAdmin ? [req.params.id] : [req.params.id, req.user.merchant_id]
+    );
+    if (userResult.rows.length === 0) return res.status(404).json({ message: 'User not found.' });
+
+    const current = userResult.rows[0].permissions || {};
+    const currentActions = new Set(current[moduleName] || []);
+    if (granted) currentActions.add(action); else currentActions.delete(action);
+
+    const nextPermissions = { ...current, [moduleName]: Array.from(currentActions) };
+    const nextModules = permissionsToModuleList(nextPermissions);
+
+    const result = isSuperAdmin
+      ? await pool.query(
+          `UPDATE users SET permissions = $2::jsonb, modules = $3::jsonb, permission_preset = NULL
+           WHERE user_id = $1
+           RETURNING user_id, permissions, modules, permission_preset`,
+          [req.params.id, JSON.stringify(nextPermissions), JSON.stringify(nextModules)]
+        )
+      : await pool.query(
+          `UPDATE users SET permissions = $3::jsonb, modules = $4::jsonb, permission_preset = NULL
+           WHERE user_id = $1 AND merchant_id = $2
+           RETURNING user_id, permissions, modules, permission_preset`,
+          [req.params.id, req.user.merchant_id, JSON.stringify(nextPermissions), JSON.stringify(nextModules)]
+        );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// PUT replace a user's full store-access list in one call — used both for
+// single toggles (frontend sends the whole next array) and Select all/Clear all.
+router.put('/:id/stores', async (req, res) => {
+  const { store_ids } = req.body;
+  if (!Array.isArray(store_ids)) return res.status(400).json({ message: 'store_ids must be an array.' });
+  const isSuperAdmin = req.user.role === 'super_admin';
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const ownership = await client.query(
+      isSuperAdmin
+        ? 'SELECT user_id FROM users WHERE user_id = $1'
+        : 'SELECT user_id FROM users WHERE user_id = $1 AND merchant_id = $2',
+      isSuperAdmin ? [req.params.id] : [req.params.id, req.user.merchant_id]
+    );
+    if (ownership.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    await client.query('DELETE FROM user_store_access WHERE user_id = $1', [req.params.id]);
+    if (store_ids.length > 0) {
+      await client.query(
+        `INSERT INTO user_store_access (user_id, store_id) SELECT $1, unnest($2::uuid[])`,
+        [req.params.id, store_ids]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ store_ids });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ message: err.message });
+  } finally {
+    client.release();
   }
 });
 

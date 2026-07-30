@@ -1,66 +1,99 @@
-// src/pages/UserManagement.jsx
-import React, { useState, useRef, useEffect } from 'react';
+// src/pages/merchant/UserManagement.jsx
+import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch } from '../../utils/api';
+import { MODULE_DEFS, ACTIONS, PRESETS, buildPresetPermissions } from '../../utils/permissionPresets';
 import '../../styles/UserManagement.css';
 
-// TODO: GET /api/users
-const MOCK_USERS = [];
+const PAGE_SIZE = 10;
+const ROLE_OPTIONS = ['Admin', 'Staff']; // account-level role for invites; super_admin is platform-level only
 
-const ROLES = ['Admin', 'Staff'];
+function initialsOf(name) {
+  if (!name) return '—';
+  return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
 
-// Every page/module in the app that access can be granted to.
-// Keep this list in sync with your actual routes/nav.
-const MODULES = [
-  'Store Management',
-  'Asset Registry',
-  'Product Listing',
-  'Stock Adjustment',
-  'User Management',
-];
+function formatRelativeTime(iso) {
+  if (!iso) return 'Never';
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+  if (diffMin < 1) return 'Now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay === 1) return 'Yesterday';
+  return `${diffDay}d ago`;
+}
 
-function makeEmptyAccountForm() {
-  return { name: '', email: '', password: '', role: 'Staff', modules: [] };
+function isAdminAccountOf(user) {
+  return user?.role === 'admin' || user?.role === 'super_admin';
+}
+
+function accessLabel(user) {
+  if (isAdminAccountOf(user)) return 'All stores';
+  const count = (user.store_ids || []).length;
+  return `${count} store${count === 1 ? '' : 's'}`;
+}
+
+function roleBadgeLabel(user) {
+  if (user.role === 'admin') return 'Admin';
+  if (user.role === 'super_admin') return 'Super Admin';
+  return user.permission_preset || 'Viewer';
+}
+
+function makeEmptyInviteForm() {
+  return { name: '', email: '', password: '', role: 'Staff' };
 }
 
 export default function UserManagement() {
-  const [users, setUsers] = useState(MOCK_USERS);
-  const [accountForm, setAccountForm] = useState(makeEmptyAccountForm());
+  const [users, setUsers] = useState([]);
+  const [stores, setStores] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [page, setPage] = useState(1);
 
-  // New staff accounts are created under whichever merchant is currently logged in
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [inviteForm, setInviteForm] = useState(makeEmptyInviteForm());
+  const [inviteError, setInviteError] = useState('');
+
   const storedUser = localStorage.getItem('authUser');
   const currentMerchant = storedUser ? JSON.parse(storedUser) : null;
 
-  useEffect(() => {
+  const loadUsers = () => {
     apiFetch('/api/users')
       .then((res) => res.json())
-      .then((data) => setUsers(data))
+      .then((data) => {
+        setUsers(data);
+        setSelectedUserId((prev) => prev || data[0]?.user_id || null);
+      })
       .catch((err) => console.error('Failed to load users:', err));
+  };
+
+  useEffect(() => {
+    loadUsers();
+    apiFetch('/api/stores')
+      .then((res) => res.json())
+      .then((data) => setStores(data))
+      .catch((err) => console.error('Failed to load stores:', err));
   }, []);
 
-  // --- Module checkboxes for the account being created --------------------
+  const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE));
+  const pagedUsers = users.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const selectedUser = users.find((u) => u.user_id === selectedUserId) || null;
+  const adminAccount = isAdminAccountOf(selectedUser);
 
-  const toggleModuleForForm = (moduleName) => {
-    setAccountForm((prev) => {
-      const current = prev.modules;
-      const next = current.includes(moduleName)
-        ? current.filter((m) => m !== moduleName)
-        : [...current, moduleName];
-      return { ...prev, modules: next };
-    });
-  };
+  // --- Invite user -----------------------------------------------------------
 
-  // --- Account form handlers -----------------------------------------------
-
-  const handleAccountFieldChange = (e) => {
+  const handleInviteFieldChange = (e) => {
     const { name, value } = e.target;
-    setAccountForm((prev) => ({ ...prev, [name]: value }));
+    setInviteForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleAccountSubmit = async (e) => {
+  const handleInviteSubmit = async (e) => {
     e.preventDefault();
+    setInviteError('');
 
-    if (!accountForm.name.trim() || !accountForm.email.trim() || !accountForm.password) {
-      alert('Name, email, and password are required.');
+    if (!inviteForm.name.trim() || !inviteForm.email.trim() || !inviteForm.password) {
+      setInviteError('Name, email, and password are required.');
       return;
     }
 
@@ -68,30 +101,33 @@ export default function UserManagement() {
       const res = await apiFetch('/api/auth/register', {
         method: 'POST',
         body: JSON.stringify({
-          name: accountForm.name.trim(),
-          email: accountForm.email.trim(),
-          password: accountForm.password,
-          role: accountForm.role.toLowerCase(),
+          name: inviteForm.name.trim(),
+          email: inviteForm.email.trim(),
+          password: inviteForm.password,
+          role: inviteForm.role.toLowerCase(),
           merchant_id: currentMerchant?.merchant_id || null,
-          modules: accountForm.modules,
+          modules: [],
         }),
       });
       const result = await res.json();
 
       if (!res.ok) {
-        alert(result.message || 'Could not create account.');
+        setInviteError(result.message || 'Could not create account.');
         return;
       }
 
-      setUsers((prev) => [result, ...prev]);
-      setAccountForm(makeEmptyAccountForm());
+      setIsInviteOpen(false);
+      setInviteForm(makeEmptyInviteForm());
+      loadUsers();
+      setSelectedUserId(result.user_id);
     } catch (err) {
-      alert('Could not reach server. Check it is running.');
+      setInviteError('Could not reach server. Check it is running.');
       console.error(err);
     }
   };
 
   const removeUser = async (userId) => {
+    if (!window.confirm('Remove this account?')) return;
     try {
       const res = await apiFetch(`/api/users/${userId}`, { method: 'DELETE' });
       if (!res.ok) {
@@ -99,126 +135,327 @@ export default function UserManagement() {
         return;
       }
       setUsers((prev) => prev.filter((u) => u.user_id !== userId));
+      if (selectedUserId === userId) setSelectedUserId(null);
     } catch (err) {
       alert('Could not reach server. Check it is running.');
       console.error(err);
     }
   };
 
+  // --- Preset / permission editing --------------------------------------------
+
+  const applyPreset = async (preset) => {
+    if (!selectedUser || adminAccount) return;
+    const nextPermissions = buildPresetPermissions(preset);
+
+    setUsers((prev) => prev.map((u) =>
+      u.user_id === selectedUser.user_id
+        ? { ...u, permission_preset: preset, permissions: nextPermissions }
+        : u
+    ));
+
+    try {
+      await apiFetch(`/api/users/${selectedUser.user_id}/preset`, {
+        method: 'PUT',
+        body: JSON.stringify({ preset }),
+      });
+    } catch (err) {
+      console.error('Failed to apply preset:', err);
+      loadUsers();
+    }
+  };
+
+  const toggleCell = async (moduleName, action) => {
+    if (!selectedUser || adminAccount) return;
+    const currentActions = selectedUser.permissions?.[moduleName] || [];
+    const isGranted = currentActions.includes(action);
+    const nextActions = isGranted
+      ? currentActions.filter((a) => a !== action)
+      : [...currentActions, action];
+
+    setUsers((prev) => prev.map((u) =>
+      u.user_id === selectedUser.user_id
+        ? { ...u, permission_preset: null, permissions: { ...u.permissions, [moduleName]: nextActions } }
+        : u
+    ));
+
+    try {
+      await apiFetch(`/api/users/${selectedUser.user_id}/permission`, {
+        method: 'PUT',
+        body: JSON.stringify({ module: moduleName, action, granted: !isGranted }),
+      });
+    } catch (err) {
+      console.error('Failed to update permission:', err);
+      loadUsers();
+    }
+  };
+
+  const grantTotal = useMemo(() => {
+    if (!selectedUser) return 0;
+    return Object.values(selectedUser.permissions || {}).reduce((sum, actions) => sum + actions.length, 0);
+  }, [selectedUser]);
+
+  // --- Store access ------------------------------------------------------------
+
+  const toggleStore = async (storeId) => {
+    if (!selectedUser || adminAccount) return;
+    const current = selectedUser.store_ids || [];
+    const next = current.includes(storeId)
+      ? current.filter((id) => id !== storeId)
+      : [...current, storeId];
+
+    setUsers((prev) => prev.map((u) => (u.user_id === selectedUser.user_id ? { ...u, store_ids: next } : u)));
+
+    try {
+      await apiFetch(`/api/users/${selectedUser.user_id}/stores`, {
+        method: 'PUT',
+        body: JSON.stringify({ store_ids: next }),
+      });
+    } catch (err) {
+      console.error('Failed to update store access:', err);
+      loadUsers();
+    }
+  };
+
+  const allStoresSelected = stores.length > 0 && (selectedUser?.store_ids || []).length === stores.length;
+
+  const toggleAllStores = async () => {
+    if (!selectedUser || adminAccount) return;
+    const next = allStoresSelected ? [] : stores.map((s) => s.store_id);
+
+    setUsers((prev) => prev.map((u) => (u.user_id === selectedUser.user_id ? { ...u, store_ids: next } : u)));
+
+    try {
+      await apiFetch(`/api/users/${selectedUser.user_id}/stores`, {
+        method: 'PUT',
+        body: JSON.stringify({ store_ids: next }),
+      });
+    } catch (err) {
+      console.error('Failed to update store access:', err);
+      loadUsers();
+    }
+  };
+
   return (
-    <div className="user-management">
-      <section className="account-form-section">
-        <h2>Add Account</h2>
-        <form className="account-form" onSubmit={handleAccountSubmit}>
-          <div className="form-group">
-            <label htmlFor="name">Name</label>
-            <input
-              id="name"
-              name="name"
-              type="text"
-              value={accountForm.name}
-              onChange={handleAccountFieldChange}
-              placeholder="e.g. Jane Tan"
-              required
-            />
+    <div className="um-layout">
+      {/* --- Left: user list --- */}
+      <aside className="um-sidebar">
+        <div className="um-sidebar-header">
+          <h2>Users</h2>
+          <span className="um-count-badge">{users.length}</span>
+        </div>
+
+        <div className="um-list">
+          {pagedUsers.length === 0 ? (
+            <p className="um-empty-list">No accounts yet.</p>
+          ) : (
+            pagedUsers.map((user) => (
+              <button
+                key={user.user_id}
+                type="button"
+                className={`um-user-card ${user.user_id === selectedUserId ? 'um-user-card-active' : ''}`}
+                onClick={() => setSelectedUserId(user.user_id)}
+              >
+                <span className="um-avatar">{initialsOf(user.name)}</span>
+                <span className="um-user-meta">
+                  <span className="um-user-name">{user.name}</span>
+                  <span className="um-user-sub">{roleBadgeLabel(user)} · {accessLabel(user)}</span>
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+
+        {totalPages > 1 && (
+          <div className="um-pagination">
+            <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>‹</button>
+            <span>Page {page} of {totalPages}</span>
+            <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>›</button>
           </div>
+        )}
 
-          <div className="form-group">
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              value={accountForm.email}
-              onChange={handleAccountFieldChange}
-              placeholder="jane@example.com"
-              required
-            />
+        <button type="button" className="um-invite-btn" onClick={() => setIsInviteOpen(true)}>
+          + Invite user
+        </button>
+      </aside>
+
+      {/* --- Right: detail --- */}
+      <section className="um-detail">
+        {!selectedUser ? (
+          <div className="um-detail-empty">
+            <p className="empty-state">Select a user to view their details.</p>
           </div>
-
-          <div className="form-group">
-            <label htmlFor="role">Role</label>
-            <select
-              id="role"
-              name="role"
-              value={accountForm.role}
-              onChange={handleAccountFieldChange}
-            >
-              {ROLES.map((role) => (
-                <option key={role} value={role}>{role}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              value={accountForm.password}
-              onChange={handleAccountFieldChange}
-              placeholder="Set a password for this account"
-              required
-            />
-          </div>
-
-          <div className="form-group form-group-wide module-checkbox-block">
-            <label>Module Access</label>
-            {MODULES.map((moduleName) => (
-              <label key={moduleName} className="module-checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={accountForm.modules.includes(moduleName)}
-                  onChange={() => toggleModuleForForm(moduleName)}
-                />
-                {moduleName}
-              </label>
-            ))}
-          </div>
-
-          <button type="submit" className="btn-primary">Add Account</button>
-        </form>
-      </section>
-
-      <section className="accounts-list-section">
-        <h2>Accounts ({users.length})</h2>
-
-        {users.length === 0 ? (
-          <p className="empty-state">No accounts created yet.</p>
         ) : (
-          <table className="accounts-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Module Access</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.user_id}>
-                  <td>{user.name}</td>
-                  <td>{user.email}</td>
-                  <td>
-                    <span className={`role-badge role-badge-${user.role.toLowerCase()}`}>
-                      {user.role}
-                    </span>
-                  </td>
-                  <td>{(user.modules || []).join(', ') || '—'}</td>
-                  <td>
-                    <button className="btn-remove-small" onClick={() => removeUser(user.user_id)}>
-                      Remove
+          <>
+            <div className="um-profile-card">
+              <span className="um-profile-avatar">{initialsOf(selectedUser.name)}</span>
+              <div className="um-profile-meta">
+                <span className="um-profile-name">{selectedUser.name}</span>
+                <span className="um-profile-sub">
+                  {selectedUser.email} · last seen {formatRelativeTime(selectedUser.last_seen)}
+                </span>
+              </div>
+
+              {!adminAccount && (
+                <div className="um-preset-block">
+                  <span className="um-preset-label">Role Preset</span>
+                  <div className="um-preset-tabs">
+                    {PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        className={`um-preset-tab ${selectedUser.permission_preset === preset ? 'um-preset-tab-active' : ''}`}
+                        onClick={() => applyPreset(preset)}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="um-card">
+              <div className="um-card-header">
+                <h3>Warehouse & store access</h3>
+                <span className="um-count-badge">{(selectedUser.store_ids || []).length} OF {stores.length}</span>
+                <div className="um-spacer" />
+                <button type="button" className="um-secondary-btn" onClick={toggleAllStores} disabled={adminAccount}>
+                  {allStoresSelected ? 'Clear all' : 'Select all'}
+                </button>
+              </div>
+
+              <div className="um-store-grid">
+                {stores.map((store) => {
+                  const isChecked = adminAccount || (selectedUser.store_ids || []).includes(store.store_id);
+                  return (
+                    <button
+                      key={store.store_id}
+                      type="button"
+                      className={`um-store-toggle ${isChecked ? 'um-store-toggle-active' : ''}`}
+                      onClick={() => toggleStore(store.store_id)}
+                      disabled={adminAccount}
+                    >
+                      <span className="um-store-check">{isChecked ? '✓' : ''}</span>
+                      <span className="um-store-meta">
+                        <span className="um-store-name">{store.location}</span>
+                        <span className="um-store-code">{store.store_code}</span>
+                      </span>
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="um-card">
+              <div className="um-card-header">
+                <h3>Modules & functions</h3>
+                <span className="um-count-badge">
+                  {adminAccount ? MODULE_DEFS.length * ACTIONS.length : grantTotal} GRANTS
+                </span>
+                <div className="um-spacer" />
+                <span className="um-hint">Click a cell to grant or revoke</span>
+              </div>
+
+              <div className="um-permission-table-wrapper">
+                <table className="um-permission-table">
+                  <thead>
+                    <tr>
+                      <th className="um-col-module">Module</th>
+                      <th className="um-col-functions">Functions</th>
+                      {ACTIONS.map((action) => (
+                        <th key={action} className="um-col-action">
+                          {action.charAt(0).toUpperCase() + action.slice(1)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {MODULE_DEFS.map((mod) => {
+                      const grantedActions = adminAccount ? ACTIONS : (selectedUser.permissions?.[mod.key] || []);
+                      return (
+                        <tr key={mod.key}>
+                          <td className="um-col-module">
+                            <span className={`um-module-dot ${grantedActions.length > 0 ? 'um-module-dot-active' : ''}`} />
+                            {mod.key}
+                          </td>
+                          <td className="um-col-functions">
+                            {mod.functions.map((fn) => (
+                              <span key={fn} className="um-function-chip">{fn}</span>
+                            ))}
+                          </td>
+                          {ACTIONS.map((action) => {
+                            const isGranted = grantedActions.includes(action);
+                            return (
+                              <td key={action} className="um-col-action">
+                                <button
+                                  type="button"
+                                  className={`um-cell-btn ${isGranted ? 'um-cell-btn-active' : ''}`}
+                                  onClick={() => toggleCell(mod.key, action)}
+                                  disabled={adminAccount}
+                                >
+                                  {isGranted ? '✓' : ''}
+                                </button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="um-card-footer">
+                <span className="um-footer-hint">
+                  {adminAccount
+                    ? 'Admin accounts always have full access.'
+                    : `${grantTotal} permission${grantTotal === 1 ? '' : 's'} across ${MODULE_DEFS.length} modules · ${(selectedUser.store_ids || []).length} store${(selectedUser.store_ids || []).length === 1 ? '' : 's'}`}
+                </span>
+                <button type="button" className="um-remove-btn" onClick={() => removeUser(selectedUser.user_id)}>
+                  Remove account
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </section>
+
+      {/* --- Invite user modal --- */}
+      {isInviteOpen && (
+        <div className="um-modal-overlay" onClick={() => setIsInviteOpen(false)}>
+          <div className="um-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <h3>Invite User</h3>
+            <form onSubmit={handleInviteSubmit} className="um-invite-form">
+              <div className="um-field">
+                <label>Name</label>
+                <input name="name" type="text" value={inviteForm.name} onChange={handleInviteFieldChange} placeholder="e.g. Jane Tan" required />
+              </div>
+              <div className="um-field">
+                <label>Email</label>
+                <input name="email" type="email" value={inviteForm.email} onChange={handleInviteFieldChange} placeholder="jane@example.com" required />
+              </div>
+              <div className="um-field">
+                <label>Role</label>
+                <select name="role" value={inviteForm.role} onChange={handleInviteFieldChange}>
+                  {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div className="um-field">
+                <label>Password</label>
+                <input name="password" type="password" value={inviteForm.password} onChange={handleInviteFieldChange} placeholder="Set a password" required />
+              </div>
+
+              {inviteError && <p className="error-text">{inviteError}</p>}
+
+              <div className="um-modal-actions">
+                <button type="button" className="um-secondary-btn" onClick={() => setIsInviteOpen(false)}>Cancel</button>
+                <button type="submit" className="um-primary-btn">Send Invite</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
