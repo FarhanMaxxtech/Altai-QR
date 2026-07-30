@@ -334,53 +334,61 @@ export default function StockManager() {
     };
 
     const confirmReview = async () => {
-      if (reviewRows.length === 0) {
-        setIsReviewOpen(false);
-        return;
-      }
-
-      const from_store_id = SOURCE_STORE_TYPES.includes(selectedTypeKey)
-        ? sourceStore
-        : (isTransfer ? fromStore : null);
-      const to_store_id = selectedTypeKey === 'STOCK_IN' ? sourceStore : (isTransfer ? toStore : null);
-
-      setIsSubmitting(true);
-      const needsApproval = ['DAMAGE', 'CYCLE_COUNT'].includes(selectedType.txType);
-        setSubmitMessage(
-          needsApproval
-            ? `${result.count} unit(s) submitted — awaiting approval.`
-            : `${result.count} unit(s) recorded.`
-        );
-      try {
-        const res = await apiFetch('/api/transactions/scan-move', {
-          method: 'POST',
-          body: JSON.stringify({
-            qr_ids: reviewRows.map((item) => item.qr_id),
-            transaction_type: selectedType.txType,
-            from_store_id,
-            to_store_id,
-          }),
-        });
-        const result = await res.json();
-
-        if (!res.ok) {
-          setSubmitMessage(result.message || 'Adjustment failed.');
+        if (reviewRows.length === 0) {
+          setIsReviewOpen(false);
           return;
         }
 
-        setSubmitMessage(`${result.count} unit(s) recorded.`);
-        setScanCart([]);
-        setPage(1);
-        setIsReviewOpen(false);
-        setReviewRows([]);
-        loadRecent();
-      } catch (err) {
-        setSubmitMessage('Could not reach server. Check it is running.');
-        console.error(err);
-      } finally {
-        setIsSubmitting(false);
-      }
-    };
+        const from_store_id = SOURCE_STORE_TYPES.includes(selectedTypeKey)
+          ? sourceStore
+          : (isTransfer ? fromStore : null);
+        const to_store_id = selectedTypeKey === 'STOCK_IN'
+          ? sourceStore
+          : (isTransfer ? toStore : null);
+
+        setIsSubmitting(true);
+        setSubmitMessage('');
+
+        try {
+          const res = await apiFetch('/api/transactions/scan-move', {
+            method: 'POST',
+            body: JSON.stringify({
+              qr_ids: reviewRows.map((item) => item.qr_id),
+              transaction_type: selectedType.txType,
+              from_store_id,
+              to_store_id,
+            }),
+          });
+
+          const result = await res.json();
+
+          if (!res.ok) {
+            setSubmitMessage(result.message || 'Adjustment failed.');
+            return;
+          }
+
+          // Show different success messages depending on transaction type
+          const needsApproval = ['DAMAGE', 'CYCLE_COUNT'].includes(selectedType.txType);
+
+          setSubmitMessage(
+            needsApproval
+              ? `${result.count} unit(s) submitted — awaiting approval.`
+              : `${result.count} unit(s) recorded.`
+          );
+
+          setScanCart([]);
+          setPage(1);
+          setIsReviewOpen(false);
+          setReviewRows([]);
+          loadRecent();
+
+        } catch (err) {
+          setSubmitMessage('Could not reach server. Check it is running.');
+          console.error(err);
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
 
   const handleDiscard = () => {
     if (scanCart.length > 0 && !window.confirm('Discard this batch and reset the form?')) return;
