@@ -200,6 +200,46 @@ router.get('/scan-lookup', async (req, res) => {
   }
 });
 
+// GET single transaction detail, including its serial numbers — used by
+// the Recent Adjustments detail popup on the Stock Adjustment page.
+router.get('/:id', async (req, res) => {
+  try {
+    const txResult = await pool.query(
+      `SELECT t.transaction_id, t.transaction_type, t.qty, t.created_at, t.approval_status,
+              p.product_name, v.sku,
+              t.from_store_id, t.to_store_id,
+              fs.location AS from_store_name, ts.location AS to_store_name
+       FROM transactions t
+       JOIN variants v ON v.variant_id = t.variant_id
+       JOIN products p ON p.product_id = v.product_id
+       LEFT JOIN stores fs ON fs.store_id = t.from_store_id
+       LEFT JOIN stores ts ON ts.store_id = t.to_store_id
+       WHERE t.transaction_id = $1 AND p.merchant_id = $2`,
+      [req.params.id, req.user.merchant_id]
+    );
+
+    if (txResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Transaction not found.' });
+    }
+
+    const itemsResult = await pool.query(
+      `SELECT qc.serial_number
+       FROM transaction_items ti
+       JOIN qr_codes qc ON qc.qr_id = ti.qr_id
+       WHERE ti.transaction_id = $1
+       ORDER BY qc.serial_number`,
+      [req.params.id]
+    );
+
+    res.json({
+      ...txResult.rows[0],
+      serial_numbers: itemsResult.rows.map((r) => r.serial_number),
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // POST process a whole batch of scanned units as one transaction
 const STORES_FROM = ['CHECKOUT', 'TRANSFER', 'DAMAGE', 'CYCLE_COUNT']; // needs a source store, unit must be in_stock there
 const STORES_TO = ['RECEIVE', 'TRANSFER'];                              // needs a destination store

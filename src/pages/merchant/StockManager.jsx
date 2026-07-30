@@ -3,7 +3,8 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { ScanBarcode, Camera, X, Trash2, Info } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
-import { formatRelativeTime } from '../../utils/dateFormat';
+import { formatDateTime, formatRelativeTime } from '../../utils/dateFormat';
+
 import '../../styles/StockManager.css';
 
 const PAGE_SIZE = 10;
@@ -30,6 +31,17 @@ function qtySign(typeKey) {
   if (typeKey === 'STOCK_OUT' || typeKey === 'DAMAGE') return { text: '-1', className: 'sa-qty-negative' };
   if (typeKey === 'CYCLE_COUNT') return { text: '=', className: 'sa-qty-neutral' };
   return { text: '+1', className: 'sa-qty-positive' }; // STOCK_IN, TRANSFER
+}
+
+function txTypeLabel(type) {
+  switch (type) {
+    case 'RECEIVE': return 'Stock In';
+    case 'CHECKOUT': return 'Stock Out';
+    case 'TRANSFER': return 'Transfer';
+    case 'DAMAGE': return 'Damage';
+    case 'CYCLE_COUNT': return 'Cycle Count';
+    default: return type;
+  }
 }
 
 export default function StockManager() {
@@ -81,6 +93,12 @@ export default function StockManager() {
   const [recentTx, setRecentTx] = useState([]);
   const [recentPage, setRecentPage] = useState(1);
   const [isLoadingRecent, setIsLoadingRecent] = useState(false);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [selectedTx, setSelectedTx] = useState(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [detailStatusMessage, setDetailStatusMessage] = useState('');
+  const [isProcessingDetail, setIsProcessingDetail] = useState(false);
 
   const loadRecent = () => {
     setIsLoadingRecent(true);
@@ -92,6 +110,73 @@ export default function StockManager() {
   };
 
   useEffect(() => { loadRecent(); }, []);
+
+  const openDetail = (t) => {
+  setIsDetailOpen(true);
+  setSelectedTx(t);
+  setDetailError('');
+  setDetailStatusMessage('');
+  setIsLoadingDetail(true);
+  apiFetch(`/api/transactions/${t.transaction_id}`)
+    .then((res) => res.json())
+    .then((data) => setSelectedTx(data))
+    .catch((err) => {
+      setDetailError('Could not reach server. Check it is running.');
+      console.error(err);
+    })
+    .finally(() => setIsLoadingDetail(false));
+};
+
+const closeDetail = () => {
+  setIsDetailOpen(false);
+  setSelectedTx(null);
+  setDetailError('');
+  setDetailStatusMessage('');
+};
+
+const handleApproveDetail = async () => {
+  if (!selectedTx) return;
+  setIsProcessingDetail(true);
+  setDetailStatusMessage('');
+  try {
+    const res = await apiFetch(`/api/transactions/${selectedTx.transaction_id}/approve`, { method: 'POST' });
+    const result = await res.json();
+    if (!res.ok) {
+      setDetailStatusMessage(result.message || 'Could not approve.');
+      return;
+    }
+    setDetailStatusMessage('Approved.');
+    loadRecent();
+    setTimeout(closeDetail, 700);
+  } catch (err) {
+    setDetailStatusMessage('Could not reach server. Check it is running.');
+    console.error(err);
+  } finally {
+    setIsProcessingDetail(false);
+  }
+};
+
+const handleRejectDetail = async () => {
+  if (!selectedTx) return;
+  setIsProcessingDetail(true);
+  setDetailStatusMessage('');
+  try {
+    const res = await apiFetch(`/api/transactions/${selectedTx.transaction_id}/reject`, { method: 'POST' });
+    const result = await res.json();
+    if (!res.ok) {
+      setDetailStatusMessage(result.message || 'Could not reject.');
+      return;
+    }
+    setDetailStatusMessage('Rejected.');
+    loadRecent();
+    setTimeout(closeDetail, 700);
+  } catch (err) {
+    setDetailStatusMessage('Could not reach server. Check it is running.');
+    console.error(err);
+  } finally {
+    setIsProcessingDetail(false);
+  }
+};
 
   useEffect(() => {
     return () => {
@@ -715,7 +800,11 @@ export default function StockManager() {
                   {pagedRecentTx.map((t) => {
                     const info = recentRowInfo(t);
                     return (
-                      <div key={t.transaction_id} className="sa-recent-row">
+                      <div
+                          key={t.transaction_id}
+                          className="sa-recent-row sa-recent-row-clickable"
+                          onClick={() => openDetail(t)}
+                        >
                         <div className="sa-recent-row-meta">
                           <span className="sa-recent-row-title">{t.product_name} · {t.sku}</span>
                           <span className="sa-recent-row-sub">
@@ -838,7 +927,121 @@ export default function StockManager() {
                 </div>
               </div>
             </div>
+            
           )}
+          {isDetailOpen && (
+  <div className="sa-modal-overlay" onClick={closeDetail}>
+    <div className="sa-modal-panel sa-detail-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="sa-modal-header">
+        <div className="sa-modal-header-left">
+          <h3>Transaction Detail</h3>
+          {selectedTx && (
+            <span
+              className={`sa-status-pill ${
+                selectedTx.approval_status === 'pending'
+                  ? 'sa-status-pending'
+                  : selectedTx.approval_status === 'rejected'
+                  ? 'sa-status-rejected'
+                  : 'sa-status-approved'
+              }`}
+            >
+              {selectedTx.approval_status === 'pending'
+                ? 'Pending'
+                : selectedTx.approval_status === 'rejected'
+                ? 'Rejected'
+                : 'Approved'}
+            </span>
+          )}
+        </div>
+        <button type="button" className="sa-modal-close" onClick={closeDetail} aria-label="Close">
+          <X size={16} />
+        </button>
+      </div>
+
+      <div className="sa-modal-body">
+        {isLoadingDetail ? (
+          <p className="sa-empty-batch-subtitle">Loading…</p>
+        ) : detailError ? (
+          <p className="sa-error-text">{detailError}</p>
+        ) : selectedTx ? (
+          <>
+            <div className="sa-review-row">
+              <span className="sa-review-label">Product</span>
+              <span className="sa-review-value">{selectedTx.product_name} · {selectedTx.sku}</span>
+            </div>
+            <div className="sa-review-row">
+              <span className="sa-review-label">Date / Time</span>
+              <span className="sa-review-value">{formatDateTime(selectedTx.created_at)}</span>
+            </div>
+            <div className="sa-review-row">
+              <span className="sa-review-label">Transaction Type</span>
+              <span className="sa-review-value">{txTypeLabel(selectedTx.transaction_type)}</span>
+            </div>
+            <div className="sa-review-row">
+              <span className="sa-review-label">From Store</span>
+              <span className="sa-review-value">{selectedTx.from_store_name || '—'}</span>
+            </div>
+            <div className="sa-review-row">
+              <span className="sa-review-label">To Store</span>
+              <span className="sa-review-value">{selectedTx.to_store_name || '—'}</span>
+            </div>
+
+            <div className="sa-review-divider" />
+
+            <div className="sa-field">
+              <label>Serial Number{(selectedTx.serial_numbers || []).length === 1 ? '' : 's'} ({(selectedTx.serial_numbers || []).length})</label>
+              {(selectedTx.serial_numbers || []).length === 0 ? (
+                <p className="sa-empty-batch-subtitle">No serial numbers recorded.</p>
+              ) : (
+                <div className="sa-table-wrapper">
+                  <table className="sa-batch-table">
+                    <thead>
+                      <tr>
+                        <th className="sa-col-no">No.</th>
+                        <th>Serial Number</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedTx.serial_numbers.map((sn, i) => (
+                        <tr key={sn}>
+                          <td className="sa-col-no">{String(i + 1).padStart(2, '0')}</td>
+                          <td className="sa-serial-cell">{sn}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {detailStatusMessage && <p className="sa-status-text">{detailStatusMessage}</p>}
+          </>
+        ) : null}
+      </div>
+
+      {selectedTx?.approval_status === 'pending' && (
+        <div className="sa-modal-footer">
+          <button
+            type="button"
+            className="sa-btn-reject"
+            onClick={handleRejectDetail}
+            disabled={isProcessingDetail}
+          >
+            Reject
+          </button>
+          <button
+            type="button"
+            className="sa-btn-primary"
+            onClick={handleApproveDetail}
+            disabled={isProcessingDetail}
+          >
+            {isProcessingDetail ? 'Processing…' : 'Approve'}
+          </button>
+        </div>
+      )}
+    </div>
+  </div>
+)}
     </div>
   );
 }

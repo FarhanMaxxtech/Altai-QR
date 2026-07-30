@@ -880,3 +880,17 @@
   background: #fbe8e4;
   color: #b3341e;
 }
+
+.sa-recent-row-clickable {
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.12s;
+}
+
+.sa-recent-row-clickable:hover {
+  background: #fafcf9;
+}
+
+.sa-detail-panel {
+  max-width: 520px;
+}
