@@ -76,27 +76,22 @@ export default function StockManager() {
   const [remark, setRemark] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitMessage, setSubmitMessage] = useState('');
-
+  const RECENT_PAGE_SIZE = 5;
   // --- Recent adjustments --------------------------------------------------
   const [recentTx, setRecentTx] = useState([]);
+  const [recentPage, setRecentPage] = useState(1);
   const [isLoadingRecent, setIsLoadingRecent] = useState(false);
 
   const loadRecent = () => {
     setIsLoadingRecent(true);
-    const from = new Date();
-    from.setDate(from.getDate() - (RECENT_DAYS - 1));
-    const fromStr = from.toISOString().slice(0, 10);
-
-    apiFetch(`/api/transactions?from_date=${fromStr}`)
+    apiFetch('/api/transactions')
       .then((res) => res.json())
-      .then((data) => setRecentTx(data.slice(0, 8)))
+      .then((data) => { setRecentTx(data); setRecentPage(1); })
       .catch((err) => console.error('Failed to load recent adjustments:', err))
       .finally(() => setIsLoadingRecent(false));
   };
 
-  useEffect(() => {
-    loadRecent();
-  }, []);
+  useEffect(() => { loadRecent(); }, []);
 
   useEffect(() => {
     return () => {
@@ -261,9 +256,11 @@ export default function StockManager() {
 
   const totalPages = Math.max(1, Math.ceil(scanCart.length / PAGE_SIZE));
   const pagedCart = scanCart.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const handlePageChange = (next) => {
-    if (next < 1 || next > totalPages) return;
-    setPage(next);
+  const recentTotalPages = Math.max(1, Math.ceil(recentTx.length / RECENT_PAGE_SIZE));
+  const pagedRecentTx = recentTx.slice((recentPage - 1) * RECENT_PAGE_SIZE, recentPage * RECENT_PAGE_SIZE);
+  const handleRecentPageChange = (next) => {
+    if (next < 1 || next > recentTotalPages) return;
+    setRecentPage(next);
   };
 
   // --- Review summary --------------------------------------------------------
@@ -348,7 +345,12 @@ export default function StockManager() {
       const to_store_id = selectedTypeKey === 'STOCK_IN' ? sourceStore : (isTransfer ? toStore : null);
 
       setIsSubmitting(true);
-      setSubmitMessage('');
+      const needsApproval = ['DAMAGE', 'CYCLE_COUNT'].includes(selectedType.txType);
+        setSubmitMessage(
+          needsApproval
+            ? `${result.count} unit(s) submitted — awaiting approval.`
+            : `${result.count} unit(s) recorded.`
+        );
       try {
         const res = await apiFetch('/api/transactions/scan-move', {
           method: 'POST',
@@ -397,20 +399,28 @@ export default function StockManager() {
 
   // --- Recent adjustments row shaping -----------------------------------------
 
-  function recentRowInfo(t) {
-    const qty = Number(t.qty);
-    if (t.transaction_type === 'RECEIVE') {
-      return { label: `Stock In · ${t.to_store_name || '—'}`, delta: `+${qty}`, className: 'sa-net-positive' };
+    function recentRowInfo(t) {
+      const qty = Number(t.qty);
+      const label =
+        t.transaction_type === 'RECEIVE' ? `Stock In · ${t.to_store_name || '—'}`
+        : t.transaction_type === 'CHECKOUT' ? `Stock Out · ${t.from_store_name || '—'}`
+        : t.transaction_type === 'DAMAGE' ? `Damage · ${t.from_store_name || '—'}`
+        : t.transaction_type === 'CYCLE_COUNT' ? `Cycle Count · ${t.from_store_name || '—'}`
+        : `Transfer · ${t.from_store_name || '—'} → ${t.to_store_name || '—'}`;
+
+      const negative = ['CHECKOUT', 'DAMAGE', 'CYCLE_COUNT'].includes(t.transaction_type);
+      const delta = `${negative ? '-' : '+'}${qty}`;
+      const deltaClass = negative ? 'sa-net-negative' : 'sa-net-positive';
+
+      const approval = t.approval_status || 'approved';
+      const statusLabel = approval === 'pending' ? 'Pending' : approval === 'rejected' ? 'Rejected' : 'Approved';
+      const statusClass =
+        approval === 'pending' ? 'sa-status-pending'
+        : approval === 'rejected' ? 'sa-status-rejected'
+        : 'sa-status-approved';
+
+      return { label, delta, className: deltaClass, statusLabel, statusClass };
     }
-    if (t.transaction_type === 'CHECKOUT') {
-      return { label: `Stock Out · ${t.from_store_name || '—'}`, delta: `-${qty}`, className: 'sa-net-negative' };
-    }
-    return {
-      label: `Transfer · ${t.from_store_name || '—'} → ${t.to_store_name || '—'}`,
-      delta: `+${qty}`,
-      className: 'sa-net-positive',
-    };
-  }
 
   return (
     <div className="sa-page">
@@ -683,33 +693,48 @@ export default function StockManager() {
         </section>
 
         <section className="sa-card sa-recent-card">
-          <div className="sa-recent-header">
-            <h2 className="sa-card-title sa-recent-title">Recent adjustments</h2>
-          </div>
-
-          {isLoadingRecent ? (
-            <p className="sa-empty-recent">Loading…</p>
-          ) : recentTx.length === 0 ? (
-            <p className="sa-empty-recent">No adjustments in the last {RECENT_DAYS} days.</p>
-          ) : (
-            <div className="sa-recent-list">
-              {recentTx.map((t) => {
-                const info = recentRowInfo(t);
-                return (
-                  <div key={t.transaction_id} className="sa-recent-row">
-                    <div className="sa-recent-row-meta">
-                      <span className="sa-recent-row-title">{t.product_name} · {t.sku}</span>
-                      <span className="sa-recent-row-sub">
-                        {info.label} · {formatRelativeTime(t.created_at)}
-                      </span>
-                    </div>
-                    <span className={`sa-recent-row-delta ${info.className}`}>{info.delta}</span>
-                  </div>
-                );
-              })}
+            <div className="sa-recent-header">
+              <h2 className="sa-card-title sa-recent-title">Recent adjustments</h2>
             </div>
-          )}
-        </section>
+
+            {isLoadingRecent ? (
+              <p className="sa-empty-recent">Loading…</p>
+            ) : recentTx.length === 0 ? (
+              <p className="sa-empty-recent">No adjustments yet.</p>
+            ) : (
+              <>
+                <div className="sa-recent-list">
+                  {pagedRecentTx.map((t) => {
+                    const info = recentRowInfo(t);
+                    return (
+                      <div key={t.transaction_id} className="sa-recent-row">
+                        <div className="sa-recent-row-meta">
+                          <span className="sa-recent-row-title">{t.product_name} · {t.sku}</span>
+                          <span className="sa-recent-row-sub">
+                            {info.label} · {formatRelativeTime(t.created_at)}
+                          </span>
+                        </div>
+                        <span className={`sa-recent-row-delta ${info.className}`}>{info.delta}</span>
+                        <span className={`sa-status-pill ${info.statusClass}`}>{info.statusLabel}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {recentTotalPages > 1 && (
+                  <div className="sa-pagination-bar">
+                    <button className="sa-btn-secondary" onClick={() => handleRecentPageChange(recentPage - 1)} disabled={recentPage <= 1}>
+                      Previous
+                    </button>
+                    <span className="sa-pagination-status">Page {recentPage} of {recentTotalPages}</span>
+                    <button className="sa-btn-secondary" onClick={() => handleRecentPageChange(recentPage + 1)} disabled={recentPage >= recentTotalPages}>
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
       </div>
                 {isReviewOpen && (
             <div className="sa-modal-overlay">
