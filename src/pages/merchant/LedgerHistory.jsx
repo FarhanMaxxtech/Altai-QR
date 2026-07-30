@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { apiFetch } from '../../utils/api';
 import { exportRowsToExcel, exportRowsToPdf } from '../../utils/tableExport';
+import TransactionDetailPanel from '../../components/TransactionDetailPanel';
 import '../../styles/LedgerHistory.css';
 
 const MOCK_TRANSACTIONS = [];
@@ -71,6 +72,37 @@ export default function LedgerHistory() {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
+
+  // --- Row click -> detail panel ------------------------------------------
+  const [selectedTx, setSelectedTx] = useState(null);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [detailError, setDetailError] = useState('');
+
+  const openDetail = (t) => {
+    setIsPanelOpen(true);
+    setSelectedTx(t); // show what we already have immediately
+    setDetailError('');
+    setIsLoadingDetail(true);
+
+    apiFetch(`/api/transactions/${t.transaction_id}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to load transaction detail.');
+        return res.json();
+      })
+      .then((data) => setSelectedTx(data))
+      .catch((err) => {
+        setDetailError('Could not reach server. Check it is running.');
+        console.error(err);
+      })
+      .finally(() => setIsLoadingDetail(false));
+  };
+
+  const closeDetail = () => {
+    setIsPanelOpen(false);
+    setSelectedTx(null);
+    setDetailError('');
+  };
 
   useEffect(() => {
     apiFetch('/api/transactions')
@@ -259,7 +291,11 @@ const handlePageChange = (next) => {
                   const isNegative = NEGATIVE_TYPES.includes(t.transaction_type);
                   const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
                   return (
-                    <tr key={t.transaction_id}>
+                    <tr
+                      key={t.transaction_id}
+                      className="lh-row-clickable"
+                      onClick={() => openDetail(t)}
+                    >
                       <td className="lh-col-no">{rowNumber}</td>
                       <td className="lh-reference-cell">{referenceOf(t.transaction_id)}</td>
                       <td className="lh-when-cell">{formatWhen(t.created_at)}</td>
@@ -327,6 +363,14 @@ const handlePageChange = (next) => {
           )}
         </div>
       </div>
+            {isPanelOpen && (
+        <TransactionDetailPanel
+          transaction={selectedTx}
+          isLoading={isLoadingDetail}
+          errorMessage={detailError}
+          onClose={closeDetail}
+        />
+      )}
     </div>
   );
 }

@@ -208,14 +208,16 @@ router.get('/:id', async (req, res) => {
   try {
     const txResult = await pool.query(
       `SELECT t.transaction_id, t.transaction_type, t.qty, t.created_at, t.approval_status,
-              p.product_name, v.sku,
+              p.product_name, v.sku, v.attributes,
               t.from_store_id, t.to_store_id,
-              fs.location AS from_store_name, ts.location AS to_store_name
+              fs.location AS from_store_name, ts.location AS to_store_name,
+              t.created_by, u.name AS created_by_name, u.email AS created_by_email, u.role AS created_by_role
        FROM transactions t
        JOIN variants v ON v.variant_id = t.variant_id
        JOIN products p ON p.product_id = v.product_id
        LEFT JOIN stores fs ON fs.store_id = t.from_store_id
        LEFT JOIN stores ts ON ts.store_id = t.to_store_id
+       LEFT JOIN users u ON u.user_id = t.created_by
        WHERE t.transaction_id = $1 AND p.merchant_id = $2`,
       [req.params.id, req.user.merchant_id]
     );
