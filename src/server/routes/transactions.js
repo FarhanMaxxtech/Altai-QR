@@ -198,6 +198,12 @@ router.get('/scan-lookup', async (req, res) => {
 });
 
 // POST process a whole batch of scanned units as one transaction
+const STORES_FROM = ['CHECKOUT', 'TRANSFER', 'DAMAGE', 'CYCLE_COUNT']; // needs a source store, unit must be in_stock there
+const STORES_TO = ['RECEIVE', 'TRANSFER'];                              // needs a destination store
+
+// Status a qr_code lands on for types that permanently remove it from stock
+const REMOVAL_STATUS = { CHECKOUT: 'checked_out', DAMAGE: 'damaged', CYCLE_COUNT: 'cycle_adjusted' };
+
 router.post('/scan-move', async (req, res) => {
   const { qr_ids, transaction_type, from_store_id, to_store_id } = req.body;
 
@@ -205,10 +211,10 @@ router.post('/scan-move', async (req, res) => {
     return res.status(400).json({ message: 'qr_ids must be a non-empty array.' });
   }
   if (!transaction_type) return res.status(400).json({ message: 'transaction_type is required.' });
-  if (transaction_type !== 'RECEIVE' && !from_store_id) {
+  if (STORES_FROM.includes(transaction_type) && !from_store_id) {
     return res.status(400).json({ message: 'from_store_id is required for this transaction type.' });
   }
-  if (transaction_type !== 'CHECKOUT' && !to_store_id) {
+  if (STORES_TO.includes(transaction_type) && !to_store_id) {
     return res.status(400).json({ message: 'to_store_id is required for this transaction type.' });
   }
 
@@ -231,8 +237,6 @@ router.post('/scan-move', async (req, res) => {
       return res.status(403).json({ message: 'One or more scanned codes do not belong to you or were not found.' });
     }
 
-    // One transaction row = one variant moving — every scanned unit in
-    // this batch must be the same variant.
     const variantIds = new Set(codesResult.rows.map((r) => r.variant_id));
     if (variantIds.size > 1) {
       await client.query('ROLLBACK');
@@ -246,19 +250,17 @@ router.post('/scan-move', async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(400).json({ message: `A scanned unit is not pending assignment (status: ${row.status}).` });
       }
-      if ((transaction_type === 'CHECKOUT' || transaction_type === 'TRANSFER')
+      if (STORES_FROM.includes(transaction_type)
           && (row.status !== 'in_stock' || row.current_store_id !== from_store_id)) {
         await client.query('ROLLBACK');
         return res.status(400).json({ message: 'A scanned unit is not in stock at the selected source store.' });
       }
     }
 
-    // --- Keep inventory_balance in sync with the qr_codes move below ----
-    // Decrement the source store (TRANSFER / CHECKOUT only — RECEIVE has none).
-    if (transaction_type !== 'RECEIVE') {
+    // --- inventory_balance ---------------------------------------------
+    if (STORES_FROM.includes(transaction_type)) {
       const balanceResult = await client.query(
-        `SELECT quantity FROM inventory_balance
-         WHERE variant_id = $1 AND store_id = $2 FOR UPDATE`,
+        `SELECT quantity FROM inventory_balance WHERE variant_id = $1 AND store_id = $2 FOR UPDATE`,
         [variant_id, from_store_id]
       );
       const available = balanceResult.rows[0]?.quantity || 0;
@@ -275,8 +277,7 @@ router.post('/scan-move', async (req, res) => {
       );
     }
 
-    // Increment the destination store (RECEIVE / TRANSFER only — CHECKOUT has none).
-    if (transaction_type !== 'CHECKOUT') {
+    if (STORES_TO.includes(transaction_type)) {
       await client.query(
         `INSERT INTO inventory_balance (variant_id, store_id, quantity)
          VALUES ($1, $2, $3)
@@ -285,49 +286,37 @@ router.post('/scan-move', async (req, res) => {
         [variant_id, to_store_id, qty]
       );
     }
-    // ----------------------------------------------------------------------
 
-    // ----------------------------------------------------------------------
-
-    // --- Keep variants.quantity (the merchant's total on-hand count) in
-    // sync too. RECEIVE brings new stock in, CHECKOUT takes it out of the
-    // business entirely — TRANSFER just moves it between stores, so the
-    // total is unaffected and variants.quantity is left alone.
+    // --- variants.quantity (merchant-wide total) -------------------------
     if (transaction_type === 'RECEIVE') {
-      await client.query(
-        `UPDATE variants SET quantity = quantity + $1 WHERE variant_id = $2`,
-        [qty, variant_id]
-      );
-    } else if (transaction_type === 'CHECKOUT') {
-      const variantRow = await client.query(
-        `SELECT quantity FROM variants WHERE variant_id = $1 FOR UPDATE`,
-        [variant_id]
-      );
+      await client.query(`UPDATE variants SET quantity = quantity + $1 WHERE variant_id = $2`, [qty, variant_id]);
+    } else if (['CHECKOUT', 'DAMAGE', 'CYCLE_COUNT'].includes(transaction_type)) {
+      const variantRow = await client.query(`SELECT quantity FROM variants WHERE variant_id = $1 FOR UPDATE`, [variant_id]);
       const currentQty = variantRow.rows[0]?.quantity || 0;
       if (qty > currentQty) {
         await client.query('ROLLBACK');
         return res.status(400).json({ message: `Only ${currentQty} units available for this variant.` });
       }
-      await client.query(
-        `UPDATE variants SET quantity = quantity - $1 WHERE variant_id = $2`,
-        [qty, variant_id]
-      );
+      await client.query(`UPDATE variants SET quantity = quantity - $1 WHERE variant_id = $2`, [qty, variant_id]);
     }
+    // TRANSFER doesn't change the merchant-wide total.
 
+    // --- qr_codes status ---------------------------------------------------
     if (transaction_type === 'RECEIVE') {
       await client.query(
         `UPDATE qr_codes SET status = 'in_stock', current_store_id = $1 WHERE qr_id = ANY($2::uuid[])`,
         [to_store_id, qr_ids]
       );
-    } else if (transaction_type === 'CHECKOUT') {
-      await client.query(
-        `UPDATE qr_codes SET status = 'checked_out', current_store_id = NULL WHERE qr_id = ANY($1::uuid[])`,
-        [qr_ids]
-      );
     } else if (transaction_type === 'TRANSFER') {
       await client.query(
         `UPDATE qr_codes SET current_store_id = $1 WHERE qr_id = ANY($2::uuid[])`,
         [to_store_id, qr_ids]
+      );
+    } else {
+      // CHECKOUT / DAMAGE / CYCLE_COUNT — unit leaves stock for good
+      await client.query(
+        `UPDATE qr_codes SET status = $1, current_store_id = NULL WHERE qr_id = ANY($2::uuid[])`,
+        [REMOVAL_STATUS[transaction_type], qr_ids]
       );
     }
 
@@ -339,8 +328,7 @@ router.post('/scan-move', async (req, res) => {
     const transaction_id = txResult.rows[0].transaction_id;
 
     await client.query(
-      `INSERT INTO transaction_items (transaction_id, qr_id)
-       SELECT $1, unnest($2::uuid[])`,
+      `INSERT INTO transaction_items (transaction_id, qr_id) SELECT $1, unnest($2::uuid[])`,
       [transaction_id, qr_ids]
     );
 
