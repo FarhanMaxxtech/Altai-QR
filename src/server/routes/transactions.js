@@ -14,12 +14,14 @@ router.get('/', async (req, res) => {
   SELECT t.transaction_id, t.transaction_type, t.qty, t.created_at, t.approval_status,
          p.product_name, v.sku,
          t.from_store_id, t.to_store_id,
-         fs.location AS from_store_name, ts.location AS to_store_name
+         fs.location AS from_store_name, ts.location AS to_store_name,
+         t.created_by, u.name AS created_by_name, u.role AS created_by_role
   FROM transactions t
   JOIN variants v ON v.variant_id = t.variant_id
   JOIN products p ON p.product_id = v.product_id
   LEFT JOIN stores fs ON fs.store_id = t.from_store_id
   LEFT JOIN stores ts ON ts.store_id = t.to_store_id
+  LEFT JOIN users u ON u.user_id = t.created_by
   WHERE p.merchant_id = $1`;
 
     const conditions = [];
@@ -132,9 +134,9 @@ router.post('/move', async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO transactions (variant_id, transaction_type, from_store_id, to_store_id, qty)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [variant_id, transaction_type, from_store_id || null, to_store_id || null, qty]
+      `INSERT INTO transactions (variant_id, transaction_type, from_store_id, to_store_id, qty, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [variant_id, transaction_type, from_store_id || null, to_store_id || null, qty, req.user.user_id]
     );
 
     await client.query('COMMIT');
@@ -374,9 +376,9 @@ router.post('/scan-move', async (req, res) => {
     }
 
     const txResult = await client.query(
-      `INSERT INTO transactions (variant_id, transaction_type, from_store_id, to_store_id, qty, approval_status)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING transaction_id`,
-      [variant_id, transaction_type, from_store_id || null, to_store_id || null, qty, needsApproval ? 'pending' : 'approved']
+      `INSERT INTO transactions (variant_id, transaction_type, from_store_id, to_store_id, qty, approval_status, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING transaction_id`,
+      [variant_id, transaction_type, from_store_id || null, to_store_id || null, qty, needsApproval ? 'pending' : 'approved', req.user.user_id]
     );
     const transaction_id = txResult.rows[0].transaction_id;
 
