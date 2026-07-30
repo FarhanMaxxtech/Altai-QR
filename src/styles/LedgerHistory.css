@@ -308,11 +308,11 @@
   white-space: nowrap;
 }
 
-.lh-qty-positive {
+.lh-table td.lh-qty-positive {
   color: #2e7d14;
 }
 
-.lh-qty-negative {
+.lh-table td.lh-qty-negative {
   color: #b3341e;
 }
 
