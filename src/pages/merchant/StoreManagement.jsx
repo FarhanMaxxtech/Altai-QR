@@ -1,11 +1,11 @@
 // src/pages/StoreManagement.jsx
 import React, { useState, useMemo, useEffect } from 'react';
-import { Store, Pencil } from 'lucide-react';
+import { Store, Pencil, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import '../../styles/StoreManagement.css';
 
 const TYPE_OPTIONS = ['Flagship', 'Retail', 'Warehouse', 'Pop-up'];
-const STATUS_OPTIONS = ['Active', 'Opening soon', 'Inactive'];
+const STATUS_OPTIONS = ['Active', 'Inactive'];
 
 const storedUser = localStorage.getItem('authUser');
 const currentUser = storedUser ? JSON.parse(storedUser) : null;
@@ -18,7 +18,7 @@ function emptyForm() {
     location: '',
     store_code: '',
     type: 'Retail',
-    status: 'Opening soon',
+    status: 'Active',
     manager_name: '',
     phone: '',
     address: '',
@@ -28,7 +28,6 @@ function emptyForm() {
 
 function statusBadgeClass(status) {
   if (status === 'Active') return 'sm2-badge sm2-badge-active';
-  if (status === 'Opening soon') return 'sm2-badge sm2-badge-pending';
   return 'sm2-badge sm2-badge-inactive';
 }
 
@@ -41,6 +40,7 @@ export default function StoreManagement() {
   const [mode, setMode] = useState('view'); // 'view' | 'edit' | 'create'
   const [form, setForm] = useState(emptyForm());
   const [statusMessage, setStatusMessage] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadStores = () => {
     apiFetch('/api/stores')
@@ -121,15 +121,31 @@ export default function StoreManagement() {
     setStatusMessage('');
   };
 
-  const handleCancel = () => {
+  const handleDeleteStore = async () => {
+    if (!selectedStore) return;
+    const confirmed = window.confirm(
+      `Close "${selectedStore.location}"? It will be marked Inactive but its data is kept, and it can be reopened later.`
+    );
+    if (!confirmed) return;
+
+    setIsDeleting(true);
     setStatusMessage('');
-    if (mode === 'create') {
-      if (stores.length > 0) {
-        setSelectedStoreId(stores[0].store_id);
-        setMode('view');
+    try {
+      const res = await apiFetch(`/api/stores/${selectedStore.store_id}`, { method: 'DELETE' });
+      const result = await res.json();
+
+      if (!res.ok) {
+        setStatusMessage(result.message || 'Could not close store.');
+        return;
       }
-    } else {
-      setMode('view');
+
+      setStores((prev) => prev.map((s) => (s.store_id === result.store_id ? result : s)));
+      setStatusMessage('Store marked Inactive.');
+    } catch (err) {
+      setStatusMessage('Could not reach server. Check it is running.');
+      console.error(err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -251,10 +267,21 @@ export default function StoreManagement() {
               </p>
             </div>
             {mode !== 'create' && canEditStores && (
-              <button type="button" className="sm2-edit-btn" onClick={handleEditStore} disabled={mode === 'edit'}>
-                <Pencil size={14} />
-                Edit store
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="sm2-delete-btn"
+                  onClick={handleDeleteStore}
+                  disabled={mode === 'edit' || isDeleting || selectedStore?.status === 'Inactive'}
+                >
+                  <Trash2 size={14} />
+                  {isDeleting ? 'Closing…' : 'Delete'}
+                </button>
+                <button type="button" className="sm2-edit-btn" onClick={handleEditStore} disabled={mode === 'edit'}>
+                  <Pencil size={14} />
+                  Edit store
+                </button>
+              </>
             )}
           </div>
         )}
@@ -407,7 +434,7 @@ export default function StoreManagement() {
                   {isValid ? 'Name, code and manager are set.' : 'Name, code and manager are required.'}
                 </span>
                 <div className="sm2-form-actions-buttons">
-                  <button type="button" className="sm2-btn-secondary" onClick={handleCancel}>
+                  <button type="button" className="sm2-btn-secondary" onClick={handleDeleteStore}>
                     Cancel
                   </button>
                   <button type="submit" className="sm2-btn-primary" disabled={!isValid}>

@@ -160,13 +160,25 @@ export default function ProductListing() {
 
   // --- Edit modal --------------------------------------------------------
 
-  const handleVariantSaved = (updatedVariant) => {
+    const handleVariantSaved = (updatedVariant) => {
     setProducts((prev) =>
       prev.map((p) => ({
         ...p,
         variants: p.variants.map((v) =>
           v.variant_id === updatedVariant.variant_id ? { ...v, ...updatedVariant } : v
         ),
+      }))
+    );
+    setEditingRow(null);
+  };
+
+  // Soft-deleted variants (status flipped to 'inactive' server-side) drop
+  // out of the listing immediately — the row underneath still exists.
+  const handleVariantDeleted = (variantId) => {
+    setProducts((prev) =>
+      prev.map((p) => ({
+        ...p,
+        variants: p.variants.filter((v) => v.variant_id !== variantId),
       }))
     );
     setEditingRow(null);
@@ -342,6 +354,7 @@ export default function ProductListing() {
           variant={editingRow.variant}
           onClose={() => setEditingRow(null)}
           onSaved={handleVariantSaved}
+          onDeleted={handleVariantDeleted}
         />
       )}
     </div>

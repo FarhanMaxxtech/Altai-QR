@@ -15,13 +15,43 @@ function attributesObjectToArray(attributesObject) {
   }));
 }
 
-export default function EditVariantModal({ product, variant, onClose, onSaved }) {
+export default function EditVariantModal({ product, variant, onClose, onSaved, onDeleted }) {
   const [sku, setSku] = useState(variant.sku || '');
   const [price, setPrice] = useState(variant.price || '');
   const [remarks, setRemarks] = useState(variant.remarks || '');
   const [attributes, setAttributes] = useState(attributesObjectToArray(variant.attributes));
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  const handleDelete = async () => {
+    const confirmed = window.confirm(
+      `Delete "${variant.sku}"? It will be hidden from listings but the data is kept and can be restored later.`
+    );
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    setErrorMessage('');
+    try {
+      const res = await apiFetch(`/api/variants/${variant.variant_id}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: 'inactive' }),
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        setErrorMessage(result.message || 'Could not delete variant.');
+        return;
+      }
+
+      onDeleted(result.variant_id);
+    } catch (err) {
+      setErrorMessage('Could not reach server. Check it is running.');
+      console.error(err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const updateAttribute = (attrId, field, value) => {
     setAttributes((prev) => prev.map((a) => (a.id === attrId ? { ...a, [field]: value } : a)));
@@ -180,8 +210,17 @@ export default function EditVariantModal({ product, variant, onClose, onSaved })
           {errorMessage && <p className="evm-error-text">{errorMessage}</p>}
 
           <div className="evm-actions">
+            <button
+              type="button"
+              className="evm-btn-danger"
+              onClick={handleDelete}
+              disabled={isDeleting || isSaving}
+            >
+              {isDeleting ? 'Deleting…' : 'Delete'}
+            </button>
+            <div className="evm-actions-spacer" />
             <button type="button" className="evm-btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="evm-btn-primary" disabled={isSaving}>
+            <button type="submit" className="evm-btn-primary" disabled={isSaving || isDeleting}>
               {isSaving ? 'Saving…' : 'Save Changes'}
             </button>
           </div>

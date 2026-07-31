@@ -22,7 +22,7 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { location, store_code, type, manager_name, phone, address, opening_hours, status } = req.body;
+  const { location, store_code, type, manager_name, phone, address, opening_hours } = req.body;
 
   if (!location || !store_code || !manager_name) {
     return res.status(400).json({ message: 'Store name, store code, and manager are required.' });
@@ -33,13 +33,15 @@ router.post('/', async (req, res) => {
   const email = `${store_code.toLowerCase().replace(/[^a-z0-9-]/g, '')}@merchant.internal`;
 
   try {
+    // A newly created store is always Active — status is never accepted
+    // from the client on creation; it only changes later via edit or delete.
     const result = await pool.query(
       `INSERT INTO stores (location, store_code, type, manager_name, email, phone, address, opening_hours, status, merchant_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active', $9) RETURNING *`,
       [
         location, store_code, type || 'Retail', manager_name, email,
         phone || null, address || null, opening_hours || null,
-        status || 'Active', req.user.merchant_id,
+        req.user.merchant_id,
       ]
     );
     res.status(201).json(result.rows[0]);
@@ -73,17 +75,12 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const result = await pool.query(
-      'DELETE FROM stores WHERE store_id=$1 AND merchant_id=$2',
+      `UPDATE stores SET status = 'Inactive' WHERE store_id = $1 AND merchant_id = $2 RETURNING *`,
       [req.params.id, req.user.merchant_id]
     );
-    if (result.rowCount === 0) return res.status(404).json({ message: 'Store not found.' });
-    res.status(204).send();
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Store not found.' });
+    res.json(result.rows[0]);
   } catch (err) {
-    if (err.code === '23503') {
-      return res.status(409).json({
-        message: 'This store still has stock assigned to it. Move or check out all units before removing the store.',
-      });
-    }
     res.status(500).json({ message: err.message });
   }
 });

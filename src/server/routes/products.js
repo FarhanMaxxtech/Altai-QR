@@ -12,7 +12,7 @@ router.get('/', async (req, res) => {
     const variantsResult = await pool.query(
       `SELECT v.* FROM variants v
        JOIN products p ON p.product_id = v.product_id
-       WHERE p.merchant_id = $1`,
+       WHERE p.merchant_id = $1 AND v.status = 'active'`,
       [req.user.merchant_id]
     );
 
@@ -125,8 +125,8 @@ router.post('/', async (req, res) => {
       }
 
       const variantResult = await client.query(
-        `INSERT INTO variants (product_id, sku, price, remarks, color, attributes)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        `INSERT INTO variants (product_id, sku, price, remarks, color, attributes, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'active') RETURNING *`,
         [
           product.product_id,
           v.sku,

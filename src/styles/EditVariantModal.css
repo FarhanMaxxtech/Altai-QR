@@ -272,10 +272,34 @@
 
 .evm-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 10px;
   border-top: 1px solid #f0efe9;
   padding-top: 18px;
+}
+
+.evm-actions-spacer {
+  flex: 1;
+}
+
+.evm-btn-danger {
+  background: #fff;
+  border: 1px solid #dc2626;
+  color: #dc2626;
+  border-radius: 9px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.evm-btn-danger:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.evm-btn-danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .evm-btn-secondary {
