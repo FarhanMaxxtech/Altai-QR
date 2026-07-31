@@ -74,6 +74,8 @@ function StatCard({ label, value, unit, delta, trend, color }) {
 }
 
 export default function Dashboard() {
+
+  const navigate = useNavigate();
   const [summary, setSummary] = useState({
     deliveriesToday: 0, deliveriesDelta: 0, deliveriesTrend: [],
     transfersInProgress: 0, transfersDelta: 0, transfersTrend: [],
@@ -83,6 +85,7 @@ export default function Dashboard() {
   const [tagsPerStore, setTagsPerStore] = useState([]);
   const [lowStock, setLowStock] = useState([]);
 
+  const [scopedStores, setScopedStores] = useState([]);
 // src/pages/merchant/Dashboard.jsx
 useEffect(() => {
   apiFetch('/api/dashboard/summary')
@@ -99,7 +102,16 @@ useEffect(() => {
     .then((res) => res.json())
     .then((data) => setLowStock(data))
     .catch((err) => console.error('Failed to load low stock:', err));
+
+  apiFetch('/api/stores')
+    .then((res) => res.json())
+    .then((data) => setScopedStores(data))
+    .catch(() => {});
 }, []);
+
+const scopeLabel = scopedStores.length === 1 ? scopedStores[0].location
+  : scopedStores.length > 1 ? `${scopedStores.length} stores`
+  : '';
 
   const cardData = {
     deliveries: { value: summary.deliveriesToday, delta: summary.deliveriesDelta, trend: summary.deliveriesTrend },
@@ -111,8 +123,9 @@ useEffect(() => {
   return (
     <div className="dashboard">
       {/*<h2 className="dashboard-title">Dashboard</h2>
-
+      
       {/* Top stat cards */}
+      {scopeLabel && <p className="dashboard-scope-label">{scopeLabel}</p>}
       <div className="stat-cards-v2">
         {STAT_CARDS.map((card) => (
           <StatCard

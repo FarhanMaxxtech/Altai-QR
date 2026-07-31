@@ -1,5 +1,6 @@
 import express from 'express';
 import pool from '../db.js';
+import { assertStoreInScope } from '../middleware/storeScope.js';
 
 const router = express.Router();
 const APPROVAL_REQUIRED_TYPES = ['DAMAGE', 'CYCLE_COUNT'];
@@ -39,6 +40,12 @@ router.get('/', async (req, res) => {
     if (to_date) {
       conditions.push(`t.created_at::date <= $${idx++}::date`);
       params.push(to_date);
+    }
+
+    if (req.storeIds !== null) {
+      conditions.push(`(t.from_store_id = ANY($${idx}::uuid[]) OR t.to_store_id = ANY($${idx}::uuid[]))`);
+      params.push(req.storeIds);
+      idx++;
     }
 
     const whereExtra = conditions.length ? ` AND ${conditions.join(' AND ')}` : '';
@@ -263,6 +270,9 @@ router.post('/scan-move', async (req, res) => {
   }
   if (transaction_type !== 'CHECKOUT' && transaction_type !== 'DAMAGE' && transaction_type !== 'CYCLE_COUNT' && !to_store_id) {
     return res.status(400).json({ message: 'to_store_id is required for this transaction type.' });
+  }
+  if (!assertStoreInScope(req, from_store_id) || !assertStoreInScope(req, to_store_id)) {
+  return res.status(403).json({ message: 'You do not have access to one of the selected stores.' });
   }
 
   const needsApproval = APPROVAL_REQUIRED_TYPES.includes(transaction_type);

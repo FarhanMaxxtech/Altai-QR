@@ -10,27 +10,36 @@ router.get('/summary', async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    const scoped = req.storeIds !== null;
+    const deliveriesParams = scoped ? [today, req.user.merchant_id, req.storeIds] : [today, req.user.merchant_id];
+    const transfersParams = scoped ? [today, req.user.merchant_id, req.storeIds] : [today, req.user.merchant_id];
+    const stockParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+    const trendParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+
     const [deliveries, transfers, totalStock, scans, trends] = await Promise.all([
       pool.query(
         `SELECT COUNT(*) FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
          JOIN products p ON p.product_id = v.product_id
-         WHERE t.transaction_type = 'RECEIVE' AND t.created_at >= $1 AND p.merchant_id = $2`,
-        [today, req.user.merchant_id]
+         WHERE t.transaction_type = 'RECEIVE' AND t.created_at >= $1 AND p.merchant_id = $2
+         ${scoped ? 'AND t.to_store_id = ANY($3::uuid[])' : ''}`,
+        deliveriesParams
       ),
       pool.query(
         `SELECT COUNT(*) FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
          JOIN products p ON p.product_id = v.product_id
-         WHERE t.transaction_type = 'TRANSFER' AND t.created_at >= $1 AND p.merchant_id = $2`,
-        [today, req.user.merchant_id]
+         WHERE t.transaction_type = 'TRANSFER' AND t.created_at >= $1 AND p.merchant_id = $2
+         ${scoped ? 'AND (t.from_store_id = ANY($3::uuid[]) OR t.to_store_id = ANY($3::uuid[]))' : ''}`,
+        transfersParams
       ),
       pool.query(
         `SELECT COALESCE(SUM(ib.quantity), 0) AS total FROM inventory_balance ib
          JOIN variants v ON v.variant_id = ib.variant_id
          JOIN products p ON p.product_id = v.product_id
-         WHERE p.merchant_id = $1`,
-        [req.user.merchant_id]
+         WHERE p.merchant_id = $1
+         ${scoped ? 'AND ib.store_id = ANY($2::uuid[])' : ''}`,
+        stockParams
       ),
       pool.query(
         `SELECT COUNT(*) FROM qr_codes qc
@@ -50,6 +59,7 @@ router.get('/summary', async (req, res) => {
            JOIN products p ON p.product_id = v.product_id
            WHERE p.merchant_id = $1 AND t.transaction_type = 'RECEIVE'
              AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
+             ${scoped ? 'AND t.to_store_id = ANY($2::uuid[])' : ''}
            GROUP BY t.created_at::date
          ),
          daily_transfer AS (
@@ -59,6 +69,7 @@ router.get('/summary', async (req, res) => {
            JOIN products p ON p.product_id = v.product_id
            WHERE p.merchant_id = $1 AND t.transaction_type = 'TRANSFER'
              AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
+             ${scoped ? 'AND (t.from_store_id = ANY($2::uuid[]) OR t.to_store_id = ANY($2::uuid[]))' : ''}
            GROUP BY t.created_at::date
          ),
          daily_scans AS (
@@ -79,7 +90,7 @@ router.get('/summary', async (req, res) => {
          LEFT JOIN daily_transfer dt ON dt.day = days.day
          LEFT JOIN daily_scans ds ON ds.day = days.day
          ORDER BY days.day`,
-        [req.user.merchant_id]
+        trendParams
       ),
     ]);
 
@@ -88,9 +99,6 @@ router.get('/summary', async (req, res) => {
     const transfersTrend = trendRows.map((r) => Number(r.transfers));
     const scansTrend = trendRows.map((r) => Number(r.scans));
 
-    // Total stock is a running balance, not a daily count — approximate its
-    // trend as a flat-ish line at the current total (better than nothing;
-    // a true historical balance trend would need a snapshot table).
     const totalStockValue = Number(totalStock.rows[0].total);
     const totalStockTrend = new Array(7).fill(totalStockValue);
 
@@ -111,20 +119,26 @@ router.get('/summary', async (req, res) => {
 
 router.get('/stock-in-out', async (req, res) => {
   try {
+    const scoped = req.storeIds !== null;
+    const inParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+    const outParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+
     const [stockIn, stockOut] = await Promise.all([
       pool.query(
         `SELECT COALESCE(SUM(t.qty), 0) AS total FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
          JOIN products p ON p.product_id = v.product_id
-         WHERE t.transaction_type = 'RECEIVE' AND p.merchant_id = $1`,
-        [req.user.merchant_id]
+         WHERE t.transaction_type = 'RECEIVE' AND p.merchant_id = $1
+         ${scoped ? 'AND t.to_store_id = ANY($2::uuid[])' : ''}`,
+        inParams
       ),
       pool.query(
         `SELECT COALESCE(SUM(t.qty), 0) AS total FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
          JOIN products p ON p.product_id = v.product_id
-         WHERE t.transaction_type = 'CHECKOUT' AND p.merchant_id = $1`,
-        [req.user.merchant_id]
+         WHERE t.transaction_type = 'CHECKOUT' AND p.merchant_id = $1
+         ${scoped ? 'AND t.from_store_id = ANY($2::uuid[])' : ''}`,
+        outParams
       ),
     ]);
 
@@ -141,6 +155,12 @@ router.get('/tags-per-store', async (req, res) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const scoped = req.storeIds !== null;
+
+    const balanceParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+    const deltaParams = scoped
+      ? [req.user.merchant_id, today, req.storeIds]
+      : [req.user.merchant_id, today];
 
     const [balanceResult, deltaResult] = await Promise.all([
       pool.query(
@@ -148,13 +168,11 @@ router.get('/tags-per-store', async (req, res) => {
          FROM stores s
          LEFT JOIN inventory_balance ib ON ib.store_id = s.store_id
          WHERE s.merchant_id = $1
+         ${scoped ? 'AND s.store_id = ANY($2::uuid[])' : ''}
          GROUP BY s.store_id, s.location
          ORDER BY s.location`,
-        [req.user.merchant_id]
+        balanceParams
       ),
-      // Net change today per store: +qty when this store is the destination,
-      // -qty when this store is the source — same signed-sum idea as
-      // stock-balance.js's `deltas` CTE, just scoped to today's transactions.
       pool.query(
         `WITH today_deltas AS (
            SELECT t.to_store_id AS store_id, t.qty AS delta
@@ -171,8 +189,9 @@ router.get('/tags-per-store', async (req, res) => {
          )
          SELECT store_id, COALESCE(SUM(delta), 0) AS delta
          FROM today_deltas
+         ${scoped ? 'WHERE store_id = ANY($3::uuid[])' : ''}
          GROUP BY store_id`,
-        [req.user.merchant_id, today]
+        deltaParams
       ),
     ]);
 
@@ -181,11 +200,10 @@ router.get('/tags-per-store', async (req, res) => {
       deltaByStoreId[row.store_id] = Number(row.delta);
     }
 
-    // balanceResult only has store name, not store_id — refetch stores
-    // once to map name -> id so we can attach the right delta.
+    // Only need name->id for the stores this user can already see.
     const storesResult = await pool.query(
-      'SELECT store_id, location FROM stores WHERE merchant_id = $1',
-      [req.user.merchant_id]
+      `SELECT store_id, location FROM stores WHERE merchant_id = $1 ${scoped ? 'AND store_id = ANY($2::uuid[])' : ''}`,
+      scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id]
     );
     const storeIdByName = {};
     for (const s of storesResult.rows) storeIdByName[s.location] = s.store_id;
@@ -205,18 +223,36 @@ router.get('/tags-per-store', async (req, res) => {
 // src/server/routes/dashboard.js
 router.get('/low-stock', async (req, res) => {
   try {
+    const params = [LOW_STOCK_THRESHOLD, req.user.merchant_id];
+    let storeClause = '';
+
+    // NEW: Apply store permissions
+    if (req.storeIds !== null) {
+      params.push(req.storeIds);
+
+      storeClause = `
+        AND s.store_id = ANY($3::uuid[])
+      `;
+    }
+
     const result = await pool.query(
-      `SELECT p.product_name, v.sku, s.location AS store, ib.quantity
+      `SELECT
+          p.product_name,
+          v.sku,
+          s.location AS store,
+          ib.quantity
        FROM inventory_balance ib
        JOIN variants v ON v.variant_id = ib.variant_id
        JOIN products p ON p.product_id = v.product_id
        JOIN stores s ON s.store_id = ib.store_id
-       WHERE ib.quantity < $1 AND p.merchant_id = $2
+       WHERE ib.quantity < $1
+         AND p.merchant_id = $2
+         ${storeClause}
        ORDER BY ib.quantity ASC
        LIMIT 20`,
-      [LOW_STOCK_THRESHOLD, req.user.merchant_id]
+      params
     );
-    // Return fields separately so the UI can lay them out in their own columns.
+
     res.json(result.rows.map((r) => ({
       product_name: r.product_name,
       sku: r.sku,
@@ -234,6 +270,11 @@ router.get('/low-stock', async (req, res) => {
 // so it's excluded from these totals (same convention as /stock-in-out).
 router.get('/stock-movement', async (req, res) => {
   try {
+    const scoped = req.storeIds !== null;
+    const trendParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+    const splitParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+    const byStoreParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+
     const [trendResult, splitResult, byStoreResult] = await Promise.all([
       pool.query(
         `WITH days AS (
@@ -246,6 +287,7 @@ router.get('/stock-movement', async (req, res) => {
            JOIN products p ON p.product_id = v.product_id
            WHERE p.merchant_id = $1
              AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
+             ${scoped ? 'AND (t.to_store_id = ANY($2::uuid[]) OR t.from_store_id = ANY($2::uuid[]))' : ''}
          )
          SELECT
            days.day,
@@ -255,7 +297,7 @@ router.get('/stock-movement', async (req, res) => {
          LEFT JOIN merchant_tx ON merchant_tx.day = days.day
          GROUP BY days.day
          ORDER BY days.day`,
-        [req.user.merchant_id]
+        trendParams
       ),
       pool.query(
         `SELECT
@@ -264,8 +306,9 @@ router.get('/stock-movement', async (req, res) => {
          FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
          JOIN products p ON p.product_id = v.product_id
-         WHERE p.merchant_id = $1 AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'`,
-        [req.user.merchant_id]
+         WHERE p.merchant_id = $1 AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
+         ${scoped ? 'AND (t.to_store_id = ANY($2::uuid[]) OR t.from_store_id = ANY($2::uuid[]))' : ''}`,
+        splitParams
       ),
       pool.query(
         `SELECT
@@ -278,28 +321,17 @@ router.get('/stock-movement', async (req, res) => {
           AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
           AND t.transaction_type IN ('RECEIVE', 'CHECKOUT')
          WHERE s.merchant_id = $1
+         ${scoped ? 'AND s.store_id = ANY($2::uuid[])' : ''}
          GROUP BY s.store_id, s.location
          ORDER BY s.location`,
-        [req.user.merchant_id]
+        byStoreParams
       ),
     ]);
 
     res.json({
-      trend: trendResult.rows.map((r) => ({
-        day: r.day,
-        stock_in: Number(r.stock_in),
-        stock_out: Number(r.stock_out),
-      })),
-      split: {
-        stockIn: Number(splitResult.rows[0].stock_in),
-        stockOut: Number(splitResult.rows[0].stock_out),
-      },
-      byStore: byStoreResult.rows.map((r) => ({
-        store_id: r.store_id,
-        store: r.store,
-        stock_in: Number(r.stock_in),
-        stock_out: Number(r.stock_out),
-      })),
+      trend: trendResult.rows.map((r) => ({ day: r.day, stock_in: Number(r.stock_in), stock_out: Number(r.stock_out) })),
+      split: { stockIn: Number(splitResult.rows[0].stock_in), stockOut: Number(splitResult.rows[0].stock_out) },
+      byStore: byStoreResult.rows.map((r) => ({ store_id: r.store_id, store: r.store, stock_in: Number(r.stock_in), stock_out: Number(r.stock_out) })),
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

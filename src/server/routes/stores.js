@@ -5,9 +5,15 @@ const router = express.Router();
 
 router.get('/', async (req, res) => {
   try {
+    const params = [req.user.merchant_id];
+    let where = 'merchant_id = $1';
+    if (req.storeIds !== null) {
+      params.push(req.storeIds);
+      where += ` AND store_id = ANY($2::uuid[])`;
+    }
     const result = await pool.query(
-      'SELECT * FROM stores WHERE merchant_id = $1 ORDER BY created_at',
-      [req.user.merchant_id]
+      `SELECT * FROM stores WHERE ${where} ORDER BY created_at`,
+      params
     );
     res.json(result.rows);
   } catch (err) {

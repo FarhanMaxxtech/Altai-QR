@@ -16,6 +16,7 @@ import productGroupsRouter from './routes/product-groups.js';
 import stockBalanceRouter from './routes/stock-balance.js';
 import merchantRouter from './routes/merchant.js';
 import variantsRouter from './routes/variants.js';
+import { loadStoreScope } from './middleware/storeScope.js';
 
 dotenv.config();
 
@@ -27,15 +28,14 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/api/auth', authRouter);
 
 // Protected — merchant-scoped routes
-app.use('/api/stores', requireAuth, storesRouter);
+app.use('/api/stores', requireAuth, loadStoreScope, storesRouter);
 app.use('/api/products', requireAuth, productRoute);
-app.use('/api/transactions', requireAuth, transactionsRouter);
+app.use('/api/transactions', requireAuth, loadStoreScope, transactionsRouter);
 app.use('/api/users', requireAuth, usersRouter);
-app.use('/api/dashboard', requireAuth, dashboardRouter);
-app.use('/api/qrcode', requireAuth, merchantQrcodesRouter);
+app.use('/api/dashboard', requireAuth, loadStoreScope, dashboardRouter);
+app.use('/api/qrcode', requireAuth, loadStoreScope, merchantQrcodesRouter);
 app.use('/api/product-groups', requireAuth, productGroupsRouter);
-app.use('/api/stock-balance', requireAuth, stockBalanceRouter);
-app.use('/api/transactions', requireAuth, transactionsRouter);
+app.use('/api/stock-balance', requireAuth, loadStoreScope, stockBalanceRouter);
 app.use('/api/merchant', requireAuth, merchantRouter);
 app.use('/api/variants', requireAuth, variantsRouter);
 

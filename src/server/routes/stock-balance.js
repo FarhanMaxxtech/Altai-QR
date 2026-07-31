@@ -21,6 +21,11 @@ router.get('/', async (req, res) => {
     params.push(store_id);
   }
 
+  if (req.storeIds !== null) {
+  conditions.push(`s.store_id = ANY($${idx++}::uuid[])`);
+  params.push(req.storeIds);
+  }
+
   try {
     const result = await pool.query(
       `WITH deltas AS (

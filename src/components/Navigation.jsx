@@ -36,9 +36,9 @@ const navItems = [
 ];
 
 function hasAccess(user, module) {
-    if (user?.role === 'admin') return true; // admin always sees everything
-    if (!module) return true; // no restriction
-    return user?.modules?.includes(module);
+  if (user?.role === 'admin' || user?.role === 'super_admin') return true;
+  if (!module) return true;
+  return (user?.permissions?.[module] || []).includes('view');
 }
 
 export default function Navigation() {

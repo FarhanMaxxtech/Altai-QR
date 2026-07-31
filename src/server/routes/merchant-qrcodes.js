@@ -73,10 +73,8 @@ router.get('/scan-lookup', async (req, res) => {
 
     // In-stock codes must be checked out first — they can't be reassigned
     // to a different product while still physically in a store.
-    if (code.status === 'in_stock') {
-      return res.status(409).json({
-        message: 'This QR code is currently in stock and cannot be assigned to a product until it is checked out.',
-      });
+    if (code.status === 'in_stock' && !assertStoreInScope(req, code.current_store_id)) {
+      return res.status(403).json({ message: 'This code is in stock at a store you do not have access to.' });
     }
 
     if (code.pending_variant_id) {
