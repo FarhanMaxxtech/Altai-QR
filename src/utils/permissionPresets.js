@@ -1,6 +1,8 @@
-// Shared between the UI and the server routes — defines the module/function
-// catalogue and what each permission preset grants. Only three actions are
-// exposed for now: view, create, edit.
+// src/server/utils/permissionPresets.js
+// Server-side copy — kept in sync manually with src/utils/permissionPresets.js.
+// This file MUST live inside src/server/ because the "Altai-QR" Railway
+// service's Root Directory is src/server, so nothing outside that folder
+// is available at runtime.
 
 export const MODULE_DEFS = [
   { key: 'Dashboard', functions: ['View KPIs', 'Export charts'] },
@@ -51,9 +53,6 @@ export function buildPresetPermissions(preset) {
   return {};
 }
 
-// Flattens a permissions map down to the simple module-name array that
-// Navigation.jsx / ProtectedRoute.jsx already understand — any module with
-// at least one granted action counts as accessible.
 export function permissionsToModuleList(permissions) {
   return Object.entries(permissions || {})
     .filter(([, actions]) => Array.isArray(actions) && actions.length > 0)

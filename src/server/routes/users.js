@@ -1,6 +1,6 @@
 import express from 'express';
 import pool from '../db.js';
-import { buildPresetPermissions, permissionsToModuleList } from '../../utils/permissionPresets.js';
+import { buildPresetPermissions, permissionsToModuleList } from '../utils/permissionPresets.js';
 
 const router = express.Router();
 
