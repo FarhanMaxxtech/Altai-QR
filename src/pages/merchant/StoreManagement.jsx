@@ -5,7 +5,6 @@ import { apiFetch } from '../../utils/api';
 import '../../styles/StoreManagement.css';
 
 const TYPE_OPTIONS = ['Flagship', 'Retail', 'Warehouse', 'Pop-up'];
-const STATUS_OPTIONS = ['Active', 'Inactive'];
 
 const storedUser = localStorage.getItem('authUser');
 const currentUser = storedUser ? JSON.parse(storedUser) : null;
@@ -146,6 +145,50 @@ export default function StoreManagement() {
       console.error(err);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+    const [isReactivating, setIsReactivating] = useState(false);
+
+  // Reopens a closed (Inactive) store — the only way status ever moves
+  // back to Active after being closed via handleDeleteStore.
+  const handleStatusFieldChange = async (e) => {
+    const nextStatus = e.target.value;
+    if (!nextStatus || !selectedStore || nextStatus === selectedStore.status) return;
+
+    setIsReactivating(true);
+    setStatusMessage('');
+    try {
+      const res = await apiFetch(`/api/stores/${selectedStore.store_id}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        setStatusMessage(result.message || 'Could not update status.');
+        return;
+      }
+
+      setStores((prev) => prev.map((s) => (s.store_id === result.store_id ? result : s)));
+      setStatusMessage(nextStatus === 'Active' ? 'Store reactivated.' : 'Store marked Inactive.');
+    } catch (err) {
+      setStatusMessage('Could not reach server. Check it is running.');
+      console.error(err);
+    } finally {
+      setIsReactivating(false);
+    }
+  };
+
+    const handleCancel = () => {
+    setStatusMessage('');
+    if (mode === 'create') {
+      if (stores.length > 0) {
+        setSelectedStoreId(stores[0].store_id);
+        setMode('view');
+      }
+    } else {
+      setMode('view');
     }
   };
 
@@ -361,14 +404,23 @@ export default function StoreManagement() {
 
               <div className="sm2-field">
                 <label>Status</label>
-                {readOnly ? (
-                  <input type="text" value={selectedStore.status} readOnly />
-                ) : (
-                  <select name="status" value={form.status} onChange={handleFieldChange}>
-                    {STATUS_OPTIONS.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
+                {selectedStore?.status === 'Inactive' && mode !== 'create' ? (
+                  <select
+                    value=""
+                    onChange={handleStatusFieldChange}
+                    disabled={isReactivating}
+                  >
+                    <option value="" disabled>
+                      {isReactivating ? 'Updating…' : 'Inactive — change to…'}
+                    </option>
+                    <option value="Active">Active</option>
                   </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={mode === 'create' ? 'Active' : selectedStore?.status || ''}
+                    readOnly
+                  />
                 )}
               </div>
 
@@ -434,7 +486,7 @@ export default function StoreManagement() {
                   {isValid ? 'Name, code and manager are set.' : 'Name, code and manager are required.'}
                 </span>
                 <div className="sm2-form-actions-buttons">
-                  <button type="button" className="sm2-btn-secondary" onClick={handleDeleteStore}>
+                  <button type="button" className="sm2-btn-secondary" onClick={handleCancel}>
                     Cancel
                   </button>
                   <button type="submit" className="sm2-btn-primary" disabled={!isValid}>

@@ -85,4 +85,28 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Add this route, after the POST route and before the PUT /:id route:
+
+// PUT change status only — used to reopen a closed (Inactive) store back
+// to Active. Deliberately separate from the full PUT /:id edit route so
+// reactivating doesn't require resubmitting every field.
+router.put('/:id/status', async (req, res) => {
+  const { status } = req.body;
+
+  if (!['Active', 'Inactive'].includes(status)) {
+    return res.status(400).json({ message: "status must be 'Active' or 'Inactive'." });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE stores SET status = $1 WHERE store_id = $2 AND merchant_id = $3 RETURNING *`,
+      [status, req.params.id, req.user.merchant_id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Store not found.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 export default router;
