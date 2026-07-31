@@ -1,7 +1,7 @@
 // src/App.jsx
 
 // Merchant pages
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Navigation from './components/Navigation';
 import Dashboard from './pages/merchant/Dashboard';
 import AssetRegistry from './pages/merchant/AssetRegistry';
@@ -20,6 +20,7 @@ import AssignQrToProduct from './pages/merchant/AssignQrToProduct';
 import PageHeader from './components/PageHeader';
 //import ApproveQrProduct from './pages/merchant/ApproveQrProduct';
 //import ApproveQrProductDetail from './pages/merchant/ApproveQrProductDetail';
+import { apiFetch } from './utils/api';
 /// Authentication pages
 import Login from './authentication/Login';
 
@@ -35,6 +36,27 @@ import ProtectedRoute from './components/ProtectedRoute';
 import './App.css';
 
 function App() {
+    const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      setAuthReady(true);
+      return;
+    }
+
+    apiFetch('/api/auth/me')
+      .then((res) => (res && res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) localStorage.setItem('authUser', JSON.stringify(data));
+      })
+      .catch((err) => console.error('Failed to refresh user permissions:', err))
+      .finally(() => setAuthReady(true));
+  }, []);
+
+  if (!authReady) {
+    return null; // or a small loading spinner
+  }
   return (
     <BrowserRouter>
       <Routes>
@@ -49,18 +71,16 @@ function App() {
                 <PageHeader />
                 <div className="app-main-content">
                 <Routes>
-                  <Route path="/dashboard" element={<ProtectedRoute module={null}><Dashboard /></ProtectedRoute>} />
-                  <Route path="/registry" element={<ProtectedRoute module="Asset Registry"><RegisterProduct /></ProtectedRoute>} />
-                  <Route path="/listing" element={<ProtectedRoute module="Product Listing"><ProductListing /></ProtectedRoute>} />
-                  <Route path="/listing/:productId" element={<ProtectedRoute module="Product Listing"><ProductDetails /></ProtectedRoute>} />
-                  <Route path="/assign-qr" element={<ProtectedRoute module="Asset Registry"><AssignQrToProduct /></ProtectedRoute>} />
-                  {/*<Route path="/approve-qr" element={<ProtectedRoute module="Asset Registry"><ApproveQrProduct /></ProtectedRoute>} />
-                  <Route path="/approve-qr/:variantId" element={<ProtectedRoute module="Asset Registry"><ApproveQrProductDetail /></ProtectedRoute>} /> */}
-                  <Route path="/stock-balance" element={<ProtectedRoute module="Stock Balance"><StockAdjustment /></ProtectedRoute>} />
+                  <Route path="/dashboard" element={<ProtectedRoute module="Dashboard"><Dashboard /></ProtectedRoute>} />
+                  <Route path="/registry" element={<ProtectedRoute module="Product InfoCenter"><RegisterProduct /></ProtectedRoute>} />
+                  <Route path="/listing" element={<ProtectedRoute module="Product InfoCenter"><ProductListing /></ProtectedRoute>} />
+                  <Route path="/listing/:productId" element={<ProtectedRoute module="Product InfoCenter"><ProductDetails /></ProtectedRoute>} />
+                  <Route path="/assign-qr" element={<ProtectedRoute module="Product InfoCenter"><AssignQrToProduct /></ProtectedRoute>} />
+                  <Route path="/stock-balance" element={<ProtectedRoute module="Product Balance"><StockAdjustment /></ProtectedRoute>} />
                   <Route path="/stores" element={<ProtectedRoute module="Store Management"><StoreManagement /></ProtectedRoute>} />
                   <Route path="/stock" element={<ProtectedRoute module="Stock Adjustment"><StockManager /></ProtectedRoute>} />
-                  <Route path="/stock-balance/:variantId/:storeId" element={<ProtectedRoute module="Stock Adjustment"><ProductBalanceDetails /></ProtectedRoute>} />
-                  <Route path="/ledger" element={<ProtectedRoute module="Ledger"><LedgerHistory /></ProtectedRoute>} />
+                  <Route path="/stock-balance/:variantId/:storeId" element={<ProtectedRoute module="Product Balance"><ProductBalanceDetails /></ProtectedRoute>} />
+                  <Route path="/ledger" element={<ProtectedRoute module="Transaction Ledger"><LedgerHistory /></ProtectedRoute>} />
                   <Route path="/users" element={<ProtectedRoute module="User Management"><UserManagement /></ProtectedRoute>} />
                 </Routes>
                 </div>

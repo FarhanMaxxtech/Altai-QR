@@ -69,6 +69,9 @@ router.post('/move', async (req, res) => {
   if (transaction_type !== 'CHECKOUT' && !to_store_id) {
     return res.status(400).json({ message: 'to_store_id is required for this transaction type.' });
   }
+  if (!assertStoreInScope(req, from_store_id) || !assertStoreInScope(req, to_store_id)) {
+  return res.status(403).json({ message: 'You do not have access to one of the selected stores.' });
+  }
 
   const client = await pool.connect();
   try {
@@ -417,6 +420,10 @@ router.post('/:id/approve', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    if (!assertStoreInScope(req, from_store_id) || !assertStoreInScope(req, to_store_id)) {
+    return res.status(403).json({ message: 'You do not have access to one of the selected stores.' });
+  }
 
     const txResult = await client.query(
       `SELECT t.*, p.merchant_id FROM transactions t

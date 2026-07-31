@@ -17,21 +17,20 @@ import logo from "../assets/logo.png";
 import { LogOut } from "lucide-react";
 
 const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, module: null },
+    { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, module: 'Dashboard' },
     {
         label: 'Product InfoCenter',
         icon: QrCode,
         children: [
-            { path: '/registry', label: 'Register New Product', module: 'Asset Registry' },
-            { path: '/listing', label: 'Product Listing', module: 'Product Listing' },
-            { path: '/assign-qr', label: 'Assign QR to Product', module: 'Asset Registry' },
-            // { path: '/approve-qr', label: 'Approve QR Product', module: 'Asset Registry' },
+            { path: '/registry', label: 'Register New Product', module: 'Product InfoCenter' },
+            { path: '/listing', label: 'Product Listing', module: 'Product InfoCenter' },
+            { path: '/assign-qr', label: 'Assign QR to Product', module: 'Product InfoCenter' },
         ],
     },
-    { path: '/stock-balance', label: 'Product Balance', icon: PackageSearch, module: 'Stock Adjustment' },
+    { path: '/stock-balance', label: 'Product Balance', icon: PackageSearch, module: 'Product Balance' },
     { path: '/stores', label: 'Store Management', icon: Store, module: 'Store Management' },
     { path: '/stock', label: 'Stock Adjustment', icon: ArrowLeftRight, module: 'Stock Adjustment' },
-    { path: '/ledger', label: 'Transaction Ledger', icon: ScrollText, module: 'Ledger' },
+    { path: '/ledger', label: 'Transaction Ledger', icon: ScrollText, module: 'Transaction Ledger' },
     { path: '/users', label: 'User Management', icon: Users, module: 'User Management' },
 ];
 

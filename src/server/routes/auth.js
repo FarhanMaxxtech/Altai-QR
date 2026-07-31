@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET; // set this in your .env, never hardcode it
@@ -93,6 +94,30 @@ router.post('/login', async (req, res) => {
         permission_preset: user.permission_preset,
       },
     });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET the logged-in user's current record — used on page load/refresh to
+// pick up permission or store-access changes without requiring re-login.
+router.get('/me', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.user_id, u.name, u.email, u.role, u.merchant_id, u.phone,
+              u.profile_picture, u.modules, u.permissions, u.permission_preset,
+              COALESCE(array_agg(usa.store_id) FILTER (WHERE usa.store_id IS NOT NULL), '{}') AS store_ids
+       FROM users u
+       LEFT JOIN user_store_access usa ON usa.user_id = u.user_id
+       WHERE u.user_id = $1
+       GROUP BY u.user_id`,
+      [req.user.user_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

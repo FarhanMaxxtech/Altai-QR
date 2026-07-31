@@ -7,6 +7,12 @@ import '../../styles/StoreManagement.css';
 const TYPE_OPTIONS = ['Flagship', 'Retail', 'Warehouse', 'Pop-up'];
 const STATUS_OPTIONS = ['Active', 'Opening soon', 'Inactive'];
 
+const storedUser = localStorage.getItem('authUser');
+const currentUser = storedUser ? JSON.parse(storedUser) : null;
+const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+const canEditStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('edit');
+const canCreateStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('create');
+
 function emptyForm() {
   return {
     location: '',
@@ -92,6 +98,7 @@ export default function StoreManagement() {
   };
 
   const handleNewStore = () => {
+    if (!canCreateStores) return;
     setSelectedStoreId(null);
     setMode('create');
     setForm(emptyForm());
@@ -99,7 +106,7 @@ export default function StoreManagement() {
   };
 
   const handleEditStore = () => {
-    if (!selectedStore) return;
+    if (!selectedStore || !canEditStores) return;
     setForm({
       location: selectedStore.location || '',
       store_code: selectedStore.store_code || '',
@@ -221,9 +228,11 @@ export default function StoreManagement() {
           )}
         </div>
 
-        <button type="button" className="sm2-add-store-btn" onClick={handleNewStore}>
-          + New store
-        </button>
+        {canCreateStores && (
+            <button type="button" className="sm2-add-store-btn" onClick={handleNewStore}>
+              + New store
+            </button>
+          )}
       </aside>
 
       {/* --- Right: details --- */}
@@ -241,7 +250,7 @@ export default function StoreManagement() {
                   : `${selectedStore.store_code || '—'} · ${selectedStore.type || '—'} · ${selectedStore.manager_name || '—'}`}
               </p>
             </div>
-            {mode !== 'create' && (
+            {mode !== 'create' && canEditStores && (
               <button type="button" className="sm2-edit-btn" onClick={handleEditStore} disabled={mode === 'edit'}>
                 <Pencil size={14} />
                 Edit store
