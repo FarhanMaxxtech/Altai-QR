@@ -2,6 +2,13 @@ import express from 'express';
 import pool from '../db.js';
 import { assertStoreInScope } from '../middleware/storeScope.js';
 
+async function hasEditPermission(req) {
+  if (req.user.role === 'admin' || req.user.role === 'super_admin') return true;
+  const result = await pool.query('SELECT permissions FROM users WHERE user_id = $1', [req.user.user_id]);
+  const permissions = result.rows[0]?.permissions || {};
+  return (permissions['Stock Adjustment'] || []).includes('edit');
+}
+
 const router = express.Router();
 const APPROVAL_REQUIRED_TYPES = ['DAMAGE', 'CYCLE_COUNT'];
 const PENDING_QR_STATUS = { DAMAGE: 'damage_pending', CYCLE_COUNT: 'cycle_count_pending' };
@@ -417,6 +424,10 @@ router.post('/scan-move', async (req, res) => {
 // this, the affected qr_codes sit in 'damage_pending'/'cycle_count_pending',
 // which is intentionally never the string 'pending' used elsewhere.
 router.post('/:id/approve', async (req, res) => {
+
+  if (!hasEditPermission(req.user)) {
+    return res.status(403).json({ message: 'You do not have permission to approve adjustments.' });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -492,6 +503,9 @@ router.post('/:id/approve', async (req, res) => {
 // deducted from inventory, so this just restores the scanned units to
 // their normal in_stock status at the store they were scanned from.
 router.post('/:id/reject', async (req, res) => {
+  if (!hasEditPermission(req.user)) {
+    return res.status(403).json({ message: 'You do not have permission to reject adjustments.' });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

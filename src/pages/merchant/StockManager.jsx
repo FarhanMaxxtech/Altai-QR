@@ -1008,10 +1008,22 @@ const handleRejectDetail = async () => {
         ) : null}
       </div>
 
-      {selectedTx?.approval_status === 'pending' && canEditAdjustments && (
+            {selectedTx?.approval_status === 'pending' && canEditAdjustments && (
         <div className="sa-modal-footer">
-          <button type="button" className="sa-btn-reject" onClick={handleRejectDetail} disabled={isProcessingDetail}>Reject</button>
-          <button type="button" className="sa-btn-primary" onClick={handleApproveDetail} disabled={isProcessingDetail}>
+          <button
+            type="button"
+            className="sa-btn-reject"
+            onClick={handleRejectDetail}
+            disabled={isProcessingDetail}
+          >
+            Reject
+          </button>
+          <button
+            type="button"
+            className="sa-btn-primary"
+            onClick={handleApproveDetail}
+            disabled={isProcessingDetail}
+          >
             {isProcessingDetail ? 'Processing…' : 'Approve'}
           </button>
         </div>

@@ -7,7 +7,7 @@ import { apiFetch } from '../../utils/api';
 import { formatRelativeTime } from '../../utils/dateFormat';
 import EditVariantModal from '../../components/EditVariantModal';
 import '../../styles/ProductListing.css';
-
+import { guardAction } from '../../utils/permissionGuard';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
@@ -207,9 +207,11 @@ export default function ProductListing() {
           <button type="button" onClick={handlePrint}>Print</button>
         </div>
 
-        <button type="button" className="pl-add-product-btn" onClick={() => navigate('/registry')} disabled={!canCreateProducts}>
-          + Add product
-        </button>
+        {canCreateProducts && (
+            <button type="button" className="pl-add-product-btn" onClick={() => navigate('/registry')}>
+              + Add product
+            </button>
+          )}
       </div>
 
       <div className="pl-card">
@@ -270,23 +272,29 @@ export default function ProductListing() {
                       <td className="pl-col-updated">{formatRelativeTime(variant.updated_at)}</td>
                       <td className="pl-col-actions">
                         <div className="pl-actions-cell">
-                          <button
+                          {canEditProducts && (
+                            <button
                               type="button"
                               className="pl-edit-btn"
                               onClick={() => setEditingRow({ product, variant })}
-                              disabled={!canEditProducts}
                             >
                               <Pencil size={13} /> Edit
                             </button>
+                          )}
+                          {canCreateProducts && (
                             <button
                               type="button"
                               className="pl-scan-btn"
-                              onClick={() => navigate('/assign-qr', { state: { presetProductId: product.product_id, presetVariantId: variant.variant_id } })}
+                              onClick={() =>
+                                navigate('/assign-qr', {
+                                  state: { presetProductId: product.product_id, presetVariantId: variant.variant_id },
+                                })
+                              }
                               aria-label="Assign QR"
-                              disabled={!canCreateProducts}
                             >
                               <ScanBarcode size={16} />
                             </button>
+                          )}
                         </div>
                       </td>
                     </tr>
