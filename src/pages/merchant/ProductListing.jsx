@@ -10,6 +10,12 @@ import '../../styles/ProductListing.css';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
+const storedUser = localStorage.getItem('authUser');
+const currentUser = storedUser ? JSON.parse(storedUser) : null;
+const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+const canCreateProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('create');
+const canEditProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('edit');
+
 function attributesObjectToArray(attributesObject) {
   if (!attributesObject) return [];
   return Object.entries(attributesObject).map(([key, value]) => ({
@@ -200,7 +206,7 @@ export default function ProductListing() {
           <button type="button" onClick={handlePrint}>Print</button>
         </div>
 
-        <button type="button" className="pl-add-product-btn" onClick={() => navigate('/registry')}>
+        <button type="button" className="pl-add-product-btn" onClick={() => navigate('/registry')} disabled={!canCreateProducts}>
           + Add product
         </button>
       </div>
@@ -264,24 +270,19 @@ export default function ProductListing() {
                       <td className="pl-col-actions">
                         <div className="pl-actions-cell">
                           <button
-                            type="button"
-                            className="pl-edit-btn"
-                            onClick={() => setEditingRow({ product, variant })}
-                          >
-                            <Pencil size={13} /> Edit
-                          </button>
-                          <button
+                              type="button"
+                              className="pl-edit-btn"
+                              onClick={() => setEditingRow({ product, variant })}
+                              disabled={!canEditProducts}
+                            >
+                              <Pencil size={13} /> Edit
+                            </button>
+                            <button
                               type="button"
                               className="pl-scan-btn"
-                              onClick={() =>
-                                navigate('/assign-qr', {
-                                  state: {
-                                    presetProductId: product.product_id,
-                                    presetVariantId: variant.variant_id,
-                                  },
-                                })
-                              }
+                              onClick={() => navigate('/assign-qr', { state: { presetProductId: product.product_id, presetVariantId: variant.variant_id } })}
                               aria-label="Assign QR"
+                              disabled={!canCreateProducts}
                             >
                               <ScanBarcode size={16} />
                             </button>

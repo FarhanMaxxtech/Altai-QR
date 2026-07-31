@@ -27,9 +27,9 @@ function pad(n) {
 }
 
 const handleLogout = () => {
-  localStorage.removeItem('authToken');
-  localStorage.removeItem('authUser');
-  navigate('/login');
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('authUser');
+    window.location.href = '/login';
 };
 
 export default function PageHeader() {

@@ -9,7 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET; // set this in your .env, never hardc
 
 // POST register a new account
 router.post('/register', async (req, res) => {
-  const { name, email, password, role, phone, profile_picture, modules } = req.body;
+  const { name, email, password, role, phone, profile_picture, modules, expiry_date } = req.body;
   let { merchant_id } = req.body;
 
   if (!name || !email || !password || !role) {
@@ -22,8 +22,6 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ message: 'Email is already registered.' });
     }
 
-    // A merchant admin self-registering has no merchant_id yet — they ARE
-    // the merchant, so create their business/tenant record here first.
     if (role === 'admin' && !merchant_id) {
       const merchantResult = await pool.query(
         `INSERT INTO merchants (business_name, email)
@@ -36,10 +34,10 @@ router.post('/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, merchant_id, phone, profile_picture, modules)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING user_id, name, email, role, merchant_id, phone, profile_picture, modules, created_at`,
-      [name, email, passwordHash, role, merchant_id || null, phone || null, profile_picture || null, JSON.stringify(modules || [])]
+      `INSERT INTO users (name, email, password_hash, role, merchant_id, phone, profile_picture, modules, expiry_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING user_id, name, email, role, merchant_id, phone, profile_picture, modules, expiry_date, created_at`,
+      [name, email, passwordHash, role, merchant_id || null, phone || null, profile_picture || null, JSON.stringify(modules || []), expiry_date || null]
     );
 
     res.status(201).json(result.rows[0]);
@@ -92,6 +90,7 @@ router.post('/login', async (req, res) => {
         modules: user.modules,
         permissions: user.permissions,
         permission_preset: user.permission_preset,
+        expiry_date: user.expiry_date,
       },
     });
   } catch (err) {
@@ -105,12 +104,12 @@ router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.user_id, u.name, u.email, u.role, u.merchant_id, u.phone,
-              u.profile_picture, u.modules, u.permissions, u.permission_preset,
+              u.profile_picture, u.modules, u.permissions, u.permission_preset, u.expiry_date,
               COALESCE(array_agg(usa.store_id) FILTER (WHERE usa.store_id IS NOT NULL), '{}') AS store_ids
-       FROM users u
-       LEFT JOIN user_store_access usa ON usa.user_id = u.user_id
-       WHERE u.user_id = $1
-       GROUP BY u.user_id`,
+      FROM users u
+      LEFT JOIN user_store_access usa ON usa.user_id = u.user_id
+      WHERE u.user_id = $1
+      GROUP BY u.user_id`,
       [req.user.user_id]
     );
 

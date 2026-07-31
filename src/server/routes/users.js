@@ -13,17 +13,37 @@ router.get('/', async (req, res) => {
     const result = await pool.query(
       `SELECT u.user_id, u.name, u.email, u.role, u.phone, u.profile_picture,
               u.modules, u.permissions, u.permission_preset, u.merchant_id,
-              u.created_at, u.last_seen,
+              u.created_at, u.last_seen, u.expiry_date,
               COALESCE(array_agg(usa.store_id) FILTER (WHERE usa.store_id IS NOT NULL), '{}') AS store_ids
-       FROM users u
-       LEFT JOIN user_store_access usa ON usa.user_id = u.user_id
-       ${scopeClause}
-       GROUP BY u.user_id
-       ORDER BY u.created_at DESC`,
+      FROM users u
+      LEFT JOIN user_store_access usa ON usa.user_id = u.user_id
+      ${scopeClause}
+      GROUP BY u.user_id
+      ORDER BY u.created_at DESC`,
       params
     );
 
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.put('/:id/expiry', async (req, res) => {
+  const { expiry_date } = req.body;
+  const isSuperAdmin = req.user.role === 'super_admin';
+  try {
+    const result = isSuperAdmin
+      ? await pool.query(
+          `UPDATE users SET expiry_date = $2 WHERE user_id = $1 RETURNING user_id, expiry_date`,
+          [req.params.id, expiry_date || null]
+        )
+      : await pool.query(
+          `UPDATE users SET expiry_date = $3 WHERE user_id = $1 AND merchant_id = $2 RETURNING user_id, expiry_date`,
+          [req.params.id, req.user.merchant_id, expiry_date || null]
+        );
+    if (result.rows.length === 0) return res.status(404).json({ message: 'User not found.' });
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

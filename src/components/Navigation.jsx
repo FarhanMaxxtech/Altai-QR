@@ -22,9 +22,9 @@ const navItems = [
         label: 'Product InfoCenter',
         icon: QrCode,
         children: [
-            { path: '/registry', label: 'Register New Product', module: 'Product InfoCenter' },
+            { path: '/registry', label: 'Register New Product', module: 'Product InfoCenter', action: 'create' },
             { path: '/listing', label: 'Product Listing', module: 'Product InfoCenter' },
-            { path: '/assign-qr', label: 'Assign QR to Product', module: 'Product InfoCenter' },
+            { path: '/assign-qr', label: 'Assign QR to Product', module: 'Product InfoCenter', action: 'create' },
         ],
     },
     { path: '/stock-balance', label: 'Product Balance', icon: PackageSearch, module: 'Product Balance' },
@@ -34,10 +34,10 @@ const navItems = [
     { path: '/users', label: 'User Management', icon: Users, module: 'User Management' },
 ];
 
-function hasAccess(user, module) {
+function hasAccess(user, module, action = 'view') {
   if (user?.role === 'admin' || user?.role === 'super_admin') return true;
   if (!module) return true;
-  return (user?.permissions?.[module] || []).includes('view');
+  return (user?.permissions?.[module] || []).includes(action);
 }
 
 export default function Navigation() {
@@ -128,7 +128,7 @@ export default function Navigation() {
                         // --- Dropdown item ---
                         if (item.children) {
                             const visibleChildren = item.children.filter((child) =>
-                                hasAccess(user, child.module)
+                                hasAccess(user, child.module, child.action)
                             );
                             if (visibleChildren.length === 0) return null; // no access to any child at all
 

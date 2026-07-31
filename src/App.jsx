@@ -72,10 +72,10 @@ function App() {
                 <div className="app-main-content">
                 <Routes>
                   <Route path="/dashboard" element={<ProtectedRoute module="Dashboard"><Dashboard /></ProtectedRoute>} />
-                  <Route path="/registry" element={<ProtectedRoute module="Product InfoCenter"><RegisterProduct /></ProtectedRoute>} />
+                  <Route path="/registry" element={<ProtectedRoute module="Product InfoCenter" action="create"><RegisterProduct /></ProtectedRoute>} />
                   <Route path="/listing" element={<ProtectedRoute module="Product InfoCenter"><ProductListing /></ProtectedRoute>} />
                   <Route path="/listing/:productId" element={<ProtectedRoute module="Product InfoCenter"><ProductDetails /></ProtectedRoute>} />
-                  <Route path="/assign-qr" element={<ProtectedRoute module="Product InfoCenter"><AssignQrToProduct /></ProtectedRoute>} />
+                  <Route path="/assign-qr" element={<ProtectedRoute module="Product InfoCenter" action="create"><AssignQrToProduct /></ProtectedRoute>} />
                   <Route path="/stock-balance" element={<ProtectedRoute module="Product Balance"><StockAdjustment /></ProtectedRoute>} />
                   <Route path="/stores" element={<ProtectedRoute module="Store Management"><StoreManagement /></ProtectedRoute>} />
                   <Route path="/stock" element={<ProtectedRoute module="Stock Adjustment"><StockManager /></ProtectedRoute>} />

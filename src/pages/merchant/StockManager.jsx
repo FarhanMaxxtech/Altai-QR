@@ -10,6 +10,12 @@ import '../../styles/StockManager.css';
 const PAGE_SIZE = 10;
 const RECENT_DAYS = 3;
 
+const storedUser = localStorage.getItem('authUser');
+const currentUser = storedUser ? JSON.parse(storedUser) : null;
+const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+const canCreateAdjustments = isFullAccess || (currentUser?.permissions?.['Stock Adjustment'] || []).includes('create');
+const canEditAdjustments = isFullAccess || (currentUser?.permissions?.['Stock Adjustment'] || []).includes('edit');
+
 const ADJUSTMENT_TYPES = [
   { key: 'STOCK_IN', label: 'Stock In', hint: 'Receiving', icon: '+', txType: 'RECEIVE', enabled: true },
   { key: 'STOCK_OUT', label: 'Stock Out', hint: 'Sold / issued', icon: '−', txType: 'CHECKOUT', enabled: true },
@@ -201,6 +207,7 @@ const handleRejectDetail = async () => {
   };
 
   const handleSelectType = (type) => {
+    if (!canCreateAdjustments) return;
     if (!type.enabled) {
       setComingSoonMessage(`${type.label} isn't available yet — coming soon.`);
       setTimeout(() => setComingSoonMessage(''), 3000);
@@ -234,6 +241,7 @@ const handleRejectDetail = async () => {
   // --- Scanning --------------------------------------------------------------
 
   const addToCart = async (value) => {
+    if (!canCreateAdjustments) return;
     if (!isConfigValid) {
       setConfigError('Please select an adjustment type and store before scanning.');
       return;
@@ -297,6 +305,7 @@ const handleRejectDetail = async () => {
   };
 
   const toggleCamera = async () => {
+    if (!canCreateAdjustments) return;
     if (isCameraOpen) {
       if (html5QrRef.current) {
         await html5QrRef.current.stop().then(() => html5QrRef.current.clear()).catch(() => {});
@@ -392,6 +401,7 @@ const handleRejectDetail = async () => {
   // --- Submit ------------------------------------------------------------------
 
     const openReview = () => {
+      if (!canCreateAdjustments) return;
       setSubmitMessage('');
       if (!isConfigValid) {
         setConfigError('Please select an adjustment type and store before submitting.');
@@ -528,11 +538,12 @@ const handleRejectDetail = async () => {
           <div className="sa-type-grid">
             {ADJUSTMENT_TYPES.map((type) => (
               <button
-                key={type.key}
-                type="button"
-                className={`sa-type-card ${selectedTypeKey === type.key ? 'sa-type-card-active' : ''} ${!type.enabled ? 'sa-type-card-disabled' : ''}`}
-                onClick={() => handleSelectType(type)}
-              >
+                  key={type.key}
+                  type="button"
+                  className={`sa-type-card ${selectedTypeKey === type.key ? 'sa-type-card-active' : ''} ${!type.enabled || !canCreateAdjustments ? 'sa-type-card-disabled' : ''}`}
+                  onClick={() => handleSelectType(type)}
+                  disabled={!canCreateAdjustments}
+                >
                 <span className="sa-type-icon">{type.icon}</span>
                 <span className="sa-type-title">{type.label}</span>
                 <span className="sa-type-hint">{type.hint}</span>
@@ -547,7 +558,7 @@ const handleRejectDetail = async () => {
               <>
                 <div className="sa-field">
                   <label>From Store</label>
-                  <select value={fromStore} onChange={handleFromStoreChange}>
+                  <select value={fromStore} onChange={handleFromStoreChange} disabled={!canCreateAdjustments}>
                     <option value="">— Select store —</option>
                     {stores.map((s) => (
                       <option key={s.store_id} value={s.store_id}>{s.location}</option>
@@ -556,7 +567,7 @@ const handleRejectDetail = async () => {
                 </div>
                 <div className="sa-field">
                   <label>To Store</label>
-                  <select value={toStore} onChange={handleToStoreChange}>
+                  <select value={toStore} onChange={handleToStoreChange} disabled={!canCreateAdjustments}>
                     <option value="">— Select store —</option>
                     {stores.map((s) => (
                       <option key={s.store_id} value={s.store_id}>{s.location}</option>
@@ -568,7 +579,7 @@ const handleRejectDetail = async () => {
               <>
                 <div className="sa-field">
                   <label>Source Store</label>
-                  <select value={sourceStore} onChange={handleSourceStoreChange} disabled={!selectedType?.enabled}>
+                  <select value={sourceStore} onChange={handleSourceStoreChange} disabled={!selectedType?.enabled || !canCreateAdjustments}>
                     <option value="">— Select store —</option>
                     {stores.map((s) => (
                       <option key={s.store_id} value={s.store_id}>{s.location}</option>
@@ -577,11 +588,7 @@ const handleRejectDetail = async () => {
                 </div>
                 <div className="sa-field">
                   <label>Reference Document</label>
-                  <select
-                    value={referenceDoc}
-                    onChange={(e) => setReferenceDoc(e.target.value)}
-                    disabled={!selectedType?.enabled}
-                  >
+                  <select value={referenceDoc} onChange={(e) => setReferenceDoc(e.target.value)} disabled={!selectedType?.enabled || !canCreateAdjustments}>
                     {REFERENCE_DOC_OPTIONS.map((o) => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
@@ -613,19 +620,11 @@ const handleRejectDetail = async () => {
                 value={scanInput}
                 onChange={(e) => setScanInput(e.target.value)}
                 placeholder="Point scanner here or type a serial number"
-                disabled={!isConfigValid}
+                disabled={!isConfigValid || !canCreateAdjustments}
               />
             </div>
-            <button type="submit" className="sa-btn-add" disabled={!isConfigValid}>
-              Add
-            </button>
-            <button
-              type="button"
-              className={`sa-btn-camera ${isCameraOpen ? 'sa-btn-camera-active' : ''}`}
-              onClick={toggleCamera}
-              disabled={!isConfigValid && !isCameraOpen}
-              aria-label={isCameraOpen ? 'Stop camera' : 'Use camera'}
-            >
+            <button type="submit" className="sa-btn-add" disabled={!isConfigValid || !canCreateAdjustments}>Add</button>
+            <button type="button" className="sa-btn-camera" onClick={toggleCamera} disabled={(!isConfigValid && !isCameraOpen) || !canCreateAdjustments}>
               <Camera size={18} />
             </button>
           </form>
@@ -753,12 +752,7 @@ const handleRejectDetail = async () => {
 
           <div className="sa-field">
             <label>Reason / Remark</label>
-            <input
-              type="text"
-              value={remark}
-              onChange={(e) => setRemark(e.target.value)}
-              placeholder="e.g. quarterly cycle count"
-            />
+            <input type="text" value={remark} onChange={(e) => setRemark(e.target.value)} disabled={!canCreateAdjustments} />
           </div>
 
           {!isConfigValid && (
@@ -774,12 +768,7 @@ const handleRejectDetail = async () => {
             <button type="button" className="sa-btn-secondary" onClick={handleDiscard}>
               Discard
             </button>
-            <button
-            type="button"
-            className="sa-btn-primary"
-            onClick={openReview}
-            disabled={!isConfigValid || scanCart.length === 0 || isSubmitting}
-          >
+            <button type="button" className="sa-btn-primary" onClick={openReview} disabled={!isConfigValid || scanCart.length === 0 || isSubmitting || !canCreateAdjustments}>
             {isSubmitting ? 'Submitting…' : `Submit ${scanCart.length} unit${scanCart.length === 1 ? '' : 's'}`}
           </button>
           </div>
@@ -1019,22 +1008,10 @@ const handleRejectDetail = async () => {
         ) : null}
       </div>
 
-      {selectedTx?.approval_status === 'pending' && (
+      {selectedTx?.approval_status === 'pending' && canEditAdjustments && (
         <div className="sa-modal-footer">
-          <button
-            type="button"
-            className="sa-btn-reject"
-            onClick={handleRejectDetail}
-            disabled={isProcessingDetail}
-          >
-            Reject
-          </button>
-          <button
-            type="button"
-            className="sa-btn-primary"
-            onClick={handleApproveDetail}
-            disabled={isProcessingDetail}
-          >
+          <button type="button" className="sa-btn-reject" onClick={handleRejectDetail} disabled={isProcessingDetail}>Reject</button>
+          <button type="button" className="sa-btn-primary" onClick={handleApproveDetail} disabled={isProcessingDetail}>
             {isProcessingDetail ? 'Processing…' : 'Approve'}
           </button>
         </div>
