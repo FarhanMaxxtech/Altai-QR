@@ -1,11 +1,12 @@
 // src/pages/merchant/StockAdjustment.jsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import { ScanBarcode, X, ChevronDown, ChevronRight, RotateCcw, Download } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import { exportRowsToCsv } from '../../utils/tableExport';
 import '../../styles/StockAdjustment.css';
+
 
 function attrsToArray(attributes) {
   if (!attributes) return [];
@@ -50,12 +51,13 @@ function rowHealth(total, reorder) {
 
 export default function StockAdjustment() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [stores, setStores] = useState([]);
   const [products, setProducts] = useState([]);
 
   // --- Filters -----------------------------------------------------------
   const [categoryFilter, setCategoryFilter] = useState('');
-  const [skuFilter, setSkuFilter] = useState('');
+  const [skuFilter, setSkuFilter] = useState(location.state?.presetProductId || '');
   const [storeFilter, setStoreFilter] = useState('');
   const [stockState, setStockState] = useState('all'); // all | low | critical
 

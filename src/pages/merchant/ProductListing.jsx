@@ -271,13 +271,20 @@ export default function ProductListing() {
                             <Pencil size={13} /> Edit
                           </button>
                           <button
-                            type="button"
-                            className="pl-scan-btn"
-                            onClick={() => navigate('/assign-qr')}
-                            aria-label="Assign QR"
-                          >
-                            <ScanBarcode size={16} />
-                          </button>
+                              type="button"
+                              className="pl-scan-btn"
+                              onClick={() =>
+                                navigate('/assign-qr', {
+                                  state: {
+                                    presetProductId: product.product_id,
+                                    presetVariantId: variant.variant_id,
+                                  },
+                                })
+                              }
+                              aria-label="Assign QR"
+                            >
+                              <ScanBarcode size={16} />
+                            </button>
                         </div>
                       </td>
                     </tr>

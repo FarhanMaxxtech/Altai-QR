@@ -1,8 +1,9 @@
 // src/components/PageHeader.jsx
 import React, { useState, useEffect, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, QrCode, Clock, Bell, X } from 'lucide-react';
 import { apiFetch } from '../utils/api';
+import ScanLookupModal from './ScanLookupModal';
 import '../styles/PageHeader.css';
 
 const STATIC_HEADERS = {
@@ -25,16 +26,25 @@ function pad(n) {
   return String(n).padStart(2, '0');
 }
 
+const handleLogout = () => {
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('authUser');
+  navigate('/login');
+};
+
 export default function PageHeader() {
   const location = useLocation();
   const basePath = '/' + (location.pathname.split('/')[1] || '');
 
+  const navigate = useNavigate();
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [now, setNow] = useState(new Date());
   const [dynamicSubtitle, setDynamicSubtitle] = useState(null);
   const [expiryDate, setExpiryDate] = useState(null); // Date | null
   const [expiryLoaded, setExpiryLoaded] = useState(false);
   const [storeCount, setStoreCount] = useState(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [isScanLookupOpen, setIsScanLookupOpen] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -93,6 +103,22 @@ export default function PageHeader() {
     }
   }, [basePath]);
 
+  // NEW: Ctrl+L / Cmd+L keyboard shortcut
+useEffect(() => {
+  const handleKeyDown = (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {
+      e.preventDefault();
+      setIsScanLookupOpen(true);
+    }
+  };
+
+  window.addEventListener('keydown', handleKeyDown);
+
+  return () => {
+    window.removeEventListener('keydown', handleKeyDown);
+  };
+}, []);
+
   const { title, subtitle } = useMemo(() => {
     const entry = STATIC_HEADERS[basePath];
     if (!entry) return { title: '', subtitle: '' };
@@ -129,18 +155,16 @@ export default function PageHeader() {
 
         <div className="page-header-spacer" />
 
-        <div className="page-header-search">
-          <Search size={14} />
-          <span>Search SKU, QR code, store…</span>
-          <span className="page-header-kbd">⌘K</span>
-        </div>
-
         <div className="page-header-live">
           <span className="page-header-live-dot" />
           <span>LIVE · {pad(now.getHours())}:{pad(now.getMinutes())}</span>
         </div>
 
-        <button type="button" className="page-header-lookup-btn">
+        <button
+          type="button"
+          className="page-header-lookup-btn"
+          onClick={() => setIsScanLookupOpen(true)}
+        >
           <QrCode size={14} />
           <span>Scan lookup</span>
           <span className="page-header-kbd page-header-kbd-muted">⌘L</span>
@@ -158,16 +182,66 @@ export default function PageHeader() {
           </div>
         )}
 
-        {/*<button type="button" className="page-header-bell" aria-label="Notifications">
-          <Bell size={16} />
-          <span className="page-header-bell-badge">3</span>
+        <div className="page-header-notif-wrap">
+          <button
+            type="button"
+            className="page-header-bell"
+            aria-label="Notifications"
+            onClick={() => setIsNotifOpen((prev) => !prev)}
+          >
+            <Bell size={16} />
+            {expiryLoaded && expiryDate && <span className="page-header-bell-badge">1</span>}
+          </button>
+
+          {isNotifOpen && (
+            <div className="page-header-notif-panel">
+              <div className="notif-panel-header">
+                <span className="notif-panel-title">Notifications</span>
+                {expiryLoaded && expiryDate && <span className="notif-panel-new-badge">1 NEW</span>}
+                <div className="page-header-spacer" />
+                <button
+                  type="button"
+                  className="notif-panel-mark-read"
+                  onClick={() => setIsNotifOpen(false)}
+                >
+                  Mark all read
+                </button>
+              </div>
+
+              <div className="notif-panel-list">
+                {expiryLoaded && expiryDate ? (
+                  <div className="notif-row">
+                    <span className={`notif-dot ${urgent ? 'notif-dot-critical' : 'notif-dot-ok'}`} />
+                    <div className="notif-row-body">
+                      <span className="notif-row-title">
+                        {expired ? 'Merchant licence expired' : 'Merchant licence expiring'}
+                      </span>
+                      <span className="notif-row-desc">
+                        {expired
+                          ? 'Your plan has expired. Renew to restore scan access.'
+                          : `Your plan ends in ${dd} day${dd === 1 ? '' : 's'}. Renew to avoid losing scan access.`}
+                      </span>
+                      <span className="notif-row-time">Just now</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="notif-empty">No notifications right now.</p>
+                )}
+              </div>
+
+              <div className="notif-panel-footer">
+                <span>Merchant plan renews automatically</span>
+                <a href="#" className="notif-panel-manage-link">Manage plan →</a>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button type="button" className="page-header-transfer-btn" onClick={handleLogout}>
+          Log Out
         </button>
-
-        <button type="button" className="page-header-transfer-btn">
-          New transfer
-        </button>*/}
       </header>
-
+        <ScanLookupModal isOpen={isScanLookupOpen} onClose={() => setIsScanLookupOpen(false)} />
       {showBanner && (
         <div className="expiry-banner">
           <Clock size={17} className="expiry-banner-icon" />

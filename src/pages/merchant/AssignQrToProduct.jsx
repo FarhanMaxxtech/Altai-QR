@@ -5,6 +5,7 @@ import { ScanBarcode, Camera, X } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import { useEffect } from 'react';
 import '../../styles/AssignQrToProduct.css';
+import { useLocation } from 'react-router-dom';
 
 const MAX_RANGE_SIZE = 500;
 const SUMMARY_PAGE_SIZE = 50;
@@ -23,6 +24,7 @@ function badgeInfo(item) {
 }
 
 export default function AssignQrToProduct() {
+  const location = useLocation();
   const [products, setProducts] = useState([]);
   const [productId, setProductId] = useState('');
   const [variantId, setVariantId] = useState('');
@@ -66,6 +68,14 @@ export default function AssignQrToProduct() {
       .then((data) => setProducts(data))
       .catch((err) => console.error('Failed to load products:', err));
   }, []);
+
+  useEffect(() => {
+  if (products.length === 0 || !location.state) return;
+  const { presetProductId, presetVariantId } = location.state;
+  if (presetProductId) setProductId(presetProductId);
+  if (presetVariantId) setVariantId(presetVariantId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [products]);
 
   const selectedProduct = products.find((p) => p.product_id === productId);
   const variantOptions = selectedProduct ? selectedProduct.variants : [];

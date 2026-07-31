@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import '../../src/styles/Navigation.css';
 import logo from "../assets/logo.png";
-import { LogOut } from "lucide-react";
+
 
 const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, module: 'Dashboard' },
@@ -208,13 +208,7 @@ export default function Navigation() {
                     <button className="footer-button" onClick={() => alert('Settings — coming soon')}>
                         Settings
                     </button> */}
-                    <button
-                            className="footer-button footer-button-logout"
-                            onClick={handleLogout}
-                        >
-                            <LogOut size={18} />
-                            <span>Log Out</span>
-                        </button>
+                    
                 </div>
             </aside>
         </>

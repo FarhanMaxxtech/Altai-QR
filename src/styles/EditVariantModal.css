@@ -132,8 +132,26 @@
 
 .evm-attribute-row {
   display: flex;
-  gap: 10px;
   align-items: center;
+  gap: 10px;
+}
+
+.evm-attribute-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.evm-attribute-fields input {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.evm-icon-remove {
+  flex: none;
+  align-self: center;
 }
 
 .evm-attribute-key-select {
@@ -144,12 +162,13 @@
   font-weight: 600;
   color: #1f2937;
   background: #f7f6f1;
-  min-width: 140px;
-  flex: 0 0 auto;
+  flex: 1 1 140px;
+  min-width: 0;
 }
 
 .evm-attribute-row input {
-  flex: 1 1 auto;
+  flex: 1 1 140px;
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid #e8e6dc;
   border-radius: 8px;
