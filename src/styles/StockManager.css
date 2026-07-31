@@ -894,3 +894,7 @@
 .sa-detail-panel {
   max-width: 520px;
 }
+
+.sa-page-view-only {
+  grid-template-columns: 1fr;
+}

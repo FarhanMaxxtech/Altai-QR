@@ -46,29 +46,52 @@ export default function PageHeader() {
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [isScanLookupOpen, setIsScanLookupOpen] = useState(false);
 
+
+  const currentUser = useMemo(() => {
+  const raw = localStorage.getItem('authUser');
+  return raw ? JSON.parse(raw) : null;
+  }, []);
+
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
   // Fetch once — merchant's own licence expiry doesn't change per-route.
-  useEffect(() => {
-    apiFetch('/api/merchant/me')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.expiry_date) {
-          const d = new Date(data.expiry_date);
+      useEffect(() => {
+      if (!currentUser) {
+        setExpiryLoaded(true);
+        return;
+      }
+
+      if (currentUser.role === 'admin') {
+        apiFetch('/api/merchant/me')
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.expiry_date) {
+              const d = new Date(data.expiry_date);
+              setExpiryDate(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59)));
+            }
+          })
+          .catch((err) => console.error('Failed to load merchant info:', err))
+          .finally(() => setExpiryLoaded(true));
+      } else if (currentUser.role === 'staff') {
+        // Staff have their own optional expiry_date — never the merchant's.
+        if (currentUser.expiry_date) {
+          const d = new Date(currentUser.expiry_date);
           setExpiryDate(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59)));
         }
-      })
-      .catch((err) => console.error('Failed to load merchant info:', err))
-      .finally(() => setExpiryLoaded(true));
+        setExpiryLoaded(true);
+      } else {
+        // super_admin — no expiry concept
+        setExpiryLoaded(true);
+      }
 
-    apiFetch('/api/stores')
-      .then((res) => res.json())
-      .then((stores) => setStoreCount(stores.length))
-      .catch((err) => console.error('Failed to load stores:', err));
-  }, []);
+      apiFetch('/api/stores')
+        .then((res) => res.json())
+        .then((stores) => setStoreCount(stores.length))
+        .catch((err) => console.error('Failed to load stores:', err));
+    }, []);
 
   useEffect(() => {
     setDynamicSubtitle(null);

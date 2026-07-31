@@ -8,6 +8,7 @@ import { formatRelativeTime } from '../../utils/dateFormat';
 import EditVariantModal from '../../components/EditVariantModal';
 import '../../styles/ProductListing.css';
 
+
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 const storedUser = localStorage.getItem('authUser');
