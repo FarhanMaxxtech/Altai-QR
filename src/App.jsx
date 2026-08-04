@@ -35,6 +35,18 @@ import ProtectedRoute from './components/ProtectedRoute';
 
 import './App.css';
 
+function permissionFingerprint(user) {
+  if (!user) return '';
+  return JSON.stringify({
+    role: user.role,
+    permissions: user.permissions,
+    permission_preset: user.permission_preset,
+    store_ids: [...(user.store_ids || [])].sort(),
+    modules: user.modules,
+    expiry_date: user.expiry_date,
+  });
+}
+
 function App() {
     const [authReady, setAuthReady] = useState(false);
 
@@ -52,6 +64,33 @@ function App() {
       })
       .catch((err) => console.error('Failed to refresh user permissions:', err))
       .finally(() => setAuthReady(true));
+  }, []);
+
+    // Poll for permission/store-access changes made by an admin while this
+  // tab is open, and reload automatically once they land — avoids asking
+  // the staff member to manually refresh after being granted new access.
+  useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+
+    const poll = setInterval(() => {
+      const storedRaw = localStorage.getItem('authUser');
+      const stored = storedRaw ? JSON.parse(storedRaw) : null;
+      if (!stored) return;
+
+      apiFetch('/api/auth/me')
+        .then((res) => (res && res.ok ? res.json() : null))
+        .then((fresh) => {
+          if (!fresh) return;
+          if (permissionFingerprint(fresh) !== permissionFingerprint(stored)) {
+            localStorage.setItem('authUser', JSON.stringify(fresh));
+            window.location.reload();
+          }
+        })
+        .catch((err) => console.error('Permission poll failed:', err));
+    }, 5000); // check every 5s
+
+    return () => clearInterval(poll);
   }, []);
 
   if (!authReady) {

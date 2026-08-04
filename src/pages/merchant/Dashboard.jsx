@@ -105,7 +105,7 @@ useEffect(() => {
 
   apiFetch('/api/stores')
     .then((res) => res.json())
-    .then((data) => setScopedStores(data))
+    .then((data) => setScopedStores(data.filter((s) => s.status === 'Active')))
     .catch(() => {});
 }, []);
 
@@ -125,7 +125,7 @@ const scopeLabel = scopedStores.length === 1 ? scopedStores[0].location
       {/*<h2 className="dashboard-title">Dashboard</h2>
       
       {/* Top stat cards */}
-      {scopeLabel && <p className="dashboard-scope-label">{scopeLabel}</p>}
+      {/*{scopeLabel && <p className="dashboard-scope-label">{scopeLabel}</p>}*/}
       <div className="stat-cards-v2">
         {STAT_CARDS.map((card) => (
           <StatCard
