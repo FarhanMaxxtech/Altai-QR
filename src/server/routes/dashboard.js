@@ -79,16 +79,41 @@ router.get('/summary', async (req, res) => {
            WHERE u.merchant_id = $1
              AND qc.created_at >= CURRENT_DATE - INTERVAL '6 days'
            GROUP BY qc.created_at::date
+         ),
+         -- Net stock movement per day, reconstructed from transactions
+         -- since inventory_balance only stores the current snapshot, not
+         -- history. RECEIVE adds units; CHECKOUT removes them; approved
+         -- DAMAGE/CYCLE_COUNT also remove them; TRANSFER nets to zero
+         -- (moves stock between the merchant's own stores).
+         daily_stock_net AS (
+           SELECT t.created_at::date AS day,
+                  SUM(
+                    CASE
+                      WHEN t.transaction_type = 'RECEIVE' THEN t.qty
+                      WHEN t.transaction_type = 'CHECKOUT' THEN -t.qty
+                      WHEN t.transaction_type IN ('DAMAGE', 'CYCLE_COUNT') AND t.approval_status = 'approved' THEN -t.qty
+                      ELSE 0
+                    END
+                  ) AS net
+           FROM transactions t
+           JOIN variants v ON v.variant_id = t.variant_id
+           JOIN products p ON p.product_id = v.product_id
+           WHERE p.merchant_id = $1
+             AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
+             ${scoped ? 'AND (t.to_store_id = ANY($2::uuid[]) OR t.from_store_id = ANY($2::uuid[]))' : ''}
+           GROUP BY t.created_at::date
          )
          SELECT
            days.day,
            COALESCE(dr.cnt, 0) AS deliveries,
            COALESCE(dt.cnt, 0) AS transfers,
-           COALESCE(ds.cnt, 0) AS scans
+           COALESCE(ds.cnt, 0) AS scans,
+           COALESCE(dsn.net, 0) AS stock_net
          FROM days
          LEFT JOIN daily_receive dr ON dr.day = days.day
          LEFT JOIN daily_transfer dt ON dt.day = days.day
          LEFT JOIN daily_scans ds ON ds.day = days.day
+         LEFT JOIN daily_stock_net dsn ON dsn.day = days.day
          ORDER BY days.day`,
         trendParams
       ),
@@ -98,19 +123,34 @@ router.get('/summary', async (req, res) => {
     const deliveriesTrend = trendRows.map((r) => Number(r.deliveries));
     const transfersTrend = trendRows.map((r) => Number(r.transfers));
     const scansTrend = trendRows.map((r) => Number(r.scans));
+    const stockNetByDay = trendRows.map((r) => Number(r.stock_net));
 
     const totalStockValue = Number(totalStock.rows[0].total);
-    const totalStockTrend = new Array(7).fill(totalStockValue);
+
+    // Walk backward from today's real balance (index 6) using each day's
+    // net movement to rebuild the preceding 6 days — this is derived,
+    // not stored, since inventory_balance has no history of its own.
+    const totalStockTrend = new Array(7);
+    totalStockTrend[6] = totalStockValue;
+    for (let i = 5; i >= 0; i--) {
+      totalStockTrend[i] = totalStockTrend[i + 1] - stockNetByDay[i + 1];
+    }
+
+    const deltaOf = (trend) => trend[6] - trend[5];
 
     res.json({
       deliveriesToday: Number(deliveries.rows[0].count),
       deliveriesTrend,
+      deliveriesDelta: deltaOf(deliveriesTrend),
       transfersInProgress: Number(transfers.rows[0].count),
       transfersTrend,
+      transfersDelta: deltaOf(transfersTrend),
       totalStockAvailable: totalStockValue,
       totalStockTrend,
+      totalStockDelta: deltaOf(totalStockTrend),
       scansToday: Number(scans.rows[0].count),
       scansTrend,
+      scansDelta: deltaOf(scansTrend),
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
