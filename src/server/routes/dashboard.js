@@ -167,7 +167,7 @@ router.get('/tags-per-store', async (req, res) => {
         `SELECT s.location AS store, COALESCE(SUM(ib.quantity), 0) AS tags
          FROM stores s
          LEFT JOIN inventory_balance ib ON ib.store_id = s.store_id
-         WHERE s.merchant_id = $1
+         WHERE s.merchant_id = $1 AND s.status = 'Active'
          ${scoped ? 'AND s.store_id = ANY($2::uuid[])' : ''}
          GROUP BY s.store_id, s.location
          ORDER BY s.location`,
@@ -202,7 +202,7 @@ router.get('/tags-per-store', async (req, res) => {
 
     // Only need name->id for the stores this user can already see.
     const storesResult = await pool.query(
-      `SELECT store_id, location FROM stores WHERE merchant_id = $1 ${scoped ? 'AND store_id = ANY($2::uuid[])' : ''}`,
+      `SELECT store_id, location FROM stores WHERE merchant_id = $1 AND status = 'Active' ${scoped ? 'AND store_id = ANY($2::uuid[])' : ''}`,
       scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id]
     );
     const storeIdByName = {};

@@ -7,8 +7,15 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const isSuperAdmin = req.user.role === 'super_admin';
-    const scopeClause = isSuperAdmin ? '' : 'WHERE u.merchant_id = $1';
-    const params = isSuperAdmin ? [] : [req.user.merchant_id];
+    const conditions = ["u.status = 'Active'"];
+    const params = [];
+
+    if (!isSuperAdmin) {
+      params.push(req.user.merchant_id);
+      conditions.push(`u.merchant_id = $${params.length}`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     const result = await pool.query(
       `SELECT u.user_id, u.name, u.email, u.role, u.phone, u.profile_picture,
@@ -17,7 +24,7 @@ router.get('/', async (req, res) => {
               COALESCE(array_agg(usa.store_id) FILTER (WHERE usa.store_id IS NOT NULL), '{}') AS store_ids
       FROM users u
       LEFT JOIN user_store_access usa ON usa.user_id = u.user_id
-      ${scopeClause}
+      ${whereClause}
       GROUP BY u.user_id
       ORDER BY u.created_at DESC`,
       params
@@ -49,12 +56,19 @@ router.put('/:id/expiry', async (req, res) => {
   }
 });
 
+// Soft delete — "removing" a user never drops the row (audit trail on
+// transactions/QR batches still references it). This just flips status to
+// Inactive; the GET / route filters these out so they disappear from the
+// UI exactly like before.
 router.delete('/:id', async (req, res) => {
   try {
     const result = req.user.role === 'super_admin'
-      ? await pool.query('DELETE FROM users WHERE user_id = $1 RETURNING user_id', [req.params.id])
+      ? await pool.query(
+          `UPDATE users SET status = 'Inactive' WHERE user_id = $1 RETURNING user_id`,
+          [req.params.id]
+        )
       : await pool.query(
-          'DELETE FROM users WHERE user_id = $1 AND merchant_id = $2 RETURNING user_id',
+          `UPDATE users SET status = 'Inactive' WHERE user_id = $1 AND merchant_id = $2 RETURNING user_id`,
           [req.params.id, req.user.merchant_id]
         );
 

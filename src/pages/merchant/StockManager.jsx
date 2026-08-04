@@ -56,7 +56,9 @@ export default function StockManager() {
   useEffect(() => {
     apiFetch('/api/stores')
       .then((res) => res.json())
-      .then((data) => setStores(data))
+      // Closed (Inactive) stores can't receive or issue new stock —
+      // exclude them from every adjustment-type store dropdown.
+      .then((data) => setStores(data.filter((s) => s.status === 'Active')))
       .catch((err) => console.error('Failed to load stores:', err));
   }, []);
 
