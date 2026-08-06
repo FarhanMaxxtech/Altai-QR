@@ -1,8 +1,8 @@
 const API_BASE = 'https://altai-qr-production.up.railway.app';
-
+import { getAuthToken, clearAuth } from './authStorage';
 
 export async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem('authToken');
+  const token = getAuthToken();
 
   const url = `${API_BASE}${path}`;
 
@@ -25,8 +25,7 @@ export async function apiFetch(path, options = {}) {
   console.log("Final URL:", res.url);
 
   if (res.status === 401 || res.status === 403) {
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("authUser");
+    clearAuth();
     window.location.href = "/login";
     return;
   }

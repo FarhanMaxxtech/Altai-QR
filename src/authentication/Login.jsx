@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from '../../src/utils/api';
 import { Mail, Lock } from "lucide-react";
+import { setAuth } from "../utils/authStorage";
 import logo from "../assets/logo.png";
 import "../styles/LoginPage.css";
 
@@ -39,8 +40,7 @@ function Login() {
                 return;
             }
 
-            localStorage.setItem("authToken", result.token);
-            localStorage.setItem("authUser", JSON.stringify(result.user));
+            setAuth(result.token, result.user, rememberMe);
 
             if (result.user.role === "super_admin") {
                 navigate("/superadmin/dashboard");

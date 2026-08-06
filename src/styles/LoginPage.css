@@ -303,5 +303,11 @@
 @media (max-width: 480px) {
   .al-page {
     padding: 24px 16px;
+    align-items: flex-start;   /* was centering vertically — this stops that */
+    justify-content: flex-start;
+  }
+
+  .al-wrap {
+    margin-top: 24px;          /* controls exactly how much space stays above the logo */
   }
 }
