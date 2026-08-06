@@ -1,5 +1,5 @@
 // src/components/PageHeader.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, QrCode, Clock, Bell, X } from 'lucide-react';
 import { apiFetch } from '../utils/api';
@@ -45,6 +45,24 @@ export default function PageHeader() {
   const [storeCount, setStoreCount] = useState(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [isScanLookupOpen, setIsScanLookupOpen] = useState(false);
+
+  const headerRef = useRef(null);
+const [headerHeight, setHeaderHeight] = useState(64);
+
+useEffect(() => {
+  if (!headerRef.current) return;
+
+  const updateHeight = () => {
+    setHeaderHeight(headerRef.current.offsetHeight);
+  };
+
+  updateHeight();
+
+  const resizeObserver = new ResizeObserver(updateHeight);
+  resizeObserver.observe(headerRef.current);
+
+  return () => resizeObserver.disconnect();
+}, []);
 
 
   const currentUser = useMemo(() => {
@@ -170,7 +188,11 @@ useEffect(() => {
 
   return (
     <>
-      <header className="page-header">
+      <header
+          className="page-header"
+          ref={headerRef}
+          style={{ '--ph-height': `${headerHeight}px` }}
+        >
         <div className="page-header-title-block">
           <div className="page-header-title">{title}</div>
           {subtitle && <div className="page-header-subtitle">{subtitle}</div>}

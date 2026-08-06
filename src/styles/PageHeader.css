@@ -311,11 +311,12 @@
   /* Notification panel: full-width sheet instead of a fixed 340px dropdown */
   .page-header-notif-panel {
     position: fixed;
-    top: auto;
-    left: 12px;
-    right: 12px;
-    width: auto;
-    margin-top: 6px;
+    top: var(--ph-height, 64px); /* sits exactly under the real header height */
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(92vw, 360px);
+    margin-top: 8px; /* small gap below the header */
   }
 }
 
