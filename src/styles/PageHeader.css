@@ -309,14 +309,14 @@
   }
 
   /* Notification panel: full-width sheet instead of a fixed 340px dropdown */
-  .page-header-notif-panel {
+    .page-header-notif-panel {
     position: fixed;
-    top: var(--ph-height, 64px); /* sits exactly under the real header height */
+    top: var(--ph-height, 64px);
     left: 50%;
     right: auto;
-    transform: translateX(-50%);
+    transform: translateX(calc(-50% - 60px)); /* shifts it 20px left of center */
     width: min(92vw, 360px);
-    margin-top: 8px; /* small gap below the header */
+    margin-top: 8px;
   }
 }
 
