@@ -231,7 +231,7 @@
 
 @media (max-width: 768px) {
   .page-header {
-    padding: 10px 12px 10px 60px; /* clears the fixed hamburger toggle */
+    padding: 10px 12px 10px 50px; /* clears the fixed hamburger toggle */
     flex-wrap: wrap;
     gap: 0;
     row-gap: 10px;

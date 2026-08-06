@@ -1,5 +1,36 @@
 /* src/styles/Navigation.css */
 
+.sidebar-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sidebar-close-btn {
+  display: none; /* desktop: no close button, sidebar is always visible */
+  flex: none;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+}
+
+.sidebar-close-btn:hover {
+  background: #f3f4f6;
+}
+
+@media (max-width: 768px) {
+  .sidebar-close-btn {
+    display: flex; /* only appears once the sidebar is a mobile overlay */
+  }
+}
+
 .sidebar {
   width: 290px;
   flex: 0 0 250px; 

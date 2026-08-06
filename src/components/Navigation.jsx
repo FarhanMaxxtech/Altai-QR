@@ -11,6 +11,7 @@ import {
     Users,
     ChevronDown,
     ChevronRight,
+    ArrowLeft,
 } from 'lucide-react';
 import '../../src/styles/Navigation.css';
 import logo from "../assets/logo.png";
@@ -81,47 +82,58 @@ export default function Navigation() {
 
     return (
         <>
-            <button
-                className="mobile-menu-toggle"
-                onClick={() => setIsMobileOpen(!isMobileOpen)}
-                aria-label="Toggle menu"
-            >
-                ☰
-            </button>
 
-            {isMobileOpen && (
-                <div className="sidebar-overlay" onClick={() => setIsMobileOpen(false)} />
-            )}
+                            {!isMobileOpen && (
+                    <button
+                        className="mobile-menu-toggle"
+                        onClick={() => setIsMobileOpen(true)}
+                        aria-label="Open menu"
+                    >
+                        ☰
+                    </button>
+                )}
 
             <aside className={`sidebar ${isMobileOpen ? 'sidebar-open' : ''}`}>
                 <div className="sidebar-header">
-                    <div className="sidebar-brand">
-                            <div className="brand-icon">
-                                <img src={logo} alt="Logo" />
+                        <div className="sidebar-header-top">
+                            <div className="sidebar-brand">
+                                <div className="brand-icon">
+                                    <img src={logo} alt="Logo" />
+                                </div>
+
+                                <div>
+                                    <h2>AltaiTech</h2>
+                                    <p>HQ Inventory</p>
+                                </div>
+                            </div>
+
+                            <button
+                                type="button"
+                                className="sidebar-close-btn"
+                                onClick={() => setIsMobileOpen(false)}
+                                aria-label="Close menu"
+                            >
+                                <ArrowLeft size={20} />
+                            </button>
+                        </div>
+
+                        <div className="profile-card">
+                            <div className="avatar">
+                                {getInitials(user?.name)}
                             </div>
 
                             <div>
-                                <h2>AltaiTech</h2>
-                                <p>HQ Inventory</p>
+                                <div className="profile-name">
+                                    {user?.name || "—"}
+                                </div>
+
+                                <div className="profile-role">
+                                    {user?.role || "—"}
+                                    {user?.storeName && ` · ${user.storeName}`}
+                                </div>
                             </div>
                         </div>
-                                <div className="profile-card">
-                                    <div className="avatar">
-                                        {getInitials(user?.name)}
-                                    </div>
-
-                                    <div>
-                                        <div className="profile-name">
-                                            {user?.name || "—"}
-                                        </div>
-
-                                        <div className="profile-role">
-                                            {user?.role || "—"}
-                                            {user?.storeName && ` · ${user.storeName}`}
-                                        </div>
-                                    </div>
-                                </div>
-                </div>
+                    </div>
 
                 <nav className="sidebar-nav">
                     {navItems.map((item) => {
