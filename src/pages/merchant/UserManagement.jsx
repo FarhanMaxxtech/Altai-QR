@@ -224,25 +224,45 @@ export default function UserManagement() {
   // Dependency rule: granting edit/delete implies view; revoking view
   // revokes edit/delete for that module too. Purely a UI-side convenience
   // on top of the same permissions[module] = [actions] shape as before.
-  const toggleCell = (moduleName, action) => { 
-    if (!draft || adminAccount || !canEditUsers) return;
-    const current = new Set(draft.permissions[moduleName] || []);
-    const granting = !current.has(action);
+// Dependency rule (bottom-up): view is the base. create/edit each need
+// view. delete needs view + create + edit — granting delete grants the
+// whole chain; revoking view/create/edit strips anything above it,
+// including delete.
+const toggleCell = (moduleName, action) => {
+  if (!draft || adminAccount || !canEditUsers) return;
+  const current = new Set(draft.permissions[moduleName] || []);
+  const granting = !current.has(action);
 
-    if (granting) {
+  if (granting) {
+    if (action === 'delete') {
+      current.add('view');
+      current.add('create');
+      current.add('edit');
+      current.add('delete');
+    } else if (action === 'edit' || action === 'create') {
+      current.add('view');
       current.add(action);
-      if (action === 'edit' || action === 'delete') current.add('view');
     } else {
-      current.delete(action);
-      if (action === 'view') { current.delete('edit'); current.delete('delete'); }
+      current.add(action); // 'view'
     }
+  } else {
+    current.delete(action);
+    if (action === 'view') {
+      current.delete('create');
+      current.delete('edit');
+      current.delete('delete');
+    } else if (action === 'create' || action === 'edit') {
+      // delete depends on both create and edit — losing either strips it
+      current.delete('delete');
+    }
+  }
 
-    setDraft((d) => ({
-      ...d,
-      preset: null, // hand-edited, no longer matches a clean preset
-      permissions: { ...d.permissions, [moduleName]: Array.from(current) },
-    }));
-  };
+  setDraft((d) => ({
+    ...d,
+    preset: null, // hand-edited, no longer matches a clean preset
+    permissions: { ...d.permissions, [moduleName]: Array.from(current) },
+  }));
+};
 
   // Select-all for a single module row (grants every action for that module)
   const toggleRowAll = (moduleName) => { 
@@ -258,23 +278,29 @@ export default function UserManagement() {
   };
 
   // Select-all for a single action column (grants that action across every module)
-  const toggleColumnAll = (action) => { 
-    if (!draft || adminAccount || !canEditUsers) return;
-    const allGranted = MODULE_DEFS.every((m) => (draft.permissions[m.key] || []).includes(action));
-    const nextPermissions = { ...draft.permissions };
-    MODULE_DEFS.forEach((m) => {
-      const set = new Set(nextPermissions[m.key] || []);
-      if (allGranted) {
-        set.delete(action);
-        if (action === 'view') { set.delete('edit'); set.delete('delete'); }
+const toggleColumnAll = (action) => { 
+  if (!draft || adminAccount || !canEditUsers) return;
+  const allGranted = MODULE_DEFS.every((m) => (draft.permissions[m.key] || []).includes(action));
+  const nextPermissions = { ...draft.permissions };
+  MODULE_DEFS.forEach((m) => {
+    const set = new Set(nextPermissions[m.key] || []);
+    if (allGranted) {
+      set.delete(action);
+      if (action === 'view') { set.delete('create'); set.delete('edit'); set.delete('delete'); }
+      else if (action === 'create' || action === 'edit') { set.delete('delete'); }
+    } else {
+      if (action === 'delete') {
+        set.add('view'); set.add('create'); set.add('edit'); set.add('delete');
+      } else if (action === 'edit' || action === 'create') {
+        set.add('view'); set.add(action);
       } else {
         set.add(action);
-        if (action === 'edit' || action === 'delete') set.add('view');
       }
-      nextPermissions[m.key] = Array.from(set);
-    });
-    setDraft((d) => ({ ...d, preset: null, permissions: nextPermissions }));
-  };
+    }
+    nextPermissions[m.key] = Array.from(set);
+  });
+  setDraft((d) => ({ ...d, preset: null, permissions: nextPermissions }));
+};
 
   const toggleStore = (storeId) => { 
     if (!draft || adminAccount || !canEditUsers) return;

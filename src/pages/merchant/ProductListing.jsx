@@ -8,14 +8,15 @@ import { formatRelativeTime } from '../../utils/dateFormat';
 import EditVariantModal from '../../components/EditVariantModal';
 import '../../styles/ProductListing.css';
 import { guardAction } from '../../utils/permissionGuard';
+import { getAuthUser } from '../../utils/authStorage';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
-const storedUser = localStorage.getItem('authUser');
-const currentUser = storedUser ? JSON.parse(storedUser) : null;
+const currentUser = getAuthUser();
 const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
 const canCreateProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('create');
 const canEditProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('edit');
+const canDeleteProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('delete');
 
 function attributesObjectToArray(attributesObject) {
   if (!attributesObject) return [];
@@ -355,6 +356,7 @@ export default function ProductListing() {
           onClose={() => setEditingRow(null)}
           onSaved={handleVariantSaved}
           onDeleted={handleVariantDeleted}
+          canDelete={canDeleteProducts}
         />
       )}
     </div>

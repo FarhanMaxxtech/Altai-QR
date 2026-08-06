@@ -15,7 +15,7 @@ function attributesObjectToArray(attributesObject) {
   }));
 }
 
-export default function EditVariantModal({ product, variant, onClose, onSaved, onDeleted }) {
+export default function EditVariantModal({ product, variant, onClose, onSaved, onDeleted, canDelete = true }) {
   const [sku, setSku] = useState(variant.sku || '');
   const [price, setPrice] = useState(variant.price || '');
   const [remarks, setRemarks] = useState(variant.remarks || '');
@@ -210,14 +210,16 @@ export default function EditVariantModal({ product, variant, onClose, onSaved, o
           {errorMessage && <p className="evm-error-text">{errorMessage}</p>}
 
           <div className="evm-actions">
-            <button
-              type="button"
-              className="evm-btn-danger"
-              onClick={handleDelete}
-              disabled={isDeleting || isSaving}
-            >
-              {isDeleting ? 'Deleting…' : 'Delete'}
-            </button>
+            {canDelete && (
+              <button
+                type="button"
+                className="evm-btn-danger"
+                onClick={handleDelete}
+                disabled={isDeleting || isSaving}
+              >
+                {isDeleting ? 'Deleting…' : 'Delete'}
+              </button>
+            )}
             <div className="evm-actions-spacer" />
             <button type="button" className="evm-btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="evm-btn-primary" disabled={isSaving || isDeleting}>

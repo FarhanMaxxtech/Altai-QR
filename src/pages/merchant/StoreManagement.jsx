@@ -11,6 +11,7 @@ const currentUser = storedUser ? JSON.parse(storedUser) : null;
 const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
 const canEditStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('edit');
 const canCreateStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('create');
+const canDeleteStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('delete');
 
 function emptyForm() {
   return {
@@ -121,7 +122,7 @@ export default function StoreManagement() {
   };
 
   const handleDeleteStore = async () => {
-    if (!selectedStore) return;
+    if (!selectedStore || !canDeleteStores) return;
     const confirmed = window.confirm(
       `Close "${selectedStore.location}"? It will be marked Inactive but its data is kept, and it can be reopened later.`
     );
@@ -309,21 +310,25 @@ export default function StoreManagement() {
                   : `${selectedStore.store_code || '—'} · ${selectedStore.type || '—'} · ${selectedStore.manager_name || '—'}`}
               </p>
             </div>
-            {mode !== 'create' && canEditStores && (
+            {mode !== 'create' && (
               <>
-                <button
-                  type="button"
-                  className="sm2-delete-btn"
-                  onClick={handleDeleteStore}
-                  disabled={mode === 'edit' || isDeleting || selectedStore?.status === 'Inactive'}
-                >
-                  <Trash2 size={14} />
-                  {isDeleting ? 'Closing…' : 'Delete'}
-                </button>
-                <button type="button" className="sm2-edit-btn" onClick={handleEditStore} disabled={mode === 'edit'}>
-                  <Pencil size={14} />
-                  Edit store
-                </button>
+                {canDeleteStores && (
+                  <button
+                    type="button"
+                    className="sm2-delete-btn"
+                    onClick={handleDeleteStore}
+                    disabled={mode === 'edit' || isDeleting || selectedStore?.status === 'Inactive'}
+                  >
+                    <Trash2 size={14} />
+                    {isDeleting ? 'Closing…' : 'Delete'}
+                  </button>
+                )}
+                {canEditStores && (
+                  <button type="button" className="sm2-edit-btn" onClick={handleEditStore} disabled={mode === 'edit'}>
+                    <Pencil size={14} />
+                    Edit store
+                  </button>
+                )}
               </>
             )}
           </div>

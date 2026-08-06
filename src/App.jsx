@@ -30,6 +30,7 @@ import MerchantManagement from './pages/superadmin/MerchantManagement';
 import PlatformDashboard from './pages/superadmin/PlatformDashboard';
 import SuperAdminNavigation from './components/SuperAdminNavigation';
 
+import { getAuthToken, getAuthUser, updateAuthUser } from './utils/authStorage';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -51,47 +52,43 @@ function App() {
     const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('authToken');
-    if (!token) {
-      setAuthReady(true);
-      return;
-    }
+  const token = getAuthToken();
+  if (!token) {
+    setAuthReady(true);
+    return;
+  }
+
+  apiFetch('/api/auth/me')
+    .then((res) => (res && res.ok ? res.json() : null))
+    .then((data) => {
+      if (data) updateAuthUser(data);
+    })
+    .catch((err) => console.error('Failed to refresh user permissions:', err))
+    .finally(() => setAuthReady(true));
+}, []);
+
+useEffect(() => {
+  const token = getAuthToken();
+  if (!token) return;
+
+  const poll = setInterval(() => {
+    const stored = getAuthUser();
+    if (!stored) return;
 
     apiFetch('/api/auth/me')
       .then((res) => (res && res.ok ? res.json() : null))
-      .then((data) => {
-        if (data) localStorage.setItem('authUser', JSON.stringify(data));
+      .then((fresh) => {
+        if (!fresh) return;
+        if (permissionFingerprint(fresh) !== permissionFingerprint(stored)) {
+          updateAuthUser(fresh);
+          window.location.reload();
+        }
       })
-      .catch((err) => console.error('Failed to refresh user permissions:', err))
-      .finally(() => setAuthReady(true));
-  }, []);
+      .catch((err) => console.error('Permission poll failed:', err));
+  }, 5000);
 
-    // Poll for permission/store-access changes made by an admin while this
-  // tab is open, and reload automatically once they land — avoids asking
-  // the staff member to manually refresh after being granted new access.
-  useEffect(() => {
-    const token = localStorage.getItem('authToken');
-    if (!token) return;
-
-    const poll = setInterval(() => {
-      const storedRaw = localStorage.getItem('authUser');
-      const stored = storedRaw ? JSON.parse(storedRaw) : null;
-      if (!stored) return;
-
-      apiFetch('/api/auth/me')
-        .then((res) => (res && res.ok ? res.json() : null))
-        .then((fresh) => {
-          if (!fresh) return;
-          if (permissionFingerprint(fresh) !== permissionFingerprint(stored)) {
-            localStorage.setItem('authUser', JSON.stringify(fresh));
-            window.location.reload();
-          }
-        })
-        .catch((err) => console.error('Permission poll failed:', err));
-    }, 5000); // check every 5s
-
-    return () => clearInterval(poll);
-  }, []);
+  return () => clearInterval(poll);
+}, []);
 
   if (!authReady) {
     return null; // or a small loading spinner
