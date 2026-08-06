@@ -446,13 +446,13 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 14px;
+  height: 40px;
+  padding: 0 20px;
   border-radius: 9px;
   border: 1px solid #d6e2cc;
   background: #fff;
   color: var(--um2-primary);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
@@ -886,4 +886,22 @@
   .um2-preset-grid { grid-template-columns: 1fr; }
   .um2-card-footer { flex-direction: column; align-items: stretch; }
   .um2-footer-actions { flex-direction: column; }
+}
+
+@media (max-width: 768px) {
+
+    .um2-footer-actions{
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .um2-footer-actions .um2-primary-btn,
+    .um2-footer-actions .um2-secondary-btn{
+        width: 100%;
+        justify-content: center;
+        padding: 0 12px;
+        font-size: 13px;
+    }
+
 }

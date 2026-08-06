@@ -148,7 +148,7 @@ export default function EditVariantModal({ product, variant, onClose, onSaved, o
                         {ATTRIBUTE_PRESETS.map((preset) => (
                           <option key={preset} value={preset}>{preset}</option>
                         ))}
-                        <option value="Custom">Custom...</option>
+                        <option value="Custom">Custom</option>
                       </select>
                       {isCustom && (
                         <input
@@ -223,7 +223,7 @@ export default function EditVariantModal({ product, variant, onClose, onSaved, o
             <div className="evm-actions-spacer" />
             <button type="button" className="evm-btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="evm-btn-primary" disabled={isSaving || isDeleting}>
-              {isSaving ? 'Saving…' : 'Save Changes'}
+              {isSaving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </form>

@@ -52,6 +52,7 @@ export default function RegisterProduct() {
   const [variantDrafts, setVariantDrafts] = useState([makeEmptyVariant()]);
   const [draftSavedMessage, setDraftSavedMessage] = useState('');
   const [categoryOptions, setCategoryOptions] = useState([]);
+  const [isNewCategory, setIsNewCategory] = useState(false);
 
   const [lastRegistered, setLastRegistered] = useState(null);
 
@@ -75,6 +76,22 @@ useEffect(() => {
     console.error('Failed to restore draft:', err);
   }
 }, []);
+
+const handleCategorySelectChange = (e) => {
+  const value = e.target.value;
+  if (value === '__new__') {
+    setIsNewCategory(true);
+    setProductForm((prev) => ({ ...prev, category: '' }));
+  } else {
+    setIsNewCategory(false);
+    setProductForm((prev) => ({ ...prev, category: value }));
+  }
+};
+
+const handleCancelNewCategory = () => {
+  setIsNewCategory(false);
+  setProductForm((prev) => ({ ...prev, category: '' }));
+};
 
   useEffect(() => {
     apiFetch('/api/products/categories')
@@ -285,23 +302,47 @@ const addAttribute = (variantId) => {
 
             <div className="form-group">
               <label htmlFor="category">Category <span className="required-asterisk">*</span></label>
-              <input
-                id="category"
-                name="category"
-                type="text"
-                list="category-options"
-                value={productForm.category}
-                onChange={handleProductFieldChange}
-                placeholder="Select existing or type a new category"
-                autoComplete="off"
-                required
-              />
-              <datalist id="category-options">
-                {categoryOptions.map((cat) => (
-                  <option key={cat} value={cat} />
-                ))}
-              </datalist>
-              <p className="field-hint">Pick from the list, or just type a new category name.</p>
+
+              {!isNewCategory ? (
+                <select
+                  id="category"
+                  name="category"
+                  value={categoryOptions.includes(productForm.category) ? productForm.category : ''}
+                  onChange={handleCategorySelectChange}
+                  required
+                >
+                  <option value="" disabled>
+                    {categoryOptions.length === 0 ? 'No categories yet' : 'Select a category'}
+                  </option>
+                  {categoryOptions.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                  <option value="__new__">+ Add new category</option>
+                </select>
+              ) : (
+                <div className="category-new-row">
+                  <input
+                    id="category"
+                    name="category"
+                    type="text"
+                    value={productForm.category}
+                    onChange={handleProductFieldChange}
+                    placeholder="Type new category name"
+                    autoComplete="off"
+                    autoFocus
+                    required
+                  />
+                  <button type="button" className="btn-secondary" onClick={handleCancelNewCategory}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              <p className="field-hint">
+                {isNewCategory
+                  ? 'This will be added as a new category when you register the product.'
+                  : 'Choose an existing category, or add a new one.'}
+              </p>
             </div>
 
             <div className="form-group form-group-wide">

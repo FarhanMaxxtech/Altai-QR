@@ -3,7 +3,7 @@
 .sl-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: 1300;
   background: rgba(17, 24, 16, 0.5);
   display: flex;
   align-items: flex-start;

@@ -301,6 +301,13 @@
   color: #f0a899;
 }
 
+.aq-success-text-on-dark {
+  margin: 0;
+  font-size: 13px;
+  color: #7fd05c; /* light green, readable on the dark green scan station */
+  font-weight: 600;
+}
+
 /* --- Scanned this session (white card) --- */
 
 .aq-scanned-card {
@@ -819,10 +826,6 @@
     width: 100%;
   }
 
-  .aq-details-actions {
-    flex-direction: column;
-  }
-
   .aq-modal-footer {
     flex-direction: column;
   }
@@ -834,5 +837,76 @@
   .aq-btn-camera {
     width: 100%;
     height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .aq-scan-station {
+    padding: 16px 18px 18px;
+    gap: 10px;
+  }
+
+  .aq-scan-station-header h3 {
+    font-size: 1rem;
+  }
+
+  .aq-scan-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .aq-scan-input-wrap {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .aq-btn-add,
+  .aq-btn-camera {
+    width: 100%;
+  }
+
+  .aq-scan-hints {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* Serial range: stack every field full-width, no wrap guesswork */
+  .aq-range-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .aq-range-prefix {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .aq-range-field {
+    width: 100%;
+    flex: none;
+  }
+
+  .aq-range-arrow {
+    display: none; /* redundant once fields stack vertically */
+  }
+
+  .aq-btn-add-range {
+    width: 100%;
+  }
+
+  .aq-details-actions {
+    display: flex;
+    gap: 10px;
+  }
+
+  .aq-btn-secondary,
+  .aq-btn-primary {
+    width: 100%;
+    height: 44px;           /* matches .aq-btn-add-range height */
+    border-radius: 9px;     /* matches .aq-btn-add-range radius */
+    font-size: 13.5px;
+    font-weight: 700;
   }
 }

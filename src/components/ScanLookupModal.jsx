@@ -96,7 +96,7 @@ function findProductMatch(products, term) {
   );
 }
 
-export default function ScanLookupModal({ isOpen, onClose }) {
+export default function ScanLookupModal({ isOpen, onClose, initialQuery }) {
   const navigate = useNavigate();
 
   const [products, setProducts] = useState([]);
@@ -159,6 +159,16 @@ export default function ScanLookupModal({ isOpen, onClose }) {
       return next;
     });
   };
+
+  // Auto-run the lookup once data is ready, if the caller passed a preset query
+// (e.g. "Look up" from a transaction's product/SKU).
+useEffect(() => {
+  if (isOpen && dataLoaded && initialQuery) {
+    setQuery(initialQuery);
+    runLookup(initialQuery);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [isOpen, dataLoaded, initialQuery]);
 
   // Tries a local product/SKU match first (instant), then falls back to
   // the serial-number/QR-value backend lookup for physical labels.

@@ -475,7 +475,59 @@
     align-items: stretch;
   }
 
+  .ib-field {
+    flex: none;      /* stop inheriting the 180px height basis */
+    width: 100%;
+  }
+
+  .ib-segmented {
+    width: 100%;
+  }
+
+  .ib-segmented-btn {
+    flex: 1;          /* All / Low / Critical share width evenly, bigger tap targets */
+    text-align: center;
+  }
+
   .ib-reset-btn {
-    align-self: flex-start;
+    align-self: stretch;   /* full-width, easier to tap than flex-start's shrink-wrap */
+    justify-content: center;
+  }
+
+    .ib-filter-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ib-field {
+    flex: none;
+    width: 100%;
+  }
+
+  .ib-segmented {
+    width: 100%;
+  }
+
+  .ib-segmented-btn {
+    flex: 1;
+    text-align: center;
+  }
+
+  .ib-reset-btn {
+    align-self: stretch;
+    justify-content: center;
+  }
+
+  .ib-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .ib-stat-card {
+    padding: 12px 14px;
+  }
+
+  .ib-stat-value {
+    font-size: 22px;
   }
 }

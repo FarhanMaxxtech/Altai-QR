@@ -338,7 +338,34 @@
 }
 
 @media (max-width: 480px) {
-  .evm-fields-row {
+  .evm-attribute-row {
+    gap: 6px;
+  }
+
+  .evm-attribute-key-select {
+    font-size: 12px;
+    padding: 7px 6px;
+    min-width: 90px;
+  }
+
+  .evm-attribute-row input {
+    font-size: 12px;
+    padding: 7px 8px;
+    min-width: 0;
+  }
+
+  .evm-icon-remove {
+    width: 22px;
+    height: 22px;
+    font-size: 13px;
+  }
+
+    .evm-fields-row {
     flex-direction: column;
+    gap: 14px;
+  }
+
+  .evm-field {
+    width: 100%;
   }
 }

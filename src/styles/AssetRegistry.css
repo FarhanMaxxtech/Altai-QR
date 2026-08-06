@@ -820,18 +820,27 @@
   }
 
   /* Attribute row: stack the dropdown + inputs instead of squeezing 3 across */
-  .attribute-row {
+    .attribute-row {
     flex-wrap: wrap;
+    gap: 8px;
   }
 
   .attribute-key-select {
     flex: 1 1 100%;
+    width: 100%;
     min-width: 0;
+    box-sizing: border-box;
   }
 
   .attribute-row input {
-    flex: 1 1 calc(50% - 5px);
+    flex: 1 1 100%;
+    width: 100%;
     min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .btn-icon-remove {
+    align-self: flex-end;
   }
 
   /* Price / SKU row: stack on very narrow screens */
@@ -1229,4 +1238,36 @@
   color: #9ca3af;
   text-transform: lowercase;
   letter-spacing: 0.02em;
+}
+
+.category-new-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.category-new-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.category-new-row .btn-secondary {
+  flex: none;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .category-new-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .category-new-row input {
+    width: 100%;
+  }
+
+  .category-new-row .btn-secondary {
+    width: 100%;
+  }
 }

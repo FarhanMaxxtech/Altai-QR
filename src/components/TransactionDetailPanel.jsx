@@ -1,7 +1,8 @@
 // src/components/TransactionDetailPanel.jsx
-import React from 'react';
+import { useState } from 'react';
 import { X, ScanLine } from 'lucide-react';
 import '../styles/TransactionDetailPanel.css';
+import ScanLookupModal from './ScanLookupModal';
 
 const NEGATIVE_TYPES = ['CHECKOUT', 'DAMAGE', 'CYCLE_COUNT'];
 
@@ -78,7 +79,10 @@ function balanceUpdatedStoreName(t) {
 }
 
 export default function TransactionDetailPanel({ transaction, isLoading, errorMessage, onClose }) {
+  const [isLookupOpen, setIsLookupOpen] = useState(false);
   if (!transaction && !isLoading && !errorMessage) return null;
+
+  
 
   const isNegative = transaction ? NEGATIVE_TYPES.includes(transaction.transaction_type) : false;
   const attributesArray = transaction ? attributesObjectToArray(transaction.attributes) : [];
@@ -90,7 +94,7 @@ export default function TransactionDetailPanel({ transaction, isLoading, errorMe
   };
 
   const handleLookup = () => {
-    // Intentionally no navigation — placeholder action only.
+    setIsLookupOpen(true);
   };
 
   return (
@@ -246,6 +250,11 @@ export default function TransactionDetailPanel({ transaction, isLoading, errorMe
           </button>
         </div>
       </div>
+      <ScanLookupModal
+        isOpen={isLookupOpen}
+        onClose={() => setIsLookupOpen(false)}
+        initialQuery={transaction?.sku || transaction?.product_name || ''}
+      />
     </div>
   );
 }

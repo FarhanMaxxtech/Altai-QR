@@ -224,20 +224,31 @@
 }
 
 @media (max-width: 768px) {
-  .mobile-menu-toggle {
-    display: block;
+    .mobile-menu-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     position: fixed;
     top: 12px;
     left: 12px;
     z-index: 1001;
-    background: #0d2d5e;
+    width: 42px;
+    height: 42px;
+    background: #2e7d14;
     color: #fff;
     border: none;
-    border-radius: 8px;
-    width: 40px;
-    height: 40px;
-    font-size: 1.2rem;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(30, 64, 16, 0.28);
     cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+  }
+
+  .mobile-menu-toggle:hover {
+    background: #1e4010;
+  }
+
+  .mobile-menu-toggle:active {
+    transform: scale(0.94);
   }
 
   .sidebar {

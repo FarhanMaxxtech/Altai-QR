@@ -12,6 +12,7 @@ import {
     ChevronDown,
     ChevronRight,
     ArrowLeft,
+    Menu,
 } from 'lucide-react';
 import '../../src/styles/Navigation.css';
 import logo from "../assets/logo.png";
@@ -83,15 +84,15 @@ export default function Navigation() {
     return (
         <>
 
-                            {!isMobileOpen && (
-                    <button
-                        className="mobile-menu-toggle"
-                        onClick={() => setIsMobileOpen(true)}
-                        aria-label="Open menu"
-                    >
-                        ☰
-                    </button>
-                )}
+                    {!isMobileOpen && (
+                        <button
+                            className="mobile-menu-toggle"
+                            onClick={() => setIsMobileOpen(true)}
+                            aria-label="Open menu"
+                        >
+                            <Menu size={20} strokeWidth={2.2} />
+                        </button>
+                    )}
 
             <aside className={`sidebar ${isMobileOpen ? 'sidebar-open' : ''}`}>
                 <div className="sidebar-header">

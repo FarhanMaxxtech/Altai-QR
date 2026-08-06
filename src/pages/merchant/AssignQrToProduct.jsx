@@ -33,6 +33,7 @@ export default function AssignQrToProduct() {
   const [scanCart, setScanCart] = useState([]);
   const [scanInput, setScanInput] = useState('');
   const [scanError, setScanError] = useState('');
+  const [scanSuccessMessage, setScanSuccessMessage] = useState('');
   const scanInputRef = useRef(null);
 
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -90,10 +91,12 @@ export default function AssignQrToProduct() {
 
   // Looks up one or more serials/QR values, skipping ones already in the
   // cart, and reports any that couldn't be recognized.
-  const addManyToCart = async (values) => {
+    const addManyToCart = async (values) => {
     setScanError('');
+    setScanSuccessMessage('');
     let current = [...scanCart];
     const failures = [];
+    let successCount = 0;
 
     for (const raw of values) {
       const value = raw.trim();
@@ -113,6 +116,7 @@ export default function AssignQrToProduct() {
           continue;
         }
         current = [...current, result];
+        successCount++;
       } catch (err) {
         failures.push(value);
         console.error(err);
@@ -120,10 +124,16 @@ export default function AssignQrToProduct() {
     }
 
     setScanCart(current);
+
     if (failures.length > 0) {
       const shown = failures.slice(0, 5).join(', ');
       const more = failures.length > 5 ? `, +${failures.length - 5} more` : '';
       setScanError(`${failures.length} code(s) could not be recognized: ${shown}${more}`);
+    }
+
+    if (successCount > 0) {
+      setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
+      setTimeout(() => setScanSuccessMessage(''), 2500);
     }
   };
 
@@ -477,6 +487,7 @@ export default function AssignQrToProduct() {
 
             {rangeError && <p className="aq-error-text aq-error-text-on-dark">{rangeError}</p>}
             {scanError && <p className="aq-error-text aq-error-text-on-dark">{scanError}</p>}
+            {scanSuccessMessage && <p className="aq-success-text-on-dark">{scanSuccessMessage}</p>}
           </section>
 
           <section className="aq-scanned-card">

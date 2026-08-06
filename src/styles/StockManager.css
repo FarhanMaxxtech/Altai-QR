@@ -420,6 +420,7 @@
 
 .sa-batch-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
 }
 
@@ -733,7 +734,32 @@
   }
 
   .sa-review-actions {
-    flex-direction: column;
+    flex-direction: row;   /* keep them side-by-side, not stacked */
+    gap: 8px;
+  }
+
+    .sa-btn-add {
+    flex: 1;             /* fills the remaining row width, like sa-btn-primary */
+    height: 44px;
+    padding: 0 16px;
+    border-radius: 10px;
+  }
+
+  .sa-btn-camera {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+  }
+
+  .sa-review-actions .sa-btn-secondary,
+  .sa-review-actions .sa-btn-primary {
+    flex: 1;                  /* equal width, so neither button dominates */
+    height: 44px;              /* slightly taller = easier tap target */
+    border-radius: 10px;      /* full pill shape, matches your reference */
+    font-size: 12.5px;
+    padding: 0 8px;
+    white-space: nowrap;       /* stops "Submit 0 units" wrapping mid-word */
   }
 }
 
@@ -844,10 +870,24 @@
 
 @media (max-width: 640px) {
   .sa-modal-footer {
-    flex-direction: column;
+    flex-direction: row;
+    gap: 8px;
   }
+
   .sa-modal-footer button {
-    width: 100%;
+    flex: 1;
+    width: auto;
+    height: 44px;
+    border-radius: 10px;
+    font-size: 13px;
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 768px) {
+  .sa-batch-table {
+    display: table;       /* opt out of App.css's global "table { display: block }" */
+    white-space: normal;  /* undo the global nowrap so cell text can wrap normally */
   }
 }
 

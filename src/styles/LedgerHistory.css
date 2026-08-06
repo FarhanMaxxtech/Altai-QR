@@ -32,9 +32,7 @@
   white-space: nowrap;
 }
 
-.lh-filter-pill:hover {
-  background: #f4f7f1;
-}
+
 
 .lh-filter-pill-active {
   background: #1e4010;
@@ -395,7 +393,45 @@
     max-width: none;
   }
 
-  .lh-export-buttons {
-    margin-left: 0;
+
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+    .lh-pagination-controls{
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        width: 100%;
+    }
+
+    .lh-pagination-btn:first-child{
+        justify-self: start;
+    }
+
+    .lh-pagination-status{
+        justify-self: center;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .lh-pagination-btn:last-child{
+        justify-self: end;
+    }
+    
+}
+
+@media (max-width: 640px) {
+  .lh-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .lh-stat-card {
+    padding: 12px 14px;
+  }
+
+  .lh-stat-value {
+    font-size: 20px;
   }
 }
