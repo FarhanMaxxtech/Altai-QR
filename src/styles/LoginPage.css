@@ -1,0 +1,307 @@
+/* src/styles/LoginPage.css */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+.al-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  background: radial-gradient(1100px 520px at 50% -10%, #E8F2E1 0%, #F4F7F1 62%);
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  color: #16250F;
+}
+
+.al-wrap {
+  width: 412px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* --- Row 1 + 2 + 3: logo / title / tagline --- */
+
+.al-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.al-brand-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 15px;
+  object-fit: cover;
+  box-shadow: 0 6px 18px rgba(22, 37, 15, 0.14);
+}
+
+.al-brand-text {
+  text-align: center;
+}
+
+.al-brand-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1.15;
+}
+
+.al-brand-tagline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.7px;
+  color: #7E8F73;
+  margin-top: 5px;
+}
+
+/* --- Card --- */
+
+.al-card {
+  background: #FFFFFF;
+  border: 1px solid #E3E9DC;
+  border-radius: 16px;
+  box-shadow: 0 14px 40px rgba(22, 37, 15, 0.09);
+  overflow: hidden;
+}
+
+.al-card-body {
+  padding: 22px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.al-card-heading {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+}
+
+.al-card-subtext {
+  font-size: 12px;
+  color: #7E8F73;
+  margin-top: 3px;
+}
+
+/* --- Fields --- */
+
+.al-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.al-field-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.7px;
+  color: #7E8F73;
+}
+
+.al-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 42px;
+  padding: 0 11px;
+  border-radius: 11px;
+  background: #FAFCF8;
+  border: 1.5px solid #E3E9DC;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.al-input-wrap-focus {
+  background: #FFFFFF;
+  border-color: #2E7D14;
+}
+
+.al-input-icon {
+  flex: none;
+  color: #8FA383;
+}
+
+.al-input-wrap input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  color: #16250F;
+}
+
+.al-input-wrap input::placeholder {
+  color: #9AA891;
+}
+
+.al-reveal-btn {
+  height: 26px;
+  padding: 0 9px;
+  flex: none;
+  border-radius: 7px;
+  border: 1px solid #E3E9DC;
+  background: #FFFFFF;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: #4A5C40;
+  cursor: pointer;
+}
+
+.al-reveal-btn:hover {
+  background: #F4F7F1;
+}
+
+.al-field-error {
+  margin: -2px 0 0;
+  font-size: 11.5px;
+  color: #B3341E;
+}
+
+/* --- Remember me --- */
+
+.al-remember-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.al-checkbox {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  background: #FFFFFF;
+  color: transparent;
+  border: 1px solid #D6E2CC;
+}
+
+.al-checkbox-checked {
+  background: #2E7D14;
+  color: #FFFFFF;
+  border: 1px solid #2E7D14;
+}
+
+.al-remember-label {
+  font-size: 12px;
+  color: #3F5236;
+  cursor: pointer;
+}
+
+/* --- Submit --- */
+
+.al-submit-btn {
+  height: 44px;
+  border-radius: 11px;
+  border: none;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  background: #1E4010;
+  color: #FFFFFF;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.al-submit-btn:hover:not(:disabled) {
+  background: #163009;
+}
+
+.al-submit-btn:disabled {
+  background: #E6EBE1;
+  color: #A9B5A0;
+  cursor: not-allowed;
+}
+
+/* --- Footer status bar --- */
+
+.al-status-bar {
+  padding: 12px 24px;
+  background: #FAFCF8;
+  border-top: 1px solid #E3E9DC;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.al-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3DA51C;
+  flex: none;
+  animation: alPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes alPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.al-status-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #7E8F73;
+  flex: 1;
+}
+
+.al-status-version {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #B4C0AB;
+}
+
+/* --- Below-card links --- */
+
+.al-below-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.al-sales-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.al-sales-row span {
+  font-size: 11.5px;
+  color: #7E8F73;
+}
+
+.al-sales-row a {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #2E7D14;
+  text-decoration: none;
+}
+
+.al-sales-row a:hover {
+  color: #1E4010;
+}
+
+.al-powered-by {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: #A3B098;
+}
+
+@media (max-width: 480px) {
+  .al-page {
+    padding: 24px 16px;
+  }
+}

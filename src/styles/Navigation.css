@@ -2,7 +2,7 @@
 
 .sidebar {
   width: 290px;
-  flex: 0 0 290px; 
+  flex: 0 0 250px; 
   min-height: 100vh;
   background: #fff;
   border-right: 1px solid #e5e7eb;

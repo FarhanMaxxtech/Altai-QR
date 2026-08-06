@@ -139,7 +139,7 @@
 @media (max-width: 480px) {
   .app-main {
     padding: 12px;
-    padding-top: 60px;
+    padding-top: 10px;
   }
 
   .asset-card,

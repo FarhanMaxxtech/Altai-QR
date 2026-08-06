@@ -444,3 +444,84 @@
 .low-stock-restock-btn:hover {
   background: #f0f7ea;
 }
+
+/* ============================================================
+   MOBILE RESPONSIVE RULES — Dashboard
+   ============================================================ */
+@media (max-width: 768px) {
+  .dashboard {
+    gap: 16px;
+  }
+
+  .stat-cards-v2 {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .stat-card-v2 {
+    padding: 12px 14px;
+  }
+
+  .stat-card-v2-value {
+    font-size: 20px;
+  }
+
+  .stat-card-v2-sparkline {
+    display: none; /* sparklines get too cramped at this width */
+  }
+
+  .chart-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .chart-card,
+  .store-card,
+ .low-stock-card {
+  min-width: 0; /* allow flex/grid children to shrink below content size instead of overflowing */
+  box-sizing: border-box;
+}
+
+  .low-stock-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .low-stock-table {
+    min-width: 520px; /* scroll instead of squeezing columns unreadably */
+  }
+
+  .store-right {
+    gap: 12px;
+  }
+
+  .low-stock-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .stat-cards-v2 {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .stat-card-v2-label {
+    font-size: 10px;
+  }
+
+  .stat-card-v2-value {
+    font-size: 18px;
+  }
+
+  .stat-card-v2-unit {
+    font-size: 11px;
+  }
+
+  .store-card-header h3,
+  .low-stock-card-title h3 {
+    font-size: 14px;
+  }
+}

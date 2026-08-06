@@ -763,16 +763,130 @@
 @media (max-width: 900px) {
   .register-product-layout {
     grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch; /* force both cards to fill the full width */
+  }
+
+  .next-steps-card {
+    order: 1;
+    position: static;
+    width: 100%;
+  }
+
+  .product-details-card {
+    order: 2;
+    width: 100%;
+  }
+
+  .register-product-full-span {
+    order: 3;
+    width: 100%;
   }
 
   .product-details-grid {
     grid-template-columns: 1fr;
   }
+}
 
+@media (max-width: 640px) {
+  .product-details-card,
   .next-steps-card {
-    position: static;
+    padding: 18px 16px;
+  }
+
+  .product-details-card h2,
+  .next-steps-card h2 {
+    font-size: 1rem;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+  }
+
+  /* Variant card header: name + badges wrap instead of overflowing */
+  .variant-card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: -14px -16px 12px;
+    padding: 12px 16px;
+  }
+
+  .variant-card-header-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .variant-card {
+    padding: 14px 16px;
+  }
+
+  /* Attribute row: stack the dropdown + inputs instead of squeezing 3 across */
+  .attribute-row {
+    flex-wrap: wrap;
+  }
+
+  .attribute-key-select {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .attribute-row input {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+  }
+
+  /* Price / SKU row: stack on very narrow screens */
+  .variant-fields-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .variant-fields-row .form-group {
+    width: 100%;
+  }
+
+  /* Variants header: label + count on one line, actions below */
+  .variants-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .variants-header-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .variants-header-actions button {
+    flex: 1;
+  }
+
+  /* Form action bar: full-width stacked buttons */
+  .product-form-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .product-form-actions .btn-primary,
+  .product-form-actions .btn-secondary {
+    width: 100%;
+    text-align: center;
+  }
+
+  /* Just Registered table: allow horizontal scroll instead of squeezing */
+  .variant-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .just-registered-card .variant-list-table {
+    min-width: 480px;
+  }
+
+  .just-registered-card {
+    padding: 18px 16px;
   }
 }
+
 .field-hint {
   margin: 4px 0 0;
   font-size: 11px;

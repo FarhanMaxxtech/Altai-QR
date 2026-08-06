@@ -177,13 +177,159 @@
 
 
 @media (max-width: 900px) {
-  .page-header-search { display: none; }
+  .expiry-banner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin: 0 12px 16px;
+    padding: 14px;
+  }
+
+  .expiry-banner-icon {
+    display: none; /* saves a row of horizontal space, text carries the message */
+  }
+
+  .expiry-banner-text {
+    flex: none;
+  }
+
+  .expiry-banner-title {
+    font-size: 13px;
+  }
+
+  .expiry-banner-subtitle {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .expiry-banner-countdown {
+    width: 100%;
+    justify-content: center;
+    order: 0; /* countdown right under the text, not pushed below the buttons */
+  }
+
+  .expiry-banner-unit {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .expiry-banner-renew-btn {
+    width: 100%;
+    height: 40px;
+  }
+
+  .expiry-banner-dismiss {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+  }
+
+  .expiry-banner {
+    position: relative;
+  }
 }
 
 @media (max-width: 768px) {
   .page-header {
-    padding-left: 60px; /* clears the fixed hamburger toggle */
+    padding: 10px 12px 10px 60px; /* clears the fixed hamburger toggle */
     flex-wrap: wrap;
+    gap: 0;
+    row-gap: 10px;
+  }
+
+  /* Row 1: title */
+  .page-header-title-block {
+    flex: 1 1 100%;
+    order: 1;
+  }
+
+  .page-header-title {
+    font-size: 17px;
+  }
+
+  .page-header-subtitle {
+    font-size: 11px;
+  }
+
+  .page-header-spacer,
+  .page-header-search {
+    display: none;
+  }
+
+  /* Row 2: a single scrollable action bar — live / scan / notif / logout */
+  .page-header-live,
+  .page-header-lookup-btn,
+  .page-header-notif-wrap,
+  .page-header-transfer-btn {
+    order: 2;
+    flex: none;
+  }
+
+  .page-header-live,
+  .page-header-lookup-btn,
+  .page-header-bell {
+    height: 34px;
+  }
+
+  .page-header-live {
+    padding: 0 10px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .page-header-lookup-btn {
+    padding: 0 10px;
+    font-size: 12px;
+    gap: 5px;
+  }
+
+  .page-header-lookup-btn .page-header-kbd {
+    display: none; /* the ⌘L hint only makes sense with a keyboard */
+  }
+
+  .page-header-bell {
+    width: 34px;
+    height: 34px;
+  }
+
+  .page-header-transfer-btn {
+    height: 34px;
+    padding: 0 14px;
+    font-size: 12.5px;
+    margin-left: auto; /* pins Log Out to the right of the action bar */
+  }
+
+  /* Row 3: expiry pill, full width so the countdown never clips */
+  .page-header-expiry {
+    order: 3;
+    flex: 1 1 100%;
+    height: 34px;
+    justify-content: center;
+    font-size: 11.5px;
+  }
+
+  /* Notification panel: full-width sheet instead of a fixed 340px dropdown */
+  .page-header-notif-panel {
+    position: fixed;
+    top: auto;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    margin-top: 6px;
+  }
+}
+
+@media (max-width: 400px) {
+  /* Only when things genuinely can't fit: drop the Scan lookup label,
+     keep everything else readable */
+  .page-header-lookup-btn span:not(.page-header-kbd) {
+    display: none;
+  }
+
+  .page-header-lookup-btn {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
   }
 }
 

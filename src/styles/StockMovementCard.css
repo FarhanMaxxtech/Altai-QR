@@ -267,3 +267,65 @@
   font-style: italic;
   margin: 0;
 }
+
+@media (max-width: 768px) {
+  .movement-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .movement-tabs {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .movement-tab {
+    flex: 1;
+    text-align: center;
+  }
+
+  /* Trend tab: chart on top, summary numbers below instead of side-by-side */
+  .movement-trend-body {
+    flex-direction: column;
+  }
+
+  .movement-trend-chart {
+    width: 100%;
+    min-width: 0; /* critical: lets ResponsiveContainer actually shrink instead of forcing overflow */
+  }
+
+  .movement-trend-summary {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    border-left: none;
+    border-top: 1px solid #edf1e8;
+    padding-left: 0;
+    padding-top: 12px;
+  }
+
+  .movement-net-block {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .movement-split-body {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .movement-split-donut {
+    align-self: center;
+  }
+
+  .movement-store-row {
+    grid-template-columns: 78px 1fr 50px;
+    gap: 8px;
+  }
+
+  .movement-store-name {
+    font-size: 11.5px;
+  }
+}
