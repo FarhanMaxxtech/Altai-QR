@@ -1,4 +1,4 @@
-const API_BASE = 'https://altai-qr-production.up.railway.app';
+const API_BASE = 'https://altai-qr-production-b543.up.railway.app';
 import { getAuthToken, clearAuth } from './authStorage';
 
 export async function apiFetch(path, options = {}) {
