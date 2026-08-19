@@ -89,7 +89,7 @@ router.get('/batches/search', async (req, res) => {
 router.get('/batches/:id/codes', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT serial_number, qr_value FROM qr_codes WHERE batch_id = $1 ORDER BY serial_number',
+      'SELECT label_id, qr_id FROM qr_codes WHERE batch_id = $1 ORDER BY label_id',
       [req.params.id]
     );
     res.json(result.rows);
@@ -143,10 +143,10 @@ router.post('/batches', async (req, res) => {
     // One single INSERT for the whole batch — unnest() turns the three
     // parallel arrays into that many rows, in one round trip to the database.
     const codesResult = await client.query(
-      `INSERT INTO qr_codes (batch_id, serial_number, qr_value, assigned_user_id, status)
+      `INSERT INTO qr_codes (batch_id, label_id, qr_id, assigned_user_id, status)
       SELECT $1, s, q, $2, 'pending'
       FROM unnest($3::text[], $4::text[]) AS t(s, q)
-      RETURNING serial_number, qr_value`,
+      RETURNING label_id, qr_id`,
       [batch.batch_id, assigned_user_id, serials, qrValues]
     );
 
@@ -167,10 +167,10 @@ router.get('/unassigned', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT qr_id, serial_number, qr_value, created_at
-       FROM qr_codes
-       WHERE assigned_user_id = $1 AND variant_id IS NULL
-       ORDER BY serial_number`,
+      `SELECT qr_batch, label_id, qr_id, created_at
+      FROM qr_codes
+      WHERE assigned_user_id = $1 AND variant_id IS NULL
+      ORDER BY label_id`,
       [user_id]
     );
     res.json(result.rows);
@@ -182,15 +182,15 @@ router.get('/unassigned', async (req, res) => {
 // POST link a QR code to a specific product variant — this is the step
 // that makes scanning it actually mean something.
 router.post('/assign-variant', async (req, res) => {
-  const { qr_id, variant_id } = req.body;
-  if (!qr_id || !variant_id) {
-    return res.status(400).json({ message: 'qr_id and variant_id are required.' });
+  const { qr_batch, variant_id } = req.body;
+  if (!qr_batch || !variant_id) {
+    return res.status(400).json({ message: 'qr_batch and variant_id are required.' });
   }
-
+  
   try {
     const result = await pool.query(
-      `UPDATE qr_codes SET variant_id = $1 WHERE qr_id = $2 RETURNING *`,
-      [variant_id, qr_id]
+      `UPDATE qr_codes SET variant_id = $1 WHERE qr_batch = $2 RETURNING *`,
+      [variant_id, qr_batch]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: 'QR code not found.' });
     res.json(result.rows[0]);
@@ -203,17 +203,16 @@ router.post('/assign-variant', async (req, res) => {
 // linked to, or a clear "not assigned yet" message if it hasn't been
 // linked to a product on the merchant's side.
 router.get('/lookup', async (req, res) => {
-  const serial_number = req.query.serial_number?.trim();
-  if (!serial_number) return res.status(400).json({ message: 'serial_number is required.' });
-
+  const label_id = req.query.serial_number?.trim(); // keep query param name unless you also update the caller
+  if (!label_id) return res.status(400).json({ message: 'label_id is required.' });
   try {
     const result = await pool.query(
-      `SELECT qc.serial_number, v.variant_id, v.sku, p.product_id, p.product_name
+      `SELECT qc.label_id, v.variant_id, v.sku, p.product_id, p.product_name
        FROM qr_codes qc
        JOIN variants v ON v.variant_id = qc.variant_id
        JOIN products p ON p.product_id = v.product_id
-       WHERE UPPER(qc.serial_number) = UPPER($1)`,
-      [serial_number]
+       WHERE UPPER(qc.label_id) = UPPER($1)`,
+      [label_id]
     );
 
     if (result.rows.length === 0) {
@@ -255,12 +254,12 @@ router.post('/batches/:id/assign-variant', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `UPDATE qr_codes
-       SET variant_id = $1, status = 'pending'
-       WHERE batch_id = $2 AND variant_id IS NULL
-       RETURNING qr_id`,
-      [variant_id, req.params.id]
-    );
+    `UPDATE qr_codes
+    SET variant_id = $1, status = 'pending'
+    WHERE batch_id = $2 AND variant_id IS NULL
+    RETURNING qr_batch`,
+    [variant_id, req.params.id]
+  );
     res.json({ assigned_count: result.rowCount });
   } catch (err) {
     res.status(500).json({ message: err.message });

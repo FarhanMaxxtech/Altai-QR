@@ -4,21 +4,20 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { ScanBarcode, Camera, X, Trash2, Info } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormat';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useConfirm } from '../../context/ConfirmContext';
 
 import '../../styles/StockManager.css';
 
 const PAGE_SIZE = 10;
 const RECENT_DAYS = 3;
+const MAX_RANGE_SIZE = 500;
 
-const storedUser = localStorage.getItem('authUser');
-const currentUser = storedUser ? JSON.parse(storedUser) : null;
-const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
-const canCreateAdjustments = isFullAccess || (currentUser?.permissions?.['Stock Adjustment'] || []).includes('create');
-const canEditAdjustments = isFullAccess || (currentUser?.permissions?.['Stock Adjustment'] || []).includes('edit');
+
 
 const ADJUSTMENT_TYPES = [
   { key: 'STOCK_IN', label: 'Stock In', hint: 'Receiving', icon: '+', txType: 'RECEIVE', enabled: true },
-  { key: 'STOCK_OUT', label: 'Stock Out', hint: 'Sold / issued', icon: '−', txType: 'CHECKOUT', enabled: true },
+  { key: 'STOCK_OUT', label: 'Stock Out', hint: 'Sold', icon: '−', txType: 'CHECKOUT', enabled: true },
   { key: 'TRANSFER', label: 'Transfer', hint: 'Between stores', icon: '⇄', txType: 'TRANSFER', enabled: true },
   { key: 'DAMAGE', label: 'Damage', hint: 'Write-off', icon: '−', txType: 'DAMAGE', enabled: true },
   { key: 'CYCLE_COUNT', label: 'Cycle Count', hint: 'Recount', icon: '=', txType: 'CYCLE_COUNT', enabled: true },
@@ -31,6 +30,7 @@ const REFERENCE_DOC_OPTIONS = [
   { value: 'PO', label: 'Purchase order' },
   { value: 'DO', label: 'Delivery order' },
   { value: 'RT', label: 'Return note' },
+  { value: 'OTHER', label: 'Other' },
 ];
 
 function qtySign(typeKey) {
@@ -52,7 +52,13 @@ function txTypeLabel(type) {
 
 export default function StockManager() {
   const [stores, setStores] = useState([]);
+  const navigate = useNavigate();
 
+  const storedUser = localStorage.getItem('authUser');
+  const currentUser = storedUser ? JSON.parse(storedUser) : null;
+  const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+  const canCreateAdjustments = isFullAccess || (currentUser?.permissions?.['Stock Adjustment'] || []).includes('create');
+  const canEditAdjustments = isFullAccess || (currentUser?.permissions?.['Stock Adjustment'] || []).includes('edit');
   useEffect(() => {
     apiFetch('/api/stores')
       .then((res) => res.json())
@@ -85,13 +91,21 @@ export default function StockManager() {
   // --- Scan cart -----------------------------------------------------------
   const [scanCart, setScanCart] = useState([]);
   const [scanInput, setScanInput] = useState('');
-  const [scanError, setScanError] = useState('');
+  const scanCartRef = useRef([]);
+
+  const [rangePrefix, setRangePrefix] = useState('');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const [isAddingRange, setIsAddingRange] = useState(false);
+  
   const [page, setPage] = useState(1);
   const scanInputRef = useRef(null);
 
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [scanSuccessMessage, setScanSuccessMessage] = useState('');
   const html5QrRef = useRef(null);
   const lastScannedRef = useRef('');
+  const isScannerRunningRef = useRef(false);
 
   const [remark, setRemark] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -118,6 +132,10 @@ export default function StockManager() {
   };
 
   useEffect(() => { loadRecent(); }, []);
+
+  useEffect(() => {
+  scanCartRef.current = scanCart;
+  }, [scanCart]);
 
   const openDetail = (t) => {
   setIsDetailOpen(true);
@@ -186,36 +204,37 @@ const handleRejectDetail = async () => {
   }
 };
 
-  useEffect(() => {
-    return () => {
-      if (html5QrRef.current) html5QrRef.current.stop().catch(() => {});
-    };
-  }, []);
+  
 
   // --- Type / store selection handlers -------------------------------------
 
-  const resetCartIfDirty = () => {
+  const confirm = useConfirm();
+  // Alert-style dialog (dismiss-only) for scan-station notifications that
+  // were easy to miss when shown as inline text below sa-scan-hints.
+  const notify = (message, options = {}) => {
+    confirm(message, { confirmLabel: 'OK', hideCancel: true, ...options });
+  };
+
+  const resetCartIfDirty = async () => {
     if (scanCart.length > 0) {
-      const confirmed = window.confirm(
-        'Changing the adjustment type or store will clear your current batch. Continue?'
+      const ok = await confirm(
+        'Changing the adjustment type or store will clear your current batch. Continue?',
+        { title: 'Discard Changes', confirmLabel: 'Continue', danger: true }
       );
-      if (!confirmed) return false;
-      setScanCart([]);
-      setScanError('');
-      setSubmitMessage('');
-      setPage(1);
+      if (!ok) return false;
+      setScanCart([]); setScanError(''); setSubmitMessage(''); setPage(1);
     }
     return true;
   };
 
-  const handleSelectType = (type) => {
+  const handleSelectType = async (type) => {
     if (!canCreateAdjustments) return;
     if (!type.enabled) {
       setComingSoonMessage(`${type.label} isn't available yet — coming soon.`);
       setTimeout(() => setComingSoonMessage(''), 3000);
       return;
     }
-    if (!resetCartIfDirty()) return;
+    if (!(await resetCartIfDirty())) return;
     setSelectedTypeKey(type.key);
     setSourceStore('');
     setFromStore('');
@@ -224,64 +243,153 @@ const handleRejectDetail = async () => {
     setConfigError('');
   };
 
-  const handleSourceStoreChange = (e) => {
-    if (!resetCartIfDirty()) return;
-    setSourceStore(e.target.value);
+  const handleSourceStoreChange = async (e) => {
+    const value = e.target.value;
+    if (!(await resetCartIfDirty())) return;
+    setSourceStore(value);
     setConfigError('');
   };
-  const handleFromStoreChange = (e) => {
-    if (!resetCartIfDirty()) return;
-    setFromStore(e.target.value);
+
+  const handleFromStoreChange = async (e) => {
+    const value = e.target.value;
+    if (!(await resetCartIfDirty())) return;
+    setFromStore(value);
     setConfigError('');
   };
-  const handleToStoreChange = (e) => {
-    if (!resetCartIfDirty()) return;
-    setToStore(e.target.value);
+
+  const handleToStoreChange = async (e) => {
+    const value = e.target.value;
+    if (!(await resetCartIfDirty())) return;
+    setToStore(value);
     setConfigError('');
   };
 
   // --- Scanning --------------------------------------------------------------
 
   const addToCart = async (value) => {
-    if (!canCreateAdjustments) return;
-    if (!isConfigValid) {
-      setConfigError('Please select an adjustment type and store before scanning.');
-      return;
-    }
-    setScanError('');
+  if (!canCreateAdjustments) return;
+  if (!isConfigValid) {
+    notify('Please select an adjustment type and store before scanning.');
+    return;
+  }
+  
 
-    const alreadyScanned = scanCart.some(
-      (item) => item.serial_number === value || item.qr_value === value
-    );
-    if (alreadyScanned) {
-      setScanError('This code has already been scanned in this batch.');
-      return;
-    }
+  const existingItem = scanCartRef.current.find(
+  (item) => item.label_id === value || item.qr_id === value
+  );
+  if (existingItem) {
+    notify(`"${existingItem.label_id}" already scanned.`, { title: 'Duplicate scan', danger: true });
+    return;
+  }
 
-    try {
-      const res = await apiFetch(`/api/transactions/scan-lookup?serial_number=${encodeURIComponent(value)}`);
-      const result = await res.json();
+  // Which store this adjustment is "from", if any — matches the same
+  // logic used to build the transaction payload on submit.
+  const fromStoreForType = SOURCE_STORE_TYPES.includes(selectedTypeKey)
+    ? sourceStore
+    : (isTransfer ? fromStore : '');
 
-      if (!res.ok) {
-        setScanError(result.message || 'Could not recognize this code.');
-        return;
-      }
-
-      if (scanCart.length > 0 && scanCart[0].variant_id !== result.variant_id) {
-        setScanError('All units in one batch must be the same product variant.');
-        return;
-      }
-
-      setScanCart((prev) => {
-        const next = [...prev, result];
-        setPage(Math.ceil(next.length / PAGE_SIZE));
-        return next;
-      });
-    } catch (err) {
-      setScanError('Could not reach server. Check it is running.');
-      console.error(err);
-    }
+  const lookup = async (storeIdOverride) => {
+    const params = new URLSearchParams({
+      serial_number: value,
+      transaction_type: selectedType.txType,
+    });
+    const storeId = storeIdOverride ?? fromStoreForType;
+    if (storeId) params.set('from_store_id', storeId);
+    const res = await apiFetch(`/api/transactions/scan-lookup?${params.toString()}`);
+    const result = await res.json();
+    return { res, result };
   };
+
+  try {
+    const { res, result } = await lookup();
+
+    if (!res.ok) {
+      // Scanned an in-stock unit against the wrong source store — offer
+      // to fix the store selection instead of just rejecting the scan.
+      if (result.wrong_store) {
+        const storeName = result.current_store_name || 'the correct store';
+        const currentStoreId = SOURCE_STORE_TYPES.includes(selectedTypeKey) ? sourceStore : (isTransfer ? fromStore : '');
+        const currentStoreName = stores.find((s) => s.store_id === currentStoreId)?.location || 'the currently selected store';
+
+        // Batch already has units scanned from the currently selected store —
+        // switching stores would silently mix two stores in one batch, so make
+        // the trade-off explicit instead of auto-switching underneath the user.
+        if (scanCart.length > 0) {
+          const switchAndClear = await confirm(
+            `${result.message}\n\nYour current batch has ${scanCart.length} unit(s) from "${currentStoreName}". Switching to "${storeName}" will clear that batch and start fresh with this code.`,
+            {
+              title: 'Different store',
+              confirmLabel: `Switch & clear batch`,
+              cancelLabel: `Keep "${currentStoreName}" batch`,
+              danger: true,
+            }
+          );
+          if (!switchAndClear) return; // keep the existing batch, skip this code entirely
+
+          if (isTransfer) {
+            setFromStore(result.current_store_id);
+          } else {
+            setSourceStore(result.current_store_id);
+          }
+
+          const retry = await lookup(result.current_store_id);
+          if (!retry.res.ok) {
+            notify(`"${value}": ${retry.result.message || 'Could not recognize this code.'}`, { title: 'Scan issue', danger: true });
+            return;
+          }
+          setScanCart([retry.result]); // start fresh — old batch is discarded
+          setPage(1);
+          return;
+        }
+
+        // Batch is empty — no conflict, just confirm the store switch as before.
+        const confirmed = await confirm(
+          `${result.message}\n\nSwitch the source store to "${storeName}" and add this code?`,
+          { title: 'Wrong store', confirmLabel: 'Switch & add' }
+        );
+        if (!confirmed) return;
+
+        if (isTransfer) {
+          setFromStore(result.current_store_id);
+        } else {
+          setSourceStore(result.current_store_id);
+        }
+
+        const retry = await lookup(result.current_store_id);
+        if (!retry.res.ok) {
+          notify(`"${value}": ${retry.result.message || 'Could not recognize this code.'}`, { title: 'Scan issue', danger: true });
+          return;
+        }
+        setScanCart((prev) => {
+          const next = [...prev, retry.result];
+          scanCartRef.current = next;
+          setPage(Math.ceil(next.length / PAGE_SIZE));
+          return next;
+        });
+        return;
+      }
+
+      notify(`"${result.label_id || value}": ${result.message || 'Could not recognize this code.'}`, { title: 'Scan issue', danger: true });
+      return;
+    }
+
+    
+
+    setScanCart((prev) => {
+      const next = [...prev, result];
+      scanCartRef.current = next;
+      setPage(Math.ceil(next.length / PAGE_SIZE));
+      return next;
+    });
+
+    if (navigator.vibrate) navigator.vibrate(80);
+    setScanSuccessMessage(`✓ ${result.label_id} added.`);
+    setTimeout(() => setScanSuccessMessage(''), 2000);
+    } catch (err) {
+    notify('Could not reach server. Check it is running.', { title: 'Network error', danger: true });
+    console.error(err);
+  }
+};
 
   const handleScanSubmit = (e) => {
     e.preventDefault();
@@ -290,9 +398,140 @@ const handleRejectDetail = async () => {
     setScanInput('');
   };
 
-  const removeFromCart = (qrId) => {
+  // Batched version of addToCart used for adding MANY codes at once (serial
+  // ranges). Instead of popping one alert dialog per failed/duplicate code —
+  // which is what happened before when scanning a range that included
+  // already-used codes — every code is looked up first, failures are
+  // grouped by reason, and a single dialog lists exactly which codes
+  // (e.g. "TE-021631") hit which problem. Mirrors the addManyToCart pattern
+  // used on the Assign QR to Product page.
+  const addManyToCart = async (values) => {
+    if (!canCreateAdjustments) return;
+    if (!isConfigValid) {
+      notify('Please select an adjustment type and store before scanning.');
+      return;
+    }
+
+    const fromStoreForType = SOURCE_STORE_TYPES.includes(selectedTypeKey)
+      ? sourceStore
+      : (isTransfer ? fromStore : '');
+
+    let current = [...scanCart];
+    const failures = [];
+    let successCount = 0;
+
+    for (const raw of values) {
+      const value = raw.trim();
+      if (!value) continue;
+
+      const alreadyScanned = current.some(
+        (item) => item.label_id === value || item.qr_id === value
+      );
+      if (alreadyScanned) {
+        failures.push({ value, message: 'already scanned' });
+        continue;
+      }
+
+      try {
+        const params = new URLSearchParams({
+          serial_number: value,
+          transaction_type: selectedType.txType,
+        });
+        if (fromStoreForType) params.set('from_store_id', fromStoreForType);
+
+        const res = await apiFetch(`/api/transactions/scan-lookup?${params.toString()}`);
+        const result = await res.json();
+
+        if (!res.ok) {
+        failures.push({ value: result.label_id || value, message: result.message || 'could not be recognized' });
+        continue;
+      }
+
+        current = [...current, result];
+        successCount++;
+      } catch (err) {
+        failures.push({ value, message: 'could not reach server' });
+        console.error(err);
+      }
+    }
+
+    setScanCart(current);
+    setPage(Math.max(1, Math.ceil(current.length / PAGE_SIZE)));
+
+    if (successCount > 0) {
+      if (navigator.vibrate) navigator.vibrate(80);
+      setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
+      setTimeout(() => setScanSuccessMessage(''), 2500);
+    }
+
+    if (failures.length > 0) {
+      const grouped = {};
+      failures.forEach(({ value, message }) => {
+        (grouped[message] ||= []).push(value);
+      });
+      const text = Object.entries(grouped)
+        .map(([message, codes]) => {
+          const shown = codes.slice(0, 8).join(', ');
+          const more = codes.length > 8 ? ` +${codes.length - 8} more` : '';
+          return `${codes.length} code${codes.length === 1 ? '' : 's'} ${message}: ${shown}${more}`;
+        })
+        .join('\n');
+      notify(text, { title: 'Scan issue', danger: true });
+    }
+
+    return { successCount, failures };
+  };
+
+  const handleAddRange = async (e) => {
+  e.preventDefault();
+
+  if (!isConfigValid) {
+    notify('Please select an adjustment type and store before scanning.');
+    return;
+  }
+
+  const fromStr = rangeFrom.trim();
+  const toStr = rangeTo.trim();
+
+  if (!/^\d+$/.test(fromStr) || !/^\d+$/.test(toStr)) {
+    notify('"From" and "To" must be numbers only.', { title: 'Invalid range', danger: true });
+    return;
+  }
+
+  const width = Math.max(fromStr.length, toStr.length);
+  const fromNum = parseInt(fromStr, 10);
+  const toNum = parseInt(toStr, 10);
+
+  if (fromNum > toNum) {
+    notify('"From" must be less than or equal to "To".', { title: 'Invalid range', danger: true });
+    return;
+  }
+  if (toNum - fromNum + 1 > MAX_RANGE_SIZE) {
+    notify(`Please scan ${MAX_RANGE_SIZE} codes or fewer at a time.`, { title: 'Range too large', danger: true });
+    return;
+  }
+
+  const prefix = rangePrefix.trim();
+  const serials = [];
+  for (let n = fromNum; n <= toNum; n++) {
+    const padded = String(n).padStart(width, '0');
+    serials.push(prefix ? `${prefix}-${padded}` : padded);
+  }
+
+  setIsAddingRange(true);
+  try {
+    await addManyToCart(serials);
+    setRangeFrom('');
+    setRangeTo('');
+  } finally {
+    setIsAddingRange(false);
+  }
+};
+
+  const removeFromCart = (qrBatch) => {
     setScanCart((prev) => {
-      const next = prev.filter((item) => item.qr_id !== qrId);
+      const next = prev.filter((item) => item.qr_batch !== qrBatch);
+      scanCartRef.current = next;
       const totalPages = Math.max(1, Math.ceil(next.length / PAGE_SIZE));
       setPage((p) => Math.min(p, totalPages));
       return next;
@@ -301,27 +540,32 @@ const handleRejectDetail = async () => {
 
   const clearCart = () => {
     setScanCart([]);
-    setScanError('');
     setSubmitMessage('');
+    scanCartRef.current = next;
     setPage(1);
   };
 
   const toggleCamera = async () => {
     if (!canCreateAdjustments) return;
     if (isCameraOpen) {
-      if (html5QrRef.current) {
-        await html5QrRef.current.stop().then(() => html5QrRef.current.clear()).catch(() => {});
+      if (html5QrRef.current && isScannerRunningRef.current) {
+        try {
+          await html5QrRef.current.stop();
+          await html5QrRef.current.clear();
+        } catch (e) {
+          // ignore — scanner may already be stopped
+        }
       }
+      isScannerRunningRef.current = false;
       setIsCameraOpen(false);
       return;
     }
 
     if (!isConfigValid) {
-      setConfigError('Please select an adjustment type and store before scanning.');
+      notify('Please select an adjustment type and store before scanning.');
       return;
     }
 
-    setScanError('');
     lastScannedRef.current = '';
     setIsCameraOpen(true);
 
@@ -341,17 +585,35 @@ const handleRejectDetail = async () => {
           },
           () => {}
         );
+        isScannerRunningRef.current = true;
       } catch (err) {
-        setScanError('Could not access camera. Check permissions and try again.');
+        notify('Could not access camera. Check permissions and try again.', { title: 'Camera error', danger: true });
         setIsCameraOpen(false);
       }
     }, 0);
   };
 
+  useEffect(() => {
+    return () => {
+      if (html5QrRef.current && isScannerRunningRef.current) {
+        try {
+          html5QrRef.current.stop().catch(() => {});
+        } catch (e) {
+          // ignore synchronous throw
+        }
+      }
+      isScannerRunningRef.current = false;
+    };
+  }, []);
+
   // --- Pagination ------------------------------------------------------------
 
   const totalPages = Math.max(1, Math.ceil(scanCart.length / PAGE_SIZE));
   const pagedCart = scanCart.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const handlePageChange = (next) => {
+    if (next < 1 || next > totalPages) return;
+    setPage(next);
+  };
   const recentTotalPages = Math.max(1, Math.ceil(recentTx.length / RECENT_PAGE_SIZE));
   const pagedRecentTx = recentTx.slice((recentPage - 1) * RECENT_PAGE_SIZE, recentPage * RECENT_PAGE_SIZE);
   const handleRecentPageChange = (next) => {
@@ -406,11 +668,11 @@ const handleRejectDetail = async () => {
       if (!canCreateAdjustments) return;
       setSubmitMessage('');
       if (!isConfigValid) {
-        setConfigError('Please select an adjustment type and store before submitting.');
+        notify('Please select an adjustment type and store before submitting.');
         return;
       }
       if (scanCart.length === 0) {
-        setSubmitMessage('Scan at least one unit first.');
+        notify('Scan at least one unit first.');
         return;
       }
       setReviewRows(scanCart.map((item) => ({ ...item })));
@@ -418,8 +680,8 @@ const handleRejectDetail = async () => {
       setIsReviewOpen(true);
     };
 
-    const removeReviewRow = (qrId) => {
-      setReviewRows((prev) => prev.filter((r) => r.qr_id !== qrId));
+    const removeReviewRow = (qrBatch) => {
+      setReviewRows((prev) => prev.filter((r) => r.qr_batch !== qrBatch));
     };
 
     const rejectReview = () => {
@@ -446,31 +708,46 @@ const handleRejectDetail = async () => {
         setIsSubmitting(true);
         setSubmitMessage('');
 
+        // The backend records one transaction per variant, so a mixed-product
+        // batch is split into one scan-move call per variant here — still a
+        // single Submit action from the user's point of view.
+        const groups = {};
+        reviewRows.forEach((item) => {
+          (groups[item.variant_id] ||= []).push(item.qr_batch);
+        });
+
         try {
-          const res = await apiFetch('/api/transactions/scan-move', {
-            method: 'POST',
-            body: JSON.stringify({
-              qr_ids: reviewRows.map((item) => item.qr_id),
-              transaction_type: selectedType.txType,
-              from_store_id,
-              to_store_id,
-            }),
-          });
+          const results = await Promise.all(
+            Object.values(groups).map((qrIds) =>
+              apiFetch('/api/transactions/scan-move', {
+                method: 'POST',
+                body: JSON.stringify({
+                  qr_ids: qrIds,
+                  transaction_type: selectedType.txType,
+                  from_store_id,
+                  to_store_id,
+                  reference_doc: !isTransfer ? (referenceDoc || null) : null,
+                }),
+              }).then(async (res) => ({ res, result: await res.json() }))
+            )
+          );
 
-          const result = await res.json();
-
-          if (!res.ok) {
-            setSubmitMessage(result.message || 'Adjustment failed.');
+          const failed = results.find(({ res }) => !res.ok);
+          if (failed) {
+            notify(failed.result.message || 'Adjustment failed for one of the scanned products.', {
+              title: 'Adjustment failed',
+              danger: true,
+            });
             return;
           }
 
-          // Show different success messages depending on transaction type
+          const totalCount = results.reduce((sum, { result }) => sum + (result.count || 0), 0);
           const needsApproval = ['DAMAGE', 'CYCLE_COUNT'].includes(selectedType.txType);
 
           setSubmitMessage(
             needsApproval
-              ? `${result.count} unit(s) submitted — awaiting approval.`
-              : `${result.count} unit(s) recorded.`
+              ? `${totalCount} unit(s) submitted — awaiting approval.`
+              : `${totalCount} unit(s) recorded.`
           );
 
           setScanCart([]);
@@ -478,17 +755,23 @@ const handleRejectDetail = async () => {
           setIsReviewOpen(false);
           setReviewRows([]);
           loadRecent();
-
         } catch (err) {
-          setSubmitMessage('Could not reach server. Check it is running.');
+          notify('Could not reach server. Check it is running.', { title: 'Network error', danger: true });
           console.error(err);
         } finally {
           setIsSubmitting(false);
         }
       };
 
-  const handleDiscard = () => {
-    if (scanCart.length > 0 && !window.confirm('Discard this batch and reset the form?')) return;
+  const handleDiscard = async () => {
+    if (scanCart.length > 0) {
+      const ok = await confirm('Discard this batch and reset the form?', {
+        title: 'Discard Changes', 
+        confirmLabel: 'Discard',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     setScanCart([]);
     setSelectedTypeKey('');
     setSourceStore('');
@@ -613,39 +896,101 @@ const handleRejectDetail = async () => {
             </span>
           </div>
 
-          <form className="sa-scan-row" onSubmit={handleScanSubmit}>
-            <div className="sa-scan-input-wrap">
-              <ScanBarcode size={18} className="sa-scan-icon" />
-              <input
-                ref={scanInputRef}
-                type="text"
-                value={scanInput}
-                onChange={(e) => setScanInput(e.target.value)}
-                placeholder="Point scanner here or type a serial number"
-                disabled={!isConfigValid || !canCreateAdjustments}
-              />
-            </div>
-            <button type="submit" className="sa-btn-add" disabled={!isConfigValid || !canCreateAdjustments}>Add</button>
-            <button type="button" className="sa-btn-camera" onClick={toggleCamera} disabled={(!isConfigValid && !isCameraOpen) || !canCreateAdjustments}>
-              <Camera size={18} />
+          {!isCameraOpen ? (
+            <form className="sa-scan-row" onSubmit={handleScanSubmit}>
+              <div className="sa-scan-input-wrap">
+                <ScanBarcode size={18} className="sa-scan-icon" />
+                <input
+                  ref={scanInputRef}
+                  type="text"
+                  value={scanInput}
+                  onChange={(e) => setScanInput(e.target.value)}
+                  placeholder="Point scanner here or type a serial number"
+                  disabled={!isConfigValid || !canCreateAdjustments}
+                />
+              </div>
+              <button type="submit" className="sa-btn-add" disabled={!isConfigValid || !canCreateAdjustments}>Add</button>
+              <button type="button" className="sa-btn-camera" onClick={toggleCamera} disabled={!isConfigValid || !canCreateAdjustments}>
+                <Camera size={18} />
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="sa-btn-camera sa-btn-camera-active sa-btn-camera-full"
+              onClick={toggleCamera}
+            >
+              <Camera size={18} /> Stop scanning
             </button>
-          </form>
+          )}
+
+
 
           {isCameraOpen && (
             <div className="sa-camera-block">
               <div id="sa-qr-reader" className="sa-camera-reader-box" />
-              <button type="button" className="sa-btn-stop-camera" onClick={toggleCamera}>
+              {/*<button type="button" className="sa-btn-stop-camera" onClick={toggleCamera}>
                 Stop Camera
-              </button>
+              </button>*/}
             </div>
           )}
+
+          <div className="sa-camera-block">
+              <div id="sa-qr-reader" className="sa-camera-reader-box" />
+              {scanSuccessMessage && (
+                <div className="sa-camera-scan-flash">{scanSuccessMessage}</div>
+              )}
+            </div>
 
           <div className="sa-scan-hints">
             <span>ENTER to add · each unit is looked up automatically</span>
             <span>No duplicates</span>
           </div>
 
-          {scanError && <p className="sa-error-text sa-error-text-on-dark">{scanError}</p>}
+          <div className="sa-divider" />
+
+            <p className="sa-range-label">Or key in a serial range</p>
+
+            <form className="sa-range-row" onSubmit={handleAddRange}>
+              <input
+                type="text"
+                className="sa-range-prefix"
+                value={rangePrefix}
+                onChange={(e) => setRangePrefix(e.target.value)}
+                placeholder="eg: EW"
+                disabled={!isConfigValid || !canCreateAdjustments}
+              />
+              <div className="sa-range-field">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={rangeFrom}
+                  onChange={(e) => setRangeFrom(e.target.value)}
+                  placeholder="From"
+                  disabled={!isConfigValid || !canCreateAdjustments}
+                />
+              </div>
+              <span className="sa-range-arrow">→</span>
+              <div className="sa-range-field">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={rangeTo}
+                  onChange={(e) => setRangeTo(e.target.value)}
+                  placeholder="To"
+                  disabled={!isConfigValid || !canCreateAdjustments}
+                />
+              </div>
+              <button
+                type="submit"
+                className="sa-btn-add-range"
+                disabled={isAddingRange || !rangeFrom || !rangeTo || !isConfigValid || !canCreateAdjustments}
+              >
+                {isAddingRange ? 'Adding…' : 'Add range'}
+              </button>
+            </form>
+
+            <p className="sa-range-hint">Numbers only · prefix is optional · leading zeros kept</p>
         </section>
 
         {/* --- Batch table --- */}
@@ -684,19 +1029,14 @@ const handleRejectDetail = async () => {
                       const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
                       const sign = qtySign(selectedTypeKey);
                       return (
-                        <tr key={item.qr_id}>
+                        <tr key={item.qr_batch}>
                           <td className="sa-col-no">{String(rowNumber).padStart(2, '0')}</td>
-                          <td className="sa-serial-cell">{item.serial_number}</td>
+                          <td className="sa-serial-cell">{item.label_id}</td>
                           <td className="sa-sku-cell">{item.sku}</td>
                           <td>{item.product_name}</td>
                           <td className={`sa-col-qty ${sign.className}`}>{sign.text}</td>
                           <td className="sa-col-remove">
-                            <button
-                              type="button"
-                              className="sa-remove-btn"
-                              onClick={() => removeFromCart(item.qr_id)}
-                              aria-label="Remove"
-                            >
+                            <button type="button" className="sa-remove-btn" onClick={() => removeFromCart(item.qr_batch)} aria-label="Remove">
                               <X size={14} />
                             </button>
                           </td>
@@ -754,7 +1094,7 @@ const handleRejectDetail = async () => {
 
           <div className="sa-field">
             <label>Reason / Remark</label>
-            <input type="text" value={remark} onChange={(e) => setRemark(e.target.value)} disabled={!canCreateAdjustments} />
+            <input type="text" value={remark} onChange={(e) => setRemark(e.target.value)} disabled={!canCreateAdjustments} placeholder='Enter a reason or remark...' />
           </div>
 
           {!isConfigValid && (
@@ -779,6 +1119,13 @@ const handleRejectDetail = async () => {
         <section className="sa-card sa-recent-card">
             <div className="sa-recent-header">
               <h2 className="sa-card-title sa-recent-title">Recent adjustments</h2>
+              <button
+                type="button"
+                className="sa-ledger-link"
+                onClick={() => navigate('/ledger')}
+              >
+                Ledger →
+              </button>
             </div>
 
             {isLoadingRecent ? (
@@ -857,20 +1204,15 @@ const handleRejectDetail = async () => {
                           </thead>
                           <tbody>
                             {pagedReviewRows.map((item, i) => (
-                              <tr key={item.qr_id}>
+                              <tr key={item.qr_batch}>
                                 <td>{(reviewPage - 1) * REVIEW_PAGE_SIZE + i + 1}</td>
-                                <td className="sa-serial-cell">{item.serial_number}</td>
+                                <td className="sa-serial-cell">{item.label_id}</td>
                                 <td>{selectedType?.label}</td>
                                 <td>{reviewFromStoreName || '—'}</td>
                                 <td>{reviewToStoreName || '—'}</td>
                                 <td>1</td>
                                 <td>
-                                  <button
-                                    type="button"
-                                    className="sa-remove-btn"
-                                    onClick={() => removeReviewRow(item.qr_id)}
-                                    aria-label="Remove"
-                                  >
+                                  <button type="button" className="sa-remove-btn" onClick={() => removeReviewRow(item.qr_batch)} aria-label="Remove">
                                     <X size={14} />
                                   </button>
                                 </td>
@@ -985,22 +1327,19 @@ const handleRejectDetail = async () => {
                 <p className="sa-empty-batch-subtitle">No serial numbers recorded.</p>
               ) : (
                 <div className="sa-table-wrapper">
-                  <table className="sa-batch-table">
-                    <thead>
-                      <tr>
-                        <th className="sa-col-no">No.</th>
-                        <th>Serial Number</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedTx.serial_numbers.map((sn, i) => (
-                        <tr key={sn}>
-                          <td className="sa-col-no">{String(i + 1).padStart(2, '0')}</td>
-                          <td className="sa-serial-cell">{sn}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                    <table className="sa-batch-table">
+                      <thead>
+                        <tr><th className="sa-col-no">No.</th><th>Serial Number</th></tr>
+                      </thead>
+                      <tbody>
+                        {selectedTx.serial_numbers.map((sn, i) => (
+                          <tr key={sn}>
+                            <td className="sa-col-no">{String(i + 1).padStart(2, '0')}</td>
+                            <td className="sa-serial-cell">{sn}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                 </div>
               )}
             </div>

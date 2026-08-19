@@ -291,6 +291,12 @@
   border-color: #fff;
 }
 
+.sa-btn-camera-active:hover:not(:disabled) {
+  background: #f0f7ea;   /* light green tint instead of translucent white */
+  color: #255f10;
+  border-color: #f0f7ea;
+}
+
 .sa-btn-camera:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -301,6 +307,40 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
+  position: relative;
+}
+
+.sa-camera-scan-flash {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(46, 125, 20, 0.92);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  z-index: 5;
+  animation: saFlashIn 0.15s ease;
+}
+
+@keyframes saFlashIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sa-btn-camera-full {
+  width: 100%;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 10px;
 }
 
 .sa-camera-reader-box {
@@ -337,6 +377,96 @@
 
 .sa-error-text-on-dark {
   color: #f0a899;
+}
+
+.sa-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  margin: 2px 0;
+}
+
+.sa-range-label {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a9d094;
+}
+
+.sa-range-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sa-range-prefix {
+  width: 70px;
+  height: 44px;
+  border-radius: 9px;
+  border: none;
+  padding: 0 12px;
+  font-size: 14px;
+  color: #111827;
+  background: #fff;
+  flex: none;
+}
+
+.sa-range-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 140px;
+}
+
+.sa-range-field input {
+  height: 44px;
+  border-radius: 9px;
+  border: none;
+  padding: 0 12px;
+  font-size: 14px;
+  color: #111827;
+  background: #fff;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sa-range-arrow {
+  flex: none;
+  padding-bottom: 11px;
+  color: #a9d094;
+  font-size: 16px;
+}
+
+.sa-btn-add-range {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 9px;
+  border: none;
+  background: #2e7d14;
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  flex: none;
+  white-space: nowrap;
+}
+
+.sa-btn-add-range:hover:not(:disabled) {
+  background: #255f10;
+}
+
+.sa-btn-add-range:disabled {
+  background: #4a6a3d;
+  color: #cfe3c4;
+  cursor: not-allowed;
+}
+
+.sa-range-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #8fbe79;
 }
 
 /* --- Batch table --- */
@@ -512,14 +642,16 @@
 /* --- Qty sign colors (batch table + review + recent) --- */
 
 .sa-qty-positive,
-.sa-net-positive {
-  color: #2e7d14;
-}
+.sa-net-change-value.sa-net-positive,
+.sa-recent-row-delta.sa-net-positive {
+    color: #2e7d14;
+  }
 
 .sa-qty-negative,
-.sa-net-negative {
-  color: #b3341e;
-}
+.sa-net-change-value.sa-net-negative,
+.sa-recent-row-delta.sa-net-negative {
+    color: #b3341e;
+  }
 
 .sa-qty-neutral {
   color: #6b7280;
@@ -647,10 +779,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
 }
 
 .sa-recent-title {
   margin: 0;
+}
+
+.sa-ledger-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2e7d14;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+
+.sa-ledger-link:hover {
+  text-decoration: underline;
 }
 
 .sa-empty-recent {
@@ -669,8 +818,7 @@
 .sa-recent-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   padding: 10px 0;
   border-bottom: 1px solid #f1f5ed;
 }
@@ -681,10 +829,11 @@
 }
 
 .sa-recent-row-meta {
+  flex: 1 1 auto;   /* takes all remaining space, pushes the rest right */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 0;
 }
 
 .sa-recent-row-title {
@@ -706,6 +855,19 @@
   font-size: 13.5px;
   font-weight: 800;
   flex: none;
+  width: 40px;        /* fixed width keeps it from shifting per row */
+  text-align: right;
+}
+
+
+
+.sa-status-pill {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 /* --- Responsive --- */
@@ -725,12 +887,42 @@
     grid-template-columns: 1fr;
   }
 
-  .sa-scan-row {
-    flex-wrap: wrap;
+
+  .sa-range-row {
+    flex-direction: row;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 6px; 
+  }
+
+  .sa-range-prefix {
+    width: 56px;            /* was: width: 100%; */
+    flex: none;
+    padding: 0 4px;
+  }
+
+  .sa-range-field {
+    flex: 1 1 auto;        /* stop it from growing to fill vertical space */
+    width: 100%;
+    min-width: 0;
+  }
+
+  .sa-range-arrow {
+    align-self: center;
+    padding-bottom: 0;  /* was offsetting for the row-layout label height */
+    flex: none;
+  }
+
+  
+  .sa-btn-add-range {
+    width: auto;            /* was: width: 100%; */
+    flex: none;
+    padding: 0 12px;
   }
 
   .sa-scan-input-wrap {
-    flex: 1 1 100%;
+    flex: 1 1 auto; 
+    min-width: 0; 
   }
 
   .sa-review-actions {
@@ -739,7 +931,7 @@
   }
 
     .sa-btn-add {
-    flex: 1;             /* fills the remaining row width, like sa-btn-primary */
+    flex: none;             /* fills the remaining row width, like sa-btn-primary */
     height: 44px;
     padding: 0 16px;
     border-radius: 10px;
@@ -747,9 +939,11 @@
 
   .sa-btn-camera {
     flex: none;
-    width: 44px;
-    height: 44px;
     border-radius: 10px;
+  }
+
+  .sa-btn-camera .sa-btn-camera-active .sa-btn-camera-full {
+    width: 100%;
   }
 
   .sa-review-actions .sa-btn-secondary,
@@ -761,6 +955,8 @@
     padding: 0 8px;
     white-space: nowrap;       /* stops "Submit 0 units" wrapping mid-word */
   }
+
+
 }
 
 .sa-modal-overlay {
@@ -891,20 +1087,27 @@
   }
 }
 
-.sa-recent-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+@media (max-width: 480px) {
+  .sa-scan-input-wrap input {
+    font-size: 13px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sa-scan-input-wrap {
+    gap: 6px;
+    padding: 0 10px;
+  }
+
+  .sa-scan-hints {
+    flex-direction: column;
+    gap: 4px;
+  }
 }
 
-.sa-status-pill {
-  flex: none;
-  font-size: 10.5px;
-  font-weight: 700;
-  padding: 3px 10px;
-  border-radius: 999px;
-  white-space: nowrap;
-}
+
 
 .sa-status-pending {
   background: #fff6e8;

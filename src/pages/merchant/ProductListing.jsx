@@ -9,14 +9,11 @@ import EditVariantModal from '../../components/EditVariantModal';
 import '../../styles/ProductListing.css';
 import { guardAction } from '../../utils/permissionGuard';
 import { getAuthUser } from '../../utils/authStorage';
+import { exportRowsToExcel, exportRowsToCsv, exportRowsToPdf } from '../../utils/tableExport';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
-const currentUser = getAuthUser();
-const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
-const canCreateProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('create');
-const canEditProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('edit');
-const canDeleteProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('delete');
+
 
 function attributesObjectToArray(attributesObject) {
   if (!attributesObject) return [];
@@ -60,6 +57,14 @@ export default function ProductListing() {
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [editingRow, setEditingRow] = useState(null); // { product, variant } | null
+
+  // Recomputed on every render so a fresh login (different role/permissions)
+ // is reflected immediately, without needing a full page refresh.
+  const currentUser = getAuthUser();
+  const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+  const canCreateProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('create');
+  const canEditProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('edit');
+  const canDeleteProducts = isFullAccess || (currentUser?.permissions?.['Product InfoCenter'] || []).includes('delete');
 
   const loadProducts = () => {
     apiFetch('/api/products')
@@ -157,6 +162,15 @@ export default function ProductListing() {
     XLSX.writeFile(workbook, 'products.xlsx');
   };
 
+  const handlePdf = () => {
+  const exportRows = flattenForExport(filteredRows).map((row, index) => ({
+    'No.': index + 1,
+    ...row,
+  }));
+    if (exportRows.length === 0) return;
+    exportRowsToPdf(exportRows, 'products.pdf', 'Product Listing');
+  };
+
   const handlePrint = () => window.print();
 
   // --- Edit modal --------------------------------------------------------
@@ -214,10 +228,11 @@ export default function ProductListing() {
         <div className="pl-toolbar-spacer" />
 
         <div className="pl-export-buttons">
-          <button type="button" onClick={handleCopy}>Copy</button>
+          {/*<button type="button" onClick={handleCopy}>Copy</button>*/}
           <button type="button" onClick={handleCsv}>CSV</button>
           <button type="button" onClick={handleExcel}>Excel</button>
-          <button type="button" onClick={handlePrint}>Print</button>
+          <button type="button" onClick={handlePdf}>PDF</button>
+          {/*<button type="button" onClick={handlePrint}>Print</button>*/}
         </div>
 
         {canCreateProducts && (

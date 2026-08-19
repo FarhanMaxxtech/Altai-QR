@@ -14,6 +14,7 @@ router.get('/summary', async (req, res) => {
     const deliveriesParams = scoped ? [today, req.user.merchant_id, req.storeIds] : [today, req.user.merchant_id];
     const transfersParams = scoped ? [today, req.user.merchant_id, req.storeIds] : [today, req.user.merchant_id];
     const stockParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
+    const scansParams = scoped ? [today, req.user.merchant_id, req.storeIds] : [today, req.user.merchant_id];
     const trendParams = scoped ? [req.user.merchant_id, req.storeIds] : [req.user.merchant_id];
 
     const [deliveries, transfers, totalStock, scans, trends] = await Promise.all([
@@ -42,10 +43,12 @@ router.get('/summary', async (req, res) => {
         stockParams
       ),
       pool.query(
-        `SELECT COUNT(*) FROM qr_codes qc
-         JOIN users u ON u.user_id = qc.assigned_user_id
-         WHERE u.merchant_id = $1 AND qc.created_at >= $2`,
-        [req.user.merchant_id, today]
+        `SELECT COUNT(*) FROM transactions t
+         JOIN variants v ON v.variant_id = t.variant_id
+         JOIN products p ON p.product_id = v.product_id
+         WHERE p.merchant_id = $2 AND t.created_at >= $1
+         ${scoped ? 'AND (t.to_store_id = ANY($3::uuid[]) OR t.from_store_id = ANY($3::uuid[]))' : ''}`,
+        scansParams
       ),
       // --- 7-day daily series for each sparkline -----------------------
       pool.query(
@@ -73,12 +76,14 @@ router.get('/summary', async (req, res) => {
            GROUP BY t.created_at::date
          ),
          daily_scans AS (
-           SELECT qc.created_at::date AS day, COUNT(*) AS cnt
-           FROM qr_codes qc
-           JOIN users u ON u.user_id = qc.assigned_user_id
-           WHERE u.merchant_id = $1
-             AND qc.created_at >= CURRENT_DATE - INTERVAL '6 days'
-           GROUP BY qc.created_at::date
+           SELECT t.created_at::date AS day, COUNT(*) AS cnt
+           FROM transactions t
+           JOIN variants v ON v.variant_id = t.variant_id
+           JOIN products p ON p.product_id = v.product_id
+           WHERE p.merchant_id = $1
+             AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
+             ${scoped ? 'AND (t.to_store_id = ANY($2::uuid[]) OR t.from_store_id = ANY($2::uuid[]))' : ''}
+           GROUP BY t.created_at::date
          ),
          -- Net stock movement per day, reconstructed from transactions
          -- since inventory_balance only stores the current snapshot, not
@@ -287,6 +292,7 @@ router.get('/low-stock', async (req, res) => {
        JOIN stores s ON s.store_id = ib.store_id
        WHERE ib.quantity < $1
          AND p.merchant_id = $2
+         AND s.status = 'Active'
          ${storeClause}
        ORDER BY ib.quantity ASC
        LIMIT 20`,
@@ -360,7 +366,7 @@ router.get('/stock-movement', async (req, res) => {
            ON (t.to_store_id = s.store_id OR t.from_store_id = s.store_id)
           AND t.created_at >= CURRENT_DATE - INTERVAL '6 days'
           AND t.transaction_type IN ('RECEIVE', 'CHECKOUT')
-         WHERE s.merchant_id = $1
+         WHERE s.merchant_id = $1 AND s.status = 'Active'
          ${scoped ? 'AND s.store_id = ANY($2::uuid[])' : ''}
          GROUP BY s.store_id, s.location
          ORDER BY s.location`,

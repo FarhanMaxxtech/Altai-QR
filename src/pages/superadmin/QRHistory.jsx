@@ -91,8 +91,8 @@ export default function QRHistory() {
       const codes = await res.json();
 
       const rows = codes.map((qr) => ({
-        'Serial Number': qr.serial_number,
-        'QR Code': qr.qr_value,
+        'Serial Number': qr.label_id,
+        'QR Code': qr.qr_id,
       }));
 
       const worksheet = XLSX.utils.json_to_sheet(rows);

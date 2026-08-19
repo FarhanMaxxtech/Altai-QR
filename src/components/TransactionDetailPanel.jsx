@@ -78,6 +78,130 @@ function balanceUpdatedStoreName(t) {
   return t.from_store_name || '—';
 }
 
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+function buildReceiptHtml(transaction) {
+  const isNegative = NEGATIVE_TYPES.includes(transaction.transaction_type);
+  const attributesArray = attributesObjectToArray(transaction.attributes);
+  const attributesText = attributesArray.map((a) => `${a.key}: ${a.value}`).join(', ');
+  const serialNumbers = transaction.serial_numbers || [];
+  const reference = referenceOf(transaction.transaction_id);
+  const eventLabel = TYPE_LABELS[transaction.transaction_type] || transaction.transaction_type;
+
+  const codesHtml = serialNumbers.length
+    ? serialNumbers.map((sn) => `<div class="code-row">${esc(sn)}</div>`).join('')
+    : '<div class="muted">No serial numbers recorded.</div>';
+
+  const trailSteps = [
+    { title: `Scanned by ${transaction.created_by_name || 'Unknown'}`, time: formatTimeOnly(transaction.created_at) },
+    { title: 'Posted to ledger', time: formatTimeOnly(transaction.created_at) },
+    { title: `Balance updated · ${balanceUpdatedStoreName(transaction)}`, time: formatTimeOnly(transaction.created_at) },
+  ];
+  const trailHtml = trailSteps
+    .map((s) => `
+      <div class="trail-row">
+        <span class="trail-dot"></span>
+        <div class="trail-text">
+          <div class="trail-title">${esc(s.title)}</div>
+          <div class="trail-time">${esc(s.time)}</div>
+        </div>
+      </div>`)
+    .join('');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Receipt · ${esc(reference)}</title>
+<style>
+  @page { size: auto; margin: 14mm 12mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Courier New', ui-monospace, Consolas, monospace;
+    color: #16250f;
+    margin: 0 auto;
+    padding: 24px;
+    max-width: 420px;
+  }
+  .brand { text-align: center; font-weight: 700; font-size: 15px; letter-spacing: 1px; margin-bottom: 2px; }
+  .brand-sub { text-align: center; font-size: 10.5px; color: #6b7280; letter-spacing: 1.5px; margin-bottom: 16px; }
+  .divider { border: none; border-top: 1px dashed #9ca3af; margin: 14px 0; }
+  .header-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .reference { font-size: 16px; font-weight: 700; }
+  .qty { font-size: 16px; font-weight: 700; }
+  .qty-positive { color: #2e7d14; }
+  .qty-negative { color: #b3341e; }
+  .datetime { font-size: 11.5px; color: #6b7280; margin-bottom: 10px; }
+  .event-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 4px; background: #f0f4ec; border: 1px solid #d1d5db; }
+  .event-line { font-size: 12px; color: #374151; margin-top: 6px; }
+  .section-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9ca3af; margin-bottom: 6px; }
+  .kv-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; padding: 3px 0; }
+  .kv-label { color: #6b7280; }
+  .kv-value { font-weight: 700; text-align: right; }
+  .product-name { font-size: 13.5px; font-weight: 700; }
+  .product-sub { font-size: 11.5px; color: #6b7280; margin-top: 2px; }
+  .code-row { font-size: 12.5px; padding: 3px 0; border-bottom: 1px dotted #e5e7eb; }
+  .muted { font-size: 12px; color: #9ca3af; font-style: italic; }
+  .trail-row { display: flex; gap: 8px; padding: 4px 0; align-items: flex-start; }
+  .trail-dot { width: 6px; height: 6px; border-radius: 50%; background: #2e7d14; margin-top: 5px; flex: none; }
+  .trail-title { font-size: 12px; font-weight: 600; }
+  .trail-time { font-size: 10.5px; color: #9ca3af; }
+  .footer { text-align: center; font-size: 10.5px; color: #9ca3af; margin-top: 18px; }
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+  <div class="brand">ALTAI QR INVENTORY</div>
+  <div class="brand-sub">STOCK TRANSACTION RECEIPT</div>
+
+  <div class="header-row">
+    <span class="reference">${esc(reference)}</span>
+    <span class="qty ${isNegative ? 'qty-negative' : 'qty-positive'}">${isNegative ? '-' : '+'}${esc(transaction.qty)} units</span>
+  </div>
+  <div class="datetime">${esc(formatDateAt(transaction.created_at))}</div>
+
+  <span class="event-badge">${esc(eventLabel)}</span>
+  <div class="event-line">${esc(eventStoreLine(transaction))}</div>
+
+  <hr class="divider" />
+
+  <div class="section-label">Product</div>
+  <div class="product-name">${esc(transaction.product_name)}</div>
+  <div class="product-sub">${esc(transaction.sku)}${attributesText ? ` · ${esc(attributesText)}` : ''}</div>
+
+  <hr class="divider" />
+
+  <div class="section-label">Done By</div>
+  <div class="kv-row"><span class="kv-label">Name</span><span class="kv-value">${esc(transaction.created_by_name || 'Unknown')}</span></div>
+  <div class="kv-row"><span class="kv-label">Email</span><span class="kv-value">${esc(transaction.created_by_email || '—')}</span></div>
+  <div class="kv-row"><span class="kv-label">Role</span><span class="kv-value">${esc(transaction.created_by_role || '—')}</span></div>
+
+  <hr class="divider" />
+
+  <div class="kv-row"><span class="kv-label">Store</span><span class="kv-value">${esc(primaryStoreName(transaction))}</span></div>
+  <div class="kv-row"><span class="kv-label">Units Affected</span><span class="kv-value ${isNegative ? 'qty-negative' : 'qty-positive'}">${isNegative ? '-' : '+'}${esc(transaction.qty)}</span></div>
+
+  <hr class="divider" />
+
+  <div class="section-label">Scanned Codes (${serialNumbers.length})</div>
+  ${codesHtml}
+
+  <hr class="divider" />
+
+  <div class="section-label">Audit Trail</div>
+  ${trailHtml}
+
+  <hr class="divider" />
+
+  <div class="footer">Printed ${esc(new Date().toLocaleString())}</div>
+</body>
+</html>`;
+}
+
 export default function TransactionDetailPanel({ transaction, isLoading, errorMessage, onClose }) {
   const [isLookupOpen, setIsLookupOpen] = useState(false);
   if (!transaction && !isLoading && !errorMessage) return null;
@@ -90,7 +214,27 @@ export default function TransactionDetailPanel({ transaction, isLoading, errorMe
   const serialNumbers = transaction?.serial_numbers || [];
 
   const handlePrint = () => {
-    window.print();
+  if (!transaction) return;
+
+    const receiptWindow = window.open('', '_blank', 'width=auto,height=auto');
+    if (!receiptWindow) {
+      alert('Please allow pop-ups to print the receipt.');
+      return;
+    }
+
+    receiptWindow.document.open();
+    receiptWindow.document.write(buildReceiptHtml(transaction));
+    receiptWindow.document.close();
+
+    receiptWindow.focus();
+
+    // Close the receipt window once the print dialog is dismissed,
+    // whether the user printed or canceled.
+    receiptWindow.onafterprint = () => receiptWindow.close();
+
+    setTimeout(() => {
+      receiptWindow.print();
+    }, 300);
   };
 
   const handleLookup = () => {

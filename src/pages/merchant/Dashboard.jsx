@@ -85,7 +85,15 @@ export default function Dashboard() {
   const [tagsPerStore, setTagsPerStore] = useState([]);
   const [lowStock, setLowStock] = useState([]);
 
+  const LOW_STOCK_PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+  const [lowStockPageSize, setLowStockPageSize] = useState(10);
+  const [lowStockPage, setLowStockPage] = useState(1);
+
   const [scopedStores, setScopedStores] = useState([]);
+
+  const STORE_ITEMS_PAGE_SIZE = 5;
+  const [storeItemsPage, setStoreItemsPage] = useState(1);
 // src/pages/merchant/Dashboard.jsx
 useEffect(() => {
   apiFetch('/api/dashboard/summary')
@@ -95,12 +103,18 @@ useEffect(() => {
 
   apiFetch('/api/dashboard/tags-per-store')
     .then((res) => res.json())
-    .then((data) => setTagsPerStore(data))
+    .then((data) => {
+      setTagsPerStore(data);
+      setStoreItemsPage(1);
+    })
     .catch((err) => console.error('Failed to load tags per store:', err));
 
   apiFetch('/api/dashboard/low-stock')
     .then((res) => res.json())
-    .then((data) => setLowStock(data))
+    .then((data) => {
+      setLowStock(data);
+      setLowStockPage(1);
+    })
     .catch((err) => console.error('Failed to load low stock:', err));
 
   apiFetch('/api/stores')
@@ -119,6 +133,31 @@ const scopeLabel = scopedStores.length === 1 ? scopedStores[0].location
     totalStock: { value: summary.totalStockAvailable, delta: summary.totalStockDelta, trend: summary.totalStockTrend },
     scans: { value: summary.scansToday, delta: summary.scansDelta, trend: summary.scansTrend },
   };
+
+    const storeItemsTotalPages = Math.max(1, Math.ceil(tagsPerStore.length / STORE_ITEMS_PAGE_SIZE));
+    const pagedTagsPerStore = tagsPerStore.slice(
+      (storeItemsPage - 1) * STORE_ITEMS_PAGE_SIZE,
+      storeItemsPage * STORE_ITEMS_PAGE_SIZE
+    );
+    const handleStoreItemsPageChange = (next) => {
+      if (next < 1 || next > storeItemsTotalPages) return;
+      setStoreItemsPage(next);
+    };
+
+    const lowStockTotalPages = Math.max(1, Math.ceil(lowStock.length / lowStockPageSize));
+    
+    const pagedLowStock = lowStock.slice(
+      (lowStockPage - 1) * lowStockPageSize,
+      lowStockPage * lowStockPageSize
+    );
+    const handleLowStockPageChange = (next) => {
+      if (next < 1 || next > lowStockTotalPages) return;
+      setLowStockPage(next);
+    };
+    const handleLowStockPageSizeChange = (n) => {
+      setLowStockPageSize(n);
+      setLowStockPage(1);
+    };
 
   return (
     <div className="dashboard">
@@ -160,7 +199,7 @@ const scopeLabel = scopedStores.length === 1 ? scopedStores[0].location
           ) : (
             (() => {
               const maxTags = Math.max(1, ...tagsPerStore.map((s) => s.tags || 0));
-              return tagsPerStore.map((s) => {
+              return pagedTagsPerStore.map((s) => {
                 const delta = s.delta ?? 0; // TODO: backend to supply today's net change
                 const deltaClass = delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'neutral';
                 const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
@@ -183,6 +222,29 @@ const scopeLabel = scopedStores.length === 1 ? scopedStores[0].location
               });
             })()
           )}
+
+          {storeItemsTotalPages > 1 && (
+            <div className="store-items-pagination">
+              <button
+                type="button"
+                disabled={storeItemsPage <= 1}
+                onClick={() => handleStoreItemsPageChange(storeItemsPage - 1)}
+              >
+                ‹
+              </button>
+              <span className="store-items-pagination-status">
+                Page {storeItemsPage} of {storeItemsTotalPages}
+              </span>
+              <button
+                type="button"
+                disabled={storeItemsPage >= storeItemsTotalPages}
+                onClick={() => handleStoreItemsPageChange(storeItemsPage + 1)}
+              >
+                ›
+              </button>
+            </div>
+          )}
+        
         </div>
 
         <section className="low-stock-card">
@@ -205,45 +267,78 @@ const scopeLabel = scopedStores.length === 1 ? scopedStores[0].location
         </div>
 
         {lowStock.length === 0 ? (
-          <p className="empty-state">No low stock items.</p>
-        ) : (
-          <div className="low-stock-table-wrapper">
-            <table className="low-stock-table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th>SKU</th>
-                  <th>Store</th>
-                  <th className="low-stock-col-onhand">On hand</th>
-                  <th className="low-stock-col-action">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lowStock.map((entry, i) => (
-                  <tr key={i}>
-                    <td className="low-stock-product-cell">{entry.product_name}</td>
-                    <td className="low-stock-sku-cell">{entry.sku}</td>
-                    <td>{entry.store}</td>
-                    <td className="low-stock-col-onhand">
-                      <span className={`low-stock-qty ${entry.qty <= CRITICAL_THRESHOLD ? 'low-stock-qty-critical' : 'low-stock-qty-warning'}`}>
-                        {entry.qty} left
-                      </span>
-                    </td>
-                    <td className="low-stock-col-action">
-                      <button
-                        type="button"
-                        className="low-stock-restock-btn"
-                        onClick={() => navigate('/stock')}
-                      >
-                        Restock
-                      </button>
-                    </td>
+            <p className="empty-state">No low stock items.</p>
+          ) : (
+            <div className="low-stock-table-wrapper">
+              <table className="low-stock-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th>Store</th>
+                    <th className="low-stock-col-onhand">On hand</th>
+                    <th className="low-stock-col-action">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {pagedLowStock.map((entry, i) => (
+                    <tr key={i}>
+                      <td className="low-stock-product-cell">{entry.product_name}</td>
+                      <td className="low-stock-sku-cell">{entry.sku}</td>
+                      <td>{entry.store}</td>
+                      <td className="low-stock-col-onhand">
+                        <span className={`low-stock-qty ${entry.qty <= CRITICAL_THRESHOLD ? 'low-stock-qty-critical' : 'low-stock-qty-warning'}`}>
+                          {entry.qty} left
+                        </span>
+                      </td>
+                      <td className="low-stock-col-action">
+                        <button
+                          type="button"
+                          className="low-stock-restock-btn"
+                          onClick={() => navigate('/stock')}
+                        >
+                          Restock
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="low-stock-footer">
+                <div className="low-stock-footer-left">
+                  <span>Show</span>
+                  <select
+                    value={lowStockPageSize}
+                    onChange={(e) => handleLowStockPageSizeChange(Number(e.target.value))}
+                  >
+                    {LOW_STOCK_PAGE_SIZE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <span>entries · Showing {pagedLowStock.length} of {lowStock.length}</span>
+                </div>
+
+                {lowStockTotalPages > 1 && (
+                  <div className="low-stock-pagination">
+                    <button disabled={lowStockPage <= 1} onClick={() => handleLowStockPageChange(lowStockPage - 1)}>‹</button>
+                    {Array.from({ length: lowStockTotalPages }, (_, i) => i + 1)
+                      .slice(Math.max(0, lowStockPage - 3), Math.max(0, lowStockPage - 3) + 5)
+                      .map((n) => (
+                        <button
+                          key={n}
+                          className={n === lowStockPage ? 'low-stock-page-active' : ''}
+                          onClick={() => handleLowStockPageChange(n)}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    <button disabled={lowStockPage >= lowStockTotalPages} onClick={() => handleLowStockPageChange(lowStockPage + 1)}>›</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
       </section>
       </div>
     </div>

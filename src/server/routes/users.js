@@ -160,13 +160,28 @@ router.put('/:id/stores', async (req, res) => {
 
     const ownership = await client.query(
       isSuperAdmin
-        ? 'SELECT user_id FROM users WHERE user_id = $1'
-        : 'SELECT user_id FROM users WHERE user_id = $1 AND merchant_id = $2',
+        ? 'SELECT user_id, merchant_id FROM users WHERE user_id = $1'
+        : 'SELECT user_id, merchant_id FROM users WHERE user_id = $1 AND merchant_id = $2',
       isSuperAdmin ? [req.params.id] : [req.params.id, req.user.merchant_id]
     );
     if (ownership.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: 'User not found.' });
+    }
+    const targetMerchantId = ownership.rows[0].merchant_id;
+
+    // Only stores that are currently Active (and belong to this user's
+    // merchant) may be assigned — mirrors the frontend restriction, but
+    // enforced here so it can't be bypassed by calling the API directly.
+    if (store_ids.length > 0) {
+      const validStores = await client.query(
+        `SELECT store_id FROM stores WHERE store_id = ANY($1::uuid[]) AND merchant_id = $2 AND status = 'Active'`,
+        [store_ids, targetMerchantId]
+      );
+      if (validStores.rows.length !== store_ids.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: 'One or more selected stores are inactive and cannot be assigned.' });
+      }
     }
 
     await client.query('DELETE FROM user_store_access WHERE user_id = $1', [req.params.id]);

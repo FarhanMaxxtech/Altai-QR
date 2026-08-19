@@ -1,0 +1,112 @@
+.cfd-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 16, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 24px;
+}
+
+.cfd-panel {
+  width: 100%;
+  max-width: 460px;
+  background: #fff;
+  border-radius: 18px;
+  padding: 26px 26px 20px;
+  box-shadow: 0 24px 60px rgba(16, 24, 16, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: cfdPop 0.15s ease;
+}
+
+@keyframes cfdPop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.cfd-icon {
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  background: #eef8e8; color: #2e7d14;
+  display: flex; align-items: center; justify-content: center;
+}
+.cfd-icon-danger { background: #fbe8e4; color: #b3341e; }
+
+.cfd-header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cfd-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #16250f;
+  margin-bottom: 0; /* was margin-bottom: 4px when stacked under the icon */
+}
+
+.cfd-message {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #3f5236;
+  white-space: pre-line;
+}
+
+.cfd-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.cfd-btn-cancel,
+.cfd-btn-confirm {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.cfd-btn-cancel {
+  border: 1px solid #d8d5c8;
+  background: #fff;
+  color: #1f2937;
+}
+.cfd-btn-cancel:hover { background: #faf9f5; }
+
+.cfd-btn-confirm {
+  border: none;
+  background: #2e7d14;
+  color: #fff;
+  font-weight: 700;
+}
+.cfd-btn-confirm:hover { background: #255f10; }
+.cfd-btn-confirm-danger { background: #b3341e; }
+.cfd-btn-confirm-danger:hover { background: #942a19; }
+
+/* If a label is still too long to fit on one line even at the wider
+   panel width, let both buttons drop to full width stacked instead of
+   wrapping mid-label like "Keep "Putrajaya" / batch". */
+@media (min-width: 481px) {
+  .cfd-actions-wrap .cfd-btn-cancel,
+  .cfd-actions-wrap .cfd-btn-confirm {
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .cfd-actions { flex-direction: column-reverse; }
+  .cfd-btn-cancel, .cfd-btn-confirm { width: 100%; }
+}

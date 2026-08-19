@@ -194,8 +194,8 @@ export default function Navigation() {
                     })}
                 </nav>
 
-                <div className="sidebar-footer">
-                    {/*<div className="scanner-card">
+                {/*<div className="sidebar-footer">
+                    <div className="scanner-card">
 
                             <div className="scanner-title">
 
@@ -220,9 +220,9 @@ export default function Navigation() {
                         </div>
                     <button className="footer-button" onClick={() => alert('Settings — coming soon')}>
                         Settings
-                    </button> */}
+                    </button> 
                     
-                </div>
+                </div>*/}
             </aside>
         </>
     );

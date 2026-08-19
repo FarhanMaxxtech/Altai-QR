@@ -709,7 +709,7 @@
 
 .next-steps-card {
   position: sticky;
-  top: 16px;
+  top: 90px;
 }
 
 .next-steps-card h2 {
@@ -992,16 +992,16 @@
   background: #faf9f5;
 }
 
-.product-form-actions .btn-primary {
-  background: #1e4010;
+.register-product-layout .product-form-actions .btn-primary {
+  background: #2f8f1e;
   border-radius: 9px;
   padding: 10px 24px;
   font-size: 14px;
   font-weight: 700;
 }
 
-.product-form-actions .btn-primary:hover {
-  background: #163009;
+.register-product-layout .product-form-actions .btn-primary:hover:not(:disabled) {
+  background: #267417;
 }
 
 /* --- Next Steps panel ------------------------------------------------------- */

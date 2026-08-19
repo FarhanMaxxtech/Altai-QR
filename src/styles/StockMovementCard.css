@@ -8,6 +8,14 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  height: 100%;
+}
+
+.movement-trend-body,
+.movement-split-body,
+.movement-store-body {
+  flex: 1;
+  min-height: 0;
 }
 
 .movement-card-header {
@@ -67,6 +75,7 @@
 .movement-trend-chart {
   flex: 1;
   min-width: 0;
+  min-height: 180px;
 }
 
 .movement-trend-summary {

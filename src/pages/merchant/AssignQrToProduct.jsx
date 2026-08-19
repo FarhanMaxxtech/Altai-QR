@@ -6,9 +6,11 @@ import { apiFetch } from '../../utils/api';
 import { useEffect } from 'react';
 import '../../styles/AssignQrToProduct.css';
 import { useLocation } from 'react-router-dom';
+import { useConfirm } from '../../context/ConfirmContext';
 
 const MAX_RANGE_SIZE = 500;
 const SUMMARY_PAGE_SIZE = 50;
+const SCAN_CART_PAGE_SIZE = 10;
 
 function displayName(sku, productName) {
   if (!sku && !productName) return '—';
@@ -24,6 +26,14 @@ function badgeInfo(item) {
 }
 
 export default function AssignQrToProduct() {
+
+  const confirm = useConfirm();
+
+  // Alert-style dialog (dismiss-only) for scan-station notifications that
+  // were easy to miss when shown as inline text below aq-range-hint.
+  const notify = (message, options = {}) => {
+    confirm(message, { confirmLabel: 'OK', hideCancel: true, ...options });
+  };
   const location = useLocation();
   const [products, setProducts] = useState([]);
   const [productId, setProductId] = useState('');
@@ -32,13 +42,16 @@ export default function AssignQrToProduct() {
   // --- Scan station ---------------------------------------------------------
   const [scanCart, setScanCart] = useState([]);
   const [scanInput, setScanInput] = useState('');
-  const [scanError, setScanError] = useState('');
+  const [scanCartPage, setScanCartPage] = useState(1);
+
   const [scanSuccessMessage, setScanSuccessMessage] = useState('');
   const scanInputRef = useRef(null);
 
+  const scanCartRef = useRef([]);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const html5QrRef = useRef(null);
   const lastScannedRef = useRef('');
+  const isScannerRunningRef = useRef(false);
 
   const [rangePrefix, setRangePrefix] = useState('');
   const [rangeFrom, setRangeFrom] = useState('');
@@ -78,6 +91,10 @@ export default function AssignQrToProduct() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [products]);
 
+useEffect(() => {
+  scanCartRef.current = scanCart;
+}, [scanCart]);
+
   const selectedProduct = products.find((p) => p.product_id === productId);
   const variantOptions = selectedProduct ? selectedProduct.variants : [];
   const selectedVariant = variantOptions.find((v) => v.variant_id === variantId);
@@ -92,9 +109,8 @@ export default function AssignQrToProduct() {
   // Looks up one or more serials/QR values, skipping ones already in the
   // cart, and reports any that couldn't be recognized.
     const addManyToCart = async (values) => {
-    setScanError('');
     setScanSuccessMessage('');
-    let current = [...scanCart];
+    let current = [...scanCartRef.current];
     const failures = [];
     let successCount = 0;
 
@@ -103,38 +119,61 @@ export default function AssignQrToProduct() {
       if (!value) continue;
 
       const alreadyScanned = current.some(
-        (item) => item.serial_number === value || item.qr_value === value
+        (item) => item.label_id === value || item.qr_id === value
       );
-      if (alreadyScanned) continue;
+      if (alreadyScanned) {
+        const existing = current.find(
+          (item) => item.label_id === value || item.qr_id === value
+        );
+        failures.push({ value: existing.label_id, message: 'Already scanned in this batch.' });
+        continue;
+      }
 
       try {
         const res = await apiFetch(`/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`);
         const result = await res.json();
 
         if (!res.ok) {
-          failures.push(value);
+          failures.push({ value: result.label_id || value, message: result.message || 'Could not recognize this code.' });
           continue;
         }
         current = [...current, result];
         successCount++;
       } catch (err) {
-        failures.push(value);
+        failures.push({ value, message: 'Could not reach server. Check it is running.' });
         console.error(err);
       }
     }
 
     setScanCart(current);
+    scanCartRef.current = current;
+    setScanCartPage(Math.max(1, Math.ceil(current.length / SCAN_CART_PAGE_SIZE)));
 
     if (failures.length > 0) {
-      const shown = failures.slice(0, 5).join(', ');
-      const more = failures.length > 5 ? `, +${failures.length - 5} more` : '';
-      setScanError(`${failures.length} code(s) could not be recognized: ${shown}${more}`);
+      const grouped = {};
+      failures.forEach(({ value, message }) => {
+        (grouped[message] ||= []).push(value);
+      });
+      const text = Object.entries(grouped)
+        .map(([message, values]) => {
+          const shown = values.slice(0, 6).join(', ');
+          const more = values.length > 6 ? ` +${values.length - 6} more` : '';
+          return `${values.length} code${values.length === 1 ? '' : 's'} — ${message} (${shown}${more})`;
+        })
+        .join('\n');
+      notify(text, { title: 'Scan issue', danger: true });
     }
 
     if (successCount > 0) {
-      setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
-      setTimeout(() => setScanSuccessMessage(''), 2500);
-    }
+    if (navigator.vibrate) navigator.vibrate(80);
+    const lastAdded = current[current.length - 1]; // the most recently added item
+    setScanSuccessMessage(
+      successCount === 1
+        ? `✓ ${lastAdded.label_id} added.`
+        : `✓ ${successCount} codes added.`
+    );
+    setTimeout(() => setScanSuccessMessage(''), 2500);
+  }
   };
 
   const handleScanSubmit = (e) => {
@@ -144,26 +183,37 @@ export default function AssignQrToProduct() {
     setScanInput('');
   };
 
-  const removeFromCart = (qrId) => {
-    setScanCart((prev) => prev.filter((item) => item.qr_id !== qrId));
+  // removeFromCart
+  const removeFromCart = (qrBatch) => {
+  setScanCart((prev) => {
+    const next = prev.filter((item) => item.qr_batch !== qrBatch);
+    const totalPages = Math.max(1, Math.ceil(next.length / SCAN_CART_PAGE_SIZE));
+    setScanCartPage((p) => Math.min(p, totalPages));
+    return next;
+  });
   };
 
   const clearCart = () => {
-    setScanCart([]);
-    setScanError('');
-    setSubmitMessage('');
+   setScanCart([]);
+   setSubmitMessage('');
+   setScanCartPage(1);
   };
 
   const toggleCamera = async () => {
     if (isCameraOpen) {
-      if (html5QrRef.current) {
-        await html5QrRef.current.stop().then(() => html5QrRef.current.clear()).catch(() => {});
+      if (html5QrRef.current && isScannerRunningRef.current) {
+        try {
+          await html5QrRef.current.stop();
+          await html5QrRef.current.clear();
+        } catch (e) {
+          // ignore — scanner may already be stopped
+        }
       }
+      isScannerRunningRef.current = false;
       setIsCameraOpen(false);
       return;
     }
 
-    setScanError('');
     lastScannedRef.current = '';
     setIsCameraOpen(true);
 
@@ -183,8 +233,9 @@ export default function AssignQrToProduct() {
           },
           () => {}
         );
+        isScannerRunningRef.current = true;
       } catch (err) {
-        setScanError('Could not access camera. Check permissions and try again.');
+        notify('Could not access camera. Check permissions and try again.', { title: 'Camera error', danger: true });
         setIsCameraOpen(false);
       }
     }, 0);
@@ -192,7 +243,14 @@ export default function AssignQrToProduct() {
 
   useEffect(() => {
     return () => {
-      if (html5QrRef.current) html5QrRef.current.stop().catch(() => {});
+      if (html5QrRef.current && isScannerRunningRef.current) {
+        try {
+          html5QrRef.current.stop().catch(() => {});
+        } catch (e) {
+          // ignore synchronous throw
+        }
+      }
+      isScannerRunningRef.current = false;
     };
   }, []);
 
@@ -206,7 +264,7 @@ export default function AssignQrToProduct() {
     const toStr = rangeTo.trim();
 
     if (!/^\d+$/.test(fromStr) || !/^\d+$/.test(toStr)) {
-      setRangeError('"From" and "To" must be numbers only.');
+      notify('"From" and "To" must be numbers only.', { title: 'Invalid range', danger: true });
       return;
     }
 
@@ -215,11 +273,11 @@ export default function AssignQrToProduct() {
     const toNum = parseInt(toStr, 10);
 
     if (fromNum > toNum) {
-      setRangeError('"From" must be less than or equal to "To".');
+      notify('"From" must be less than or equal to "To".', { title: 'Invalid range', danger: true });
       return;
     }
     if (toNum - fromNum + 1 > MAX_RANGE_SIZE) {
-      setRangeError(`Please scan ${MAX_RANGE_SIZE} codes or fewer at a time.`);
+      notify(`Please scan ${MAX_RANGE_SIZE} codes or fewer at a time.`, { title: 'Range too large', danger: true });
       return;
     }
 
@@ -252,7 +310,7 @@ export default function AssignQrToProduct() {
     setVariantId('');
     setBatchNumber('');
     setExpiryDate('');
-    setScanError('');
+    setScanErrorGroups({});
     setSubmitMessage('');
   };
 
@@ -298,7 +356,7 @@ export default function AssignQrToProduct() {
       const res = await apiFetch('/api/qrcode/assign-scan', {
         method: 'POST',
         body: JSON.stringify({
-          qr_ids: scanCart.map((item) => item.qr_id),
+          qr_ids: scanCart.map((item) => item.qr_batch),
           variant_id: variantId,
           remarks: batchNumber.trim() || null,
           expiry_date: expiryDate || null,
@@ -333,8 +391,40 @@ export default function AssignQrToProduct() {
 
   // --- Summary modal actions ----------------------------------------------
 
-  const removeSummaryRow = (qrId) => {
-    setSummaryRows((prev) => prev.filter((r) => r.qr_id !== qrId));
+  const removeSummaryRow = async (qrBatch) => {
+    const confirmed = await confirm(
+      'Remove this code from the assignment? It will keep its previous product assignment.',
+      {
+        title: 'Remove Assignment',
+        confirmLabel: 'Remove',
+        cancelLabel: 'Cancel',
+        danger: true,
+      }
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await apiFetch(`/api/qrcode/pending-approvals/${summaryVariantId}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ qr_ids: [qrBatch] }),
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        setSummaryStatusMessage(result.message || 'Could not remove this code.');
+        return;
+      }
+
+      setSummaryRows((prev) => {
+        const next = prev.filter((r) => r.qr_batch !== qrBatch);
+        const nextTotalPages = Math.max(1, Math.ceil(next.length / SUMMARY_PAGE_SIZE));
+        setSummaryPage((p) => Math.min(p, nextTotalPages));
+        return next;
+      });
+    } catch (err) {
+      setSummaryStatusMessage('Could not reach server. Check it is running.');
+      console.error(err);
+    }
   };
 
   const closeSummary = () => {
@@ -343,33 +433,35 @@ export default function AssignQrToProduct() {
     setSummaryVariantId(null);
   };
 
-  const runSummaryAction = async (action) => {
-    const qrIds = summaryRows.map((r) => r.qr_id);
+  const confirmSummaryAssign = async () => {
+    const qrIds = summaryRows.map((r) => r.qr_batch);
     if (qrIds.length === 0) return;
 
-    const confirmed = window.confirm(
-      action === 'approve'
-        ? `Confirm and submit ${qrIds.length} unit(s) for ${summaryLabel}?`
-        : `Reject ${qrIds.length} unit(s)? They will keep their previous product assignment.`
+    const confirmed = await confirm(
+      `Confirm and submit ${qrIds.length} unit(s) for ${summaryLabel}?`,
+      {
+        title: 'Confirm Assignment',
+        confirmLabel: 'Confirm & Submit',
+        cancelLabel: 'Cancel',
+      }
     );
     if (!confirmed) return;
 
     setIsProcessingSummary(true);
     setSummaryStatusMessage('');
     try {
-      const res = await apiFetch(`/api/qrcode/pending-approvals/${summaryVariantId}/${action}`, {
+      const res = await apiFetch(`/api/qrcode/pending-approvals/${summaryVariantId}/approve`, {
         method: 'POST',
         body: JSON.stringify({ qr_ids: qrIds }),
       });
       const result = await res.json();
 
       if (!res.ok) {
-        setSummaryStatusMessage(result.message || `Could not ${action} the selected units.`);
+        setSummaryStatusMessage(result.message || 'Could not confirm the selected units.');
         return;
       }
 
-      const count = action === 'approve' ? result.approved_count : result.rejected_count;
-      setSummaryStatusMessage(`${count} unit(s) ${action === 'approve' ? 'confirmed' : 'rejected'}.`);
+      setSummaryStatusMessage(`${result.approved_count} unit(s) confirmed.`);
       setSummaryRows([]);
       setTimeout(() => closeSummary(), 900);
     } catch (err) {
@@ -380,11 +472,15 @@ export default function AssignQrToProduct() {
     }
   };
 
+  const scanCartTotalPages = Math.max(1, Math.ceil(scanCart.length / SCAN_CART_PAGE_SIZE));
+  const pagedScanCart = scanCart.slice((scanCartPage - 1) * SCAN_CART_PAGE_SIZE, scanCartPage * SCAN_CART_PAGE_SIZE);
+
   const summaryTotalPages = Math.max(1, Math.ceil(summaryRows.length / SUMMARY_PAGE_SIZE));
   const pagedSummaryRows = summaryRows.slice(
     (summaryPage - 1) * SUMMARY_PAGE_SIZE,
     summaryPage * SUMMARY_PAGE_SIZE
   );
+  
 
   return (
     <div className="aq-page">
@@ -399,47 +495,70 @@ export default function AssignQrToProduct() {
                 <span className="aq-scanner-dot" />
                 Scanner ready
               </span>
+              {isCameraOpen && <span className="aq-scan-live-count">{scanCart.length} scanned</span>}
             </div>
 
-            <form className="aq-scan-row" onSubmit={handleScanSubmit}>
-              <div className="aq-scan-input-wrap">
-                <ScanBarcode size={18} className="aq-scan-icon" />
-                <input
-                  ref={scanInputRef}
-                  type="text"
-                  value={scanInput}
-                  onChange={(e) => setScanInput(e.target.value)}
-                  placeholder="Point scanner here, or type a serial / QR value"
-                  autoFocus
-                  disabled={isCameraOpen}
-                />
-              </div>
-              <button type="submit" className="aq-btn-add" disabled={isCameraOpen}>
-                Add
-              </button>
+            {!isCameraOpen ? (
+              <form className="aq-scan-row" onSubmit={handleScanSubmit}>
+                <div className="aq-scan-input-wrap">
+                  <ScanBarcode size={18} className="aq-scan-icon" />
+                  <input
+                    ref={scanInputRef}
+                    type="text"
+                    value={scanInput}
+                    onChange={(e) => setScanInput(e.target.value)}
+                    placeholder="Point scanner here, or type a serial / QR value"
+                    autoFocus
+                  />
+                </div>
+                <button type="submit" className="aq-btn-add">
+                  Add
+                </button>
+                <button
+                  type="button"
+                  className="aq-btn-camera"
+                  onClick={toggleCamera}
+                  aria-label="Use camera"
+                >
+                  <Camera size={18} />
+                </button>
+              </form>
+            ) : (
               <button
                 type="button"
-                className={`aq-btn-camera ${isCameraOpen ? 'aq-btn-camera-active' : ''}`}
+                className="aq-btn-camera aq-btn-camera-active aq-btn-camera-full"
                 onClick={toggleCamera}
-                aria-label={isCameraOpen ? 'Stop camera' : 'Use camera'}
+                aria-label="Stop camera"
               >
-                <Camera size={18} />
+                <Camera size={18} /> Stop scanning
               </button>
-            </form>
+            )}
 
-            {isCameraOpen && (
+            {/*{isCameraOpen && (
               <div className="aq-camera-block">
                 <div id="assign-qr-camera-reader" className="aq-camera-reader-box" />
+                {scanSuccessMessage && (
+                  <div className="aq-camera-scan-flash">{scanSuccessMessage}</div>
+                )}
                 <button type="button" className="aq-btn-stop-camera" onClick={toggleCamera}>
                   Stop Camera
                 </button>
               </div>
-            )}
+            )}*/}
+
+            <div className="aq-camera-block">
+                <div id="assign-qr-camera-reader" className="aq-camera-reader-box" />
+                {scanSuccessMessage && (
+                  <div className="aq-camera-scan-flash">{scanSuccessMessage}</div>
+                )}
+              </div>
 
             <div className="aq-scan-hints">
               <span>ENTER to add · scans append automatically</span>
               <span>No duplicates</span>
             </div>
+
+            
 
             <div className="aq-divider" />
 
@@ -451,7 +570,7 @@ export default function AssignQrToProduct() {
                 className="aq-range-prefix"
                 value={rangePrefix}
                 onChange={(e) => setRangePrefix(e.target.value)}
-                placeholder="eg: EW"
+                placeholder="eg: SS"
               />
               <div className="aq-range-field">
                 <span className="aq-range-field-label"></span>
@@ -479,15 +598,17 @@ export default function AssignQrToProduct() {
                 className="aq-btn-add-range"
                 disabled={isAddingRange || !rangeFrom || !rangeTo}
               >
-                {isAddingRange ? 'Adding…' : 'Add range'}
+                {isAddingRange ? 'Adding…' : 'Add'}
               </button>
             </form>
 
             <p className="aq-range-hint">Numbers only · prefix is optional · leading zeros kept</p>
 
-            {rangeError && <p className="aq-error-text aq-error-text-on-dark">{rangeError}</p>}
-            {scanError && <p className="aq-error-text aq-error-text-on-dark">{scanError}</p>}
-            {scanSuccessMessage && <p className="aq-success-text-on-dark">{scanSuccessMessage}</p>}
+              {scanSuccessMessage && (
+                <p className="aq-success-text-on-dark">
+                  {scanSuccessMessage}
+                </p>
+              )}
           </section>
 
           <section className="aq-scanned-card">
@@ -504,17 +625,18 @@ export default function AssignQrToProduct() {
               <p className="aq-empty-state">No codes scanned yet. Scan a label or key in a range above.</p>
             ) : (
               <ul className="aq-scanned-list">
-                {scanCart.map((item, index) => {
+                {pagedScanCart.map((item, index) => {
                   const badge = badgeInfo(item);
+                  const rowNumber = (scanCartPage - 1) * SCAN_CART_PAGE_SIZE + index + 1;
                   return (
-                    <li key={item.qr_id} className="aq-scanned-row">
-                      <span className="aq-scanned-index">{String(index + 1).padStart(2, '0')}</span>
-                      <span className="aq-scanned-serial">{item.serial_number}</span>
+                    <li key={item.qr_batch} className="aq-scanned-row">
+                      <span className="aq-scanned-index">{String(rowNumber).padStart(2, '0')}</span>
+                      <span className="aq-scanned-serial">{item.label_id}</span>
                       <span className={badge.className}>{badge.label}</span>
                       <button
                         type="button"
                         className="aq-scanned-remove"
-                        onClick={() => removeFromCart(item.qr_id)}
+                        onClick={() => removeFromCart(item.qr_batch)}
                         aria-label="Remove"
                       >
                         <X size={14} />
@@ -522,6 +644,17 @@ export default function AssignQrToProduct() {
                     </li>
                   );
                 })}
+                {scanCartTotalPages > 1 && (
+                    <div className="aq-summary-pagination">
+                      <button type="button" className="aq-btn-secondary" onClick={() => setScanCartPage((p) => Math.max(1, p - 1))} disabled={scanCartPage <= 1}>
+                        Previous
+                      </button>
+                      <span className="aq-summary-pagination-status">Page {scanCartPage} of {scanCartTotalPages}</span>
+                      <button type="button" className="aq-btn-secondary" onClick={() => setScanCartPage((p) => Math.min(scanCartTotalPages, p + 1))} disabled={scanCartPage >= scanCartTotalPages}>
+                        Next
+                      </button>
+                    </div>
+                  )}
               </ul>
             )}
           </section>
@@ -615,9 +748,9 @@ export default function AssignQrToProduct() {
                 <h3>Summary Assign: {summaryLabel}</h3>
                 <span className="aq-pending-badge">{summaryRows.length} pending</span>
               </div>
-              <button type="button" className="aq-modal-close" onClick={closeSummary} aria-label="Close">
+              {/*<button type="button" className="aq-modal-close" onClick={closeSummary} aria-label="Close">
                 <X size={16} />
-              </button>
+              </button>*/}
             </div>
 
             <div className="aq-modal-body">
@@ -643,26 +776,22 @@ export default function AssignQrToProduct() {
                       </thead>
                       <tbody>
                         {pagedSummaryRows.map((r, i) => (
-                          <tr key={r.qr_id}>
-                            <td>{(summaryPage - 1) * SUMMARY_PAGE_SIZE + i + 1}</td>
-                            <td className="aq-summary-serial-cell">{r.serial_number}</td>
-                            <td>{displayName(r.target_sku, r.target_product_name)}</td>
-                            <td>
-                              {r.previous_sku
-                                ? displayName(r.previous_sku, r.previous_product_name)
-                                : <span className="aq-muted-dash">— (first assignment)</span>}
-                            </td>
-                            <td>
-                              <button
-                                type="button"
-                                className="aq-btn-remove-row"
-                                onClick={() => removeSummaryRow(r.qr_id)}
-                              >
-                                Remove
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                            <tr key={r.qr_batch}>
+                              <td>{(summaryPage - 1) * SUMMARY_PAGE_SIZE + i + 1}</td>
+                              <td className="aq-summary-serial-cell">{r.label_id}</td>
+                              <td>{displayName(r.target_sku, r.target_product_name)}</td>
+                              <td>
+                                {r.previous_sku
+                                  ? displayName(r.previous_sku, r.previous_product_name)
+                                  : <span className="aq-muted-dash">— (first assignment)</span>}
+                              </td>
+                              <td>
+                                <button type="button" className="aq-btn-remove-row" onClick={() => removeSummaryRow(r.qr_batch)}>
+                                  Remove
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
                       </tbody>
                     </table>
                   </div>
@@ -694,19 +823,11 @@ export default function AssignQrToProduct() {
               )}
             </div>
 
-            <div className="aq-modal-footer">
+            <div className="aq-modal-footer aq-modal-footer-end">
               <button
                 type="button"
-                className="aq-btn-reject"
-                onClick={() => runSummaryAction('reject')}
-                disabled={isProcessingSummary || summaryRows.length === 0}
-              >
-                Reject Selected ({summaryRows.length})
-              </button>
-              <button
-                type="button"
-                className="aq-btn-primary"
-                onClick={() => runSummaryAction('approve')}
+                className="aq-btn-primary aq-btn-primary-auto"
+                onClick={confirmSummaryAssign}
                 disabled={isProcessingSummary || summaryRows.length === 0}
               >
                 {isProcessingSummary ? 'Processing…' : `Confirm & Submit (${summaryRows.length})`}

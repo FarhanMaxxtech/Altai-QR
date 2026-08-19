@@ -10,8 +10,8 @@ const PAGE_SIZE = 10;
 const TYPE_FILTERS = [
   { key: 'ALL', label: 'All' },
   { key: 'RECEIVE', label: 'Stock In' },
-  { key: 'CHECKOUT', label: 'Stock Out' },
   { key: 'TRANSFER', label: 'Transfer' },
+  { key: 'CHECKOUT', label: 'Stock Out' }, 
   { key: 'DAMAGE', label: 'Damage' },
   { key: 'CYCLE_COUNT', label: 'Cycle Count' },
 ];
@@ -43,6 +43,14 @@ function referenceOf(id) {
 function storeDisplay(t) {
   if (t.transaction_type === 'TRANSFER') {
     return `${t.from_store_name || '—'} → ${t.to_store_name || '—'}`;
+  }
+  if (t.transaction_type === 'RECEIVE') return t.to_store_name || '—';
+  return t.from_store_name || '—';
+}
+
+function storeDisplayForExport(t) {
+  if (t.transaction_type === 'TRANSFER') {
+    return `${t.from_store_name || '—'} to ${t.to_store_name || '—'}`;
   }
   if (t.transaction_type === 'RECEIVE') return t.to_store_name || '—';
   return t.from_store_name || '—';
@@ -141,14 +149,21 @@ export default function LedgerHistory() {
   const stats = useMemo(() => {
     let unitsIn = 0;
     let unitsOut = 0;
+    let transferred = 0;
     const contributors = new Set();
 
     filteredTransactions.forEach((t) => {
       const qty = Number(t.qty) || 0;
-      if (NEGATIVE_TYPES.includes(t.transaction_type)) {
-        unitsOut += qty;
-      } else {
+      // TRANSFER moves stock between the merchant's own stores — it doesn't
+      // change total system-wide stock, so (matching the dashboard's
+      // stock-movement convention) it's excluded from the in/out totals
+      // below and tracked separately instead.
+      if (t.transaction_type === 'RECEIVE') {
         unitsIn += qty;
+      } else if (t.transaction_type === 'TRANSFER') {
+        transferred += qty;
+      } else if (NEGATIVE_TYPES.includes(t.transaction_type)) {
+        unitsOut += qty;
       }
       if (t.created_by) contributors.add(t.created_by);
     });
@@ -157,6 +172,7 @@ export default function LedgerHistory() {
       count: filteredTransactions.length,
       unitsIn,
       unitsOut,
+      transferred,
       contributors: contributors.size,
     };
   }, [filteredTransactions]);
@@ -187,17 +203,18 @@ const handlePageChange = (next) => {
   };
 
   const handleExportPdf = () => {
-    const rows = filteredTransactions.map((t) => ({
-      Reference: referenceOf(t.transaction_id),
-      When: formatWhen(t.created_at),
-      Event: typeLabel(t.transaction_type),
-      Product: `${t.product_name} (${t.sku})`,
-      Store: storeDisplay(t),
-      'Done By': t.created_by_name || '—',
-      Qty: `${NEGATIVE_TYPES.includes(t.transaction_type) ? '-' : '+'}${t.qty}`,
-    }));
-    exportRowsToPdf(rows, 'transaction-ledger.pdf', 'Transaction Ledger');
-  };
+  const rows = filteredTransactions.map((t, index) => ({
+    'No.': index + 1,
+    Reference: referenceOf(t.transaction_id),
+    When: formatWhen(t.created_at),
+    Event: typeLabel(t.transaction_type),
+    Product: `${t.product_name} (${t.sku})`,
+    Store: storeDisplayForExport(t),
+    'Done By': t.created_by_name || '—',
+    Qty: `${NEGATIVE_TYPES.includes(t.transaction_type) ? '-' : '+'}${t.qty}`,
+  }));
+  exportRowsToPdf(rows, 'transaction-ledger.pdf', 'Transaction Ledger');
+};
 
   return (
     <div className="lh-page">
@@ -252,12 +269,19 @@ const handlePageChange = (next) => {
           </div>
         </div>
         <div className="lh-stat-card">
+          <span className="lh-stat-label">Transferred</span>
+          <div className="lh-stat-row">
+            <span className="lh-stat-value">{stats.transferred}</span>
+            <span className="lh-stat-unit">units</span>
+          </div>
+        </div>
+        <div className="lh-stat-card">
           <span className="lh-stat-label">Units Out</span>
           <div className="lh-stat-row">
             <span className="lh-stat-value lh-stat-value-negative">−{stats.unitsOut}</span>
             <span className="lh-stat-unit">units</span>
           </div>
-        </div>
+        </div>       
         <div className="lh-stat-card">
           <span className="lh-stat-label">Contributors</span>
           <div className="lh-stat-row">

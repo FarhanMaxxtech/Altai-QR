@@ -32,11 +32,19 @@
   white-space: nowrap;
 }
 
-
+.lh-filter-pill:hover {
+  background: #f4f7f1;
+}
 
 .lh-filter-pill-active {
   background: #1e4010;
   border-color: #1e4010;
+  color: #fff;
+}
+
+.lh-filter-pill-active:hover {
+  background: #163009; /* darker than the active bg, wins the specificity tie with .lh-filter-pill:hover */
+  border-color: #163009;
   color: #fff;
 }
 

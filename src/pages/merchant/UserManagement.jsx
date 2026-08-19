@@ -7,6 +7,7 @@ import {
 import { apiFetch } from '../../utils/api';
 import { MODULE_DEFS, ACTIONS, PRESETS, buildPresetPermissions } from '../../utils/permissionPresets';
 import '../../styles/UserManagement.css';
+import { useConfirm } from '../../context/ConfirmContext';
 
 const PAGE_SIZE = 10;
 const ROLE_OPTIONS = ['Admin', 'Staff']; // account-level role for invites; super_admin is platform-level only
@@ -77,6 +78,7 @@ function makeEmptyInviteForm() {
 }
 
 export default function UserManagement() {
+  const confirm = useConfirm();
   const [users, setUsers] = useState([]);
   const [stores, setStores] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
@@ -85,6 +87,7 @@ export default function UserManagement() {
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteForm, setInviteForm] = useState(makeEmptyInviteForm());
   const [inviteError, setInviteError] = useState('');
+  const [merchantExpiryDate, setMerchantExpiryDate] = useState(null);
 
   // --- UI-only additions (search) ------------------------------------------
   const [userSearch, setUserSearch] = useState('');
@@ -112,9 +115,25 @@ export default function UserManagement() {
     loadUsers();
     apiFetch('/api/stores')
       .then((res) => res.json())
-      .then((data) => setStores(data))
+      // Only Active stores are assignable (the backend's PUT /:id/stores
+      // route rejects inactive ones), so filter them out of the picker
+      // entirely instead of showing a toggle that would just fail to save.
+      .then((data) => setStores(data.filter((s) => s.status === 'Active')))
       .catch((err) => console.error('Failed to load stores:', err));
   }, []);
+
+  useEffect(() => {
+  apiFetch('/api/merchant/me')
+    .then((res) => (res && res.ok ? res.json() : null))
+    .then((data) => {
+      if (data?.expiry_date) {
+        // Postgres DATE comes back as an ISO string like "2026-08-13T00:00:00.000Z" —
+        // slice to just the date part for use as an <input type="date"> max.
+        setMerchantExpiryDate(String(data.expiry_date).slice(0, 10));
+      }
+    })
+    .catch((err) => console.error('Failed to load merchant expiry:', err));
+}, []);
 
   // --- Sidebar filtering + pagination --------------------------------------
   const filteredUsers = useMemo(() => {
@@ -151,6 +170,18 @@ export default function UserManagement() {
     return;
   }
 
+  if (
+    merchantExpiryDate &&
+    inviteForm.expiry_date &&
+    inviteForm.expiry_date > merchantExpiryDate
+  ) {
+    setInviteError(
+      `Account expiry can't be later than your merchant licence expiry (${merchantExpiryDate}).`
+    );
+    return;
+  }
+
+
   try {
     const res = await apiFetch('/api/auth/register', {
       method: 'POST',
@@ -182,20 +213,26 @@ export default function UserManagement() {
   };
 
   const removeUser = async (userId) => {
-    if (!window.confirm('Remove this account?')) return;
-    try {
-      const res = await apiFetch(`/api/users/${userId}`, { method: 'DELETE' });
-      if (!res.ok) {
-        alert('Could not remove account.');
-        return;
-      }
-      setUsers((prev) => prev.filter((u) => u.user_id !== userId));
-      if (selectedUserId === userId) setSelectedUserId(null);
-    } catch (err) {
-      alert('Could not reach server. Check it is running.');
-      console.error(err);
+  const ok = await confirm('Are you sure you want to remove this account?', {
+    title: 'Remove account',
+    confirmLabel: 'Remove',
+    danger: true,
+  });
+  if (!ok) return;
+
+  try {
+    const res = await apiFetch(`/api/users/${userId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      alert('Could not remove account.');
+      return;
     }
-  };
+    setUsers((prev) => prev.filter((u) => u.user_id !== userId));
+    if (selectedUserId === userId) setSelectedUserId(null);
+  } catch (err) {
+    alert('Could not reach server. Check it is running.');
+    console.error(err);
+  }
+};
 
   // --- Preset / permission editing --------------------------------------------
   const [draft, setDraft] = useState(null); // { userId, permissions, store_ids, preset } | null
@@ -304,7 +341,13 @@ const toggleColumnAll = (action) => {
 
   const toggleStore = (storeId) => { 
     if (!draft || adminAccount || !canEditUsers) return;
+    const store = stores.find((s) => s.store_id === storeId);
     const has = draft.store_ids.includes(storeId);
+
+    // Inactive (closed) stores can only be removed from a user's access,
+    // never newly assigned.
+    if (!has && store?.status !== 'Active') return;
+
     setDraft((d) => ({
       ...d,
       store_ids: has ? d.store_ids.filter((id) => id !== storeId) : [...d.store_ids, storeId],
@@ -319,11 +362,20 @@ const toggleColumnAll = (action) => {
     );
   }, [stores, storeSearch]);
 
-  const allStoresSelected = stores.length > 0 && (draft?.store_ids || []).length === stores.length;
+ const activeStores = useMemo(() => stores.filter((s) => s.status === 'Active'), [stores]);
+
+  const allStoresSelected =
+    activeStores.length > 0 &&
+    activeStores.every((s) => (draft?.store_ids || []).includes(s.store_id));
 
   const toggleAllStores = () => { 
     if (!draft || adminAccount || !canEditUsers) return;
-    setDraft((d) => ({ ...d, store_ids: allStoresSelected ? [] : stores.map((s) => s.store_id) }));
+    // "Select all" only grants active stores. "Clear all" removes everything,
+    // including any stale grants to stores that have since gone Inactive.
+    setDraft((d) => ({
+      ...d,
+      store_ids: allStoresSelected ? [] : activeStores.map((s) => s.store_id),
+    }));
   };
 
   const grantTotal = useMemo(() => {
@@ -565,7 +617,7 @@ const toggleColumnAll = (action) => {
               <div className="um2-card-header">
                 <StoreIcon size={16} className="um2-card-header-icon" />
                 <h3>Warehouse &amp; store access</h3>
-                <span className="um2-count-badge">{(draft?.store_ids || []).length} OF {stores.length}</span>
+                <span className="um2-count-badge">{(draft?.store_ids || []).length} OF {activeStores.length}</span>
                 <div className="um2-spacer" />
                 <div className="um2-mini-search">
                   <Search size={13} />
@@ -583,21 +635,29 @@ const toggleColumnAll = (action) => {
 
               <div className="um2-store-grid">
                 {filteredStores.length === 0 ? (
-                  <p className="um2-empty-inline">No stores match “{storeSearch}”.</p>
+                  <p className="um2-empty-inline">No stores match "{storeSearch}".</p>
                 ) : (
                   filteredStores.map((store) => {
                     const isChecked = adminAccount || (draft?.store_ids || []).includes(store.store_id);
+                    const isInactiveStore = store.status !== 'Active';
+                    // Inactive stores can't be newly granted — only left alone or
+                    // removed if they were already assigned before closing.
+                    const isDisabled = adminAccount || (isInactiveStore && !isChecked);
                     return (
                       <button
                         key={store.store_id}
                         type="button"
-                        className={`um2-store-toggle ${isChecked ? 'um2-store-toggle-active' : ''}`}
+                        className={`um2-store-toggle ${isChecked ? 'um2-store-toggle-active' : ''} ${isInactiveStore ? 'um2-store-toggle-inactive' : ''}`}
                         onClick={() => toggleStore(store.store_id)}
-                        disabled={adminAccount}
+                        disabled={isDisabled}
+                        title={isInactiveStore ? 'This store is closed (Inactive) and cannot be assigned.' : undefined}
                       >
                         <span className="um2-store-check">{isChecked ? <Check size={12} /> : ''}</span>
                         <span className="um2-store-meta">
-                          <span className="um2-store-name">{store.location}</span>
+                          <span className="um2-store-name">
+                            {store.location}
+                            {isInactiveStore && <span className="um2-store-inactive-badge">Inactive</span>}
+                          </span>
                           <span className="um2-store-code">{store.store_code}</span>
                         </span>
                       </button>
@@ -761,7 +821,20 @@ const toggleColumnAll = (action) => {
                   value={inviteForm.expiry_date}
                   onChange={handleInviteFieldChange}
                   min={new Date().toISOString().split('T')[0]}
+                  max={merchantExpiryDate || undefined}
                 />
+                {merchantExpiryDate && (
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      color: '#9ca3af',
+                      marginTop: '2px',
+                      display: 'block',
+                    }}
+                  >
+                    Must be on or before your licence expiry ({merchantExpiryDate}).
+                  </span>
+                )}
               </div>
 
               {inviteError && <p className="um2-error-text">{inviteError}</p>}

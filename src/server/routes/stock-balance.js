@@ -12,7 +12,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   const { store_id } = req.query;
 
-  const conditions = ['p.merchant_id = $1'];
+  const conditions = ['p.merchant_id = $1', "s.status = 'Active'"];
   const params = [req.user.merchant_id];
   let idx = 2;
 
@@ -50,7 +50,7 @@ router.get('/', async (req, res) => {
        LEFT JOIN transactions t
          ON t.variant_id = b.variant_id
         AND (t.to_store_id = b.store_id OR t.from_store_id = b.store_id)
-       WHERE ${conditions.join(' AND ')}
+       WHERE ${conditions.join(' AND ')} AND s.status = 'Active'
        GROUP BY s.store_id, s.location, v.variant_id, v.sku, p.product_name, v.attributes, v.price, b.qty
        ORDER BY last_movement DESC NULLS LAST, p.product_name, v.sku, s.location`,
       params

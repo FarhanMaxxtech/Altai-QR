@@ -40,8 +40,8 @@ export default function QRGenerator() {
 
   const exportToExcel = (codes, fileName) => {
     const rows = codes.map((qr) => ({
-      'Serial Number': qr.serial_number,
-      'QR Code': qr.qr_value,
+      'Serial Number': qr.label_id,
+      'QR Code': qr.qr_id,
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(rows);

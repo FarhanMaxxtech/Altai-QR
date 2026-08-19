@@ -231,10 +231,15 @@
 
 @media (max-width: 768px) {
   .page-header {
-    padding: 10px 12px 10px 50px; /* clears the fixed hamburger toggle */
+    position: static;
+    padding: 10px 12px 10px 50px;
     flex-wrap: wrap;
     gap: 0;
+    gap: 4px;
     row-gap: 10px;
+    width: 100%;
+    max-width: 100vw;   /* NEW — hard cap so the header itself can't be the overflow source */
+    box-sizing: border-box;
   }
 
   /* Row 1: title */
@@ -303,9 +308,14 @@
   .page-header-expiry {
     order: 3;
     flex: 1 1 100%;
-    height: 34px;
+    min-width: 0;         /* NEW — lets it actually shrink instead of forcing min-content width */
+    height: auto;
+    min-height: 34px;
     justify-content: center;
     font-size: 11.5px;
+    white-space: normal;  /* NEW — was implicitly nowrap via ui-monospace text; let it wrap */
+    flex-wrap: wrap;
+    row-gap: 2px;
   }
 
   /* Notification panel: full-width sheet instead of a fixed 340px dropdown */
@@ -579,4 +589,92 @@
 
 .notif-panel-manage-link:hover {
   text-decoration: underline;
+}
+
+/* --- Renew-licence contact card (replaces the button on click) --- */
+
+.expiry-contact-card {
+  flex: 0 0 auto;
+  text-align: right;
+  background: #fff;
+  border: 1px solid #f0e2c6;
+  border-radius: 10px;
+  padding: 9px 13px;
+}
+
+.expiry-contact-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #7a6a4f;
+}
+
+.expiry-contact-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #16250f;
+  margin-top: 1px;
+}
+
+.expiry-contact-phone {
+  font-size: 12.5px;
+  font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  color: #7a6a4f;
+  margin-top: 1px;
+}
+
+/* --- Full-app lockout once the licence has actually expired --- */
+
+.license-lockout-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: rgba(22, 37, 15, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.license-lockout-card {
+  background: #fff;
+  border-radius: 18px;
+  padding: 36px 32px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 24px 60px rgba(16, 24, 16, 0.3);
+}
+
+.license-lockout-icon {
+  color: #b3341e;
+}
+
+.license-lockout-card h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #16250f;
+}
+
+.license-lockout-card p {
+  margin: 0;
+  font-size: 13px;
+  color: #5a6b50;
+  line-height: 1.5;
+}
+
+.license-lockout-contact {
+  margin-top: 8px;
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  .license-lockout-card {
+    padding: 28px 20px;
+  }
 }

@@ -1,17 +1,12 @@
 // src/pages/StoreManagement.jsx
 import React, { useState, useMemo, useEffect } from 'react';
-import { Store, Pencil, Trash2 } from 'lucide-react';
+import { Store, Pencil, Trash2, Search } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import '../../styles/StoreManagement.css';
+import { useConfirm } from '../../context/ConfirmContext';
 
 const TYPE_OPTIONS = ['Flagship', 'Retail', 'Warehouse', 'Pop-up'];
 
-const storedUser = localStorage.getItem('authUser');
-const currentUser = storedUser ? JSON.parse(storedUser) : null;
-const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
-const canEditStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('edit');
-const canCreateStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('create');
-const canDeleteStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('delete');
 
 function emptyForm() {
   return {
@@ -32,7 +27,17 @@ function statusBadgeClass(status) {
 }
 
 export default function StoreManagement() {
+  const confirm = useConfirm();
   const [stores, setStores] = useState([]);
+  const [storeSearchTerm, setStoreSearchTerm] = useState('');
+
+  const storedUser = localStorage.getItem('authUser');
+  const currentUser = storedUser ? JSON.parse(storedUser) : null;
+  const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+  const canEditStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('edit');
+  const canCreateStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('create');
+  const canDeleteStores = isFullAccess || (currentUser?.permissions?.['Store Management'] || []).includes('delete');
+
   const [balanceRows, setBalanceRows] = useState([]);
   const [totalVariants, setTotalVariants] = useState(0);
 
@@ -82,6 +87,16 @@ export default function StoreManagement() {
     return map;
   }, [balanceRows]);
 
+  const filteredStores = useMemo(() => {
+    const term = storeSearchTerm.trim().toLowerCase();
+    if (!term) return stores;
+    return stores.filter(
+      (s) =>
+        s.location?.toLowerCase().includes(term) ||
+        s.store_code?.toLowerCase().includes(term)
+    );
+  }, [stores, storeSearchTerm]);
+
   const selectedStats = selectedStoreId
     ? {
         units: unitsByStore[selectedStoreId]?.units || 0,
@@ -122,16 +137,29 @@ export default function StoreManagement() {
   };
 
   const handleDeleteStore = async () => {
-    if (!selectedStore || !canDeleteStores) return;
-    const confirmed = window.confirm(
-      `Close "${selectedStore.location}"? It will be marked Inactive but its data is kept, and it can be reopened later.`
+    if (!selectedStore || !canDeleteStores || isDeleting) return;
+
+    const confirmed = await confirm(
+      `Close "${selectedStore.location}"? It will be marked Inactive but its data is kept, and it can be reopened later.`,
+      {
+        title: 'Close store?',
+        confirmLabel: 'Close store',
+        cancelLabel: 'Cancel',
+        danger: true,
+      }
     );
+
     if (!confirmed) return;
 
     setIsDeleting(true);
     setStatusMessage('');
+
     try {
-      const res = await apiFetch(`/api/stores/${selectedStore.store_id}`, { method: 'DELETE' });
+      const res = await apiFetch(
+        `/api/stores/${selectedStore.store_id}`,
+        { method: 'DELETE' }
+      );
+
       const result = await res.json();
 
       if (!res.ok) {
@@ -139,7 +167,12 @@ export default function StoreManagement() {
         return;
       }
 
-      setStores((prev) => prev.map((s) => (s.store_id === result.store_id ? result : s)));
+      setStores((prev) =>
+        prev.map((s) =>
+          s.store_id === result.store_id ? result : s
+        )
+      );
+
       setStatusMessage('Store marked Inactive.');
     } catch (err) {
       setStatusMessage('Could not reach server. Check it is running.');
@@ -149,37 +182,6 @@ export default function StoreManagement() {
     }
   };
 
-    const [isReactivating, setIsReactivating] = useState(false);
-
-  // Reopens a closed (Inactive) store — the only way status ever moves
-  // back to Active after being closed via handleDeleteStore.
-  const handleStatusFieldChange = async (e) => {
-    const nextStatus = e.target.value;
-    if (!nextStatus || !selectedStore || nextStatus === selectedStore.status) return;
-
-    setIsReactivating(true);
-    setStatusMessage('');
-    try {
-      const res = await apiFetch(`/api/stores/${selectedStore.store_id}/status`, {
-        method: 'PUT',
-        body: JSON.stringify({ status: nextStatus }),
-      });
-      const result = await res.json();
-
-      if (!res.ok) {
-        setStatusMessage(result.message || 'Could not update status.');
-        return;
-      }
-
-      setStores((prev) => prev.map((s) => (s.store_id === result.store_id ? result : s)));
-      setStatusMessage(nextStatus === 'Active' ? 'Store reactivated.' : 'Store marked Inactive.');
-    } catch (err) {
-      setStatusMessage('Could not reach server. Check it is running.');
-      console.error(err);
-    } finally {
-      setIsReactivating(false);
-    }
-  };
 
     const handleCancel = () => {
     setStatusMessage('');
@@ -257,11 +259,33 @@ export default function StoreManagement() {
           <span className="sm2-count-badge">{stores.length}</span>
         </div>
 
+        <div className="sm2-search">
+          <Search size={15} />
+          <input
+            type="text"
+            value={storeSearchTerm}
+            onChange={(e) => setStoreSearchTerm(e.target.value)}
+            placeholder="Search store or code…"
+          />
+          {storeSearchTerm && (
+            <button
+              type="button"
+              className="sm2-search-clear"
+              onClick={() => setStoreSearchTerm('')}
+              aria-label="Clear search"
+            >
+              ×
+            </button>
+          )}
+        </div>
+
         <div className="sm2-list">
           {stores.length === 0 ? (
             <p className="sm2-empty-list">No stores yet.</p>
+          ) : filteredStores.length === 0 ? (
+            <p className="sm2-empty-list">No stores match "{storeSearchTerm}".</p>
           ) : (
-            stores.map((store) => {
+            filteredStores.map((store) => {
               const stats = unitsByStore[store.store_id];
               const isActive = store.store_id === selectedStoreId && mode !== 'create';
               return (
@@ -409,23 +433,15 @@ export default function StoreManagement() {
 
               <div className="sm2-field">
                 <label>Status</label>
-                {selectedStore?.status === 'Inactive' && mode !== 'create' ? (
-                  <select
-                    value=""
-                    onChange={handleStatusFieldChange}
-                    disabled={isReactivating}
-                  >
-                    <option value="" disabled>
-                      {isReactivating ? 'Updating…' : 'Inactive — change to…'}
-                    </option>
-                    <option value="Active">Active</option>
-                  </select>
+                {readOnly ? (
+                  <input type="text" value={selectedStore?.status || ''} readOnly />
+                ) : mode === 'create' ? (
+                  <input type="text" value="Active" readOnly />
                 ) : (
-                  <input
-                    type="text"
-                    value={mode === 'create' ? 'Active' : selectedStore?.status || ''}
-                    readOnly
-                  />
+                  <select name="status" value={form.status} onChange={handleFieldChange}>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
                 )}
               </div>
 

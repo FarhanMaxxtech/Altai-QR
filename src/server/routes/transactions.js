@@ -166,15 +166,39 @@ router.post('/move', async (req, res) => {
   }
 });
 
-// GET look up a single scanned code before adding it to the scan cart —
-// validates ownership and current status without committing anything.
+// Human-readable reason for every qr_codes.status value, used to explain
+// to the scanning user exactly why a code can't be used right now.
+const SCAN_STATUS_LABELS = {
+  unassigned: 'not yet assigned to a product',
+  pending: 'received but not yet checked in to a store',
+  in_stock: 'in stock',
+  checked_out: 'already checked out',
+  damage_pending: 'reported damaged and awaiting approval',
+  cycle_count_pending: 'in a cycle count adjustment awaiting approval',
+  damaged: 'marked as damaged and removed from stock',
+  cycle_adjusted: 'removed via a cycle count adjustment',
+};
+
+function scanStatusMessage(status) {
+  return `This code is ${SCAN_STATUS_LABELS[status] || status} and can't be used for this adjustment.`;
+}
+
 // GET look up a single scanned unit before adding it to the scan cart —
 // validates ownership and current status without committing anything.
 // Uses serial_number as the lookup key (previously qr_value).
+//
+// Optional query params let the caller pass the adjustment context so the
+// check happens the moment the code is scanned, instead of only at final
+// submit time in /scan-move:
+//   transaction_type - RECEIVE | CHECKOUT | TRANSFER | DAMAGE | CYCLE_COUNT
+//   from_store_id     - the store the adjustment is being made from
+// Omitting them preserves the old no-context lookup behaviour.
 router.get('/scan-lookup', async (req, res) => {
   const value =
     req.query.serial_number?.trim() ||
     req.query.qr_value?.trim();
+  const transaction_type = req.query.transaction_type?.trim();
+  const from_store_id = req.query.from_store_id?.trim();
 
   if (!value) {
     return res.status(400).json({ message: 'serial_number or qr_value is required.' });
@@ -184,11 +208,12 @@ router.get('/scan-lookup', async (req, res) => {
     const result = await pool.query(
       `
       SELECT
+          qc.qr_batch,
           qc.qr_id,
-          qc.qr_value,
-          qc.serial_number,
+          qc.label_id,
           qc.status,
           qc.current_store_id,
+          cs.location AS current_store_name,
           v.variant_id,
           v.sku,
           p.product_id,
@@ -196,8 +221,9 @@ router.get('/scan-lookup', async (req, res) => {
       FROM qr_codes qc
       JOIN variants v ON v.variant_id = qc.variant_id
       JOIN products p ON p.product_id = v.product_id
+      LEFT JOIN stores cs ON cs.store_id = qc.current_store_id
       WHERE
-          (UPPER(qc.serial_number) = UPPER($1) OR qc.qr_value = $1)
+          (UPPER(qc.label_id) = UPPER($1) OR qc.qr_id = $1)
       AND p.merchant_id = $2
       ORDER BY qc.created_at DESC
       LIMIT 1
@@ -211,7 +237,43 @@ router.get('/scan-lookup', async (req, res) => {
       });
     }
 
-    res.json(result.rows[0]);
+    const code = result.rows[0];
+
+    // No adjustment context supplied — old behaviour, just return the code.
+    if (!transaction_type) {
+      return res.json(code);
+    }
+
+    if (transaction_type === 'RECEIVE') {
+      if (code.status !== 'pending') {
+        return res.status(409).json({
+          message: scanStatusMessage(code.status),
+          status: code.status,
+          label_id: code.label_id,
+        });
+      }
+      return res.json(code);
+    }
+
+    if (code.status !== 'in_stock') {
+      return res.status(409).json({
+        message: scanStatusMessage(code.status),
+        status: code.status,
+        label_id: code.label_id,
+      });
+    }
+
+    if (from_store_id && code.current_store_id !== from_store_id) {
+      return res.status(409).json({
+        message: `This code is currently in stock at "${code.current_store_name || 'another store'}", not the store you selected.`,
+        wrong_store: true,
+        current_store_id: code.current_store_id,
+        current_store_name: code.current_store_name,
+        label_id: code.label_id,
+      });
+    }
+
+    res.json(code);
   } catch (err) {
     res.status(500).json({
       message: err.message
@@ -244,17 +306,17 @@ router.get('/:id', async (req, res) => {
     }
 
     const itemsResult = await pool.query(
-      `SELECT qc.serial_number
-       FROM transaction_items ti
-       JOIN qr_codes qc ON qc.qr_id = ti.qr_id
-       WHERE ti.transaction_id = $1
-       ORDER BY qc.serial_number`,
+      `SELECT qc.label_id
+      FROM transaction_items ti
+      JOIN qr_codes qc ON qc.qr_batch = ti.qr_batch
+      WHERE ti.transaction_id = $1
+      ORDER BY qc.label_id`,
       [req.params.id]
     );
 
     res.json({
       ...txResult.rows[0],
-      serial_numbers: itemsResult.rows.map((r) => r.serial_number),
+      serial_numbers: itemsResult.rows.map((r) => r.label_id),
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -269,7 +331,7 @@ const STORES_TO = ['RECEIVE', 'TRANSFER'];                              // needs
 const REMOVAL_STATUS = { CHECKOUT: 'checked_out', DAMAGE: 'damaged', CYCLE_COUNT: 'cycle_adjusted' };
 
 router.post('/scan-move', async (req, res) => {
-  const { qr_ids, transaction_type, from_store_id, to_store_id } = req.body;
+  const { qr_ids, transaction_type, from_store_id, to_store_id, reference_doc } = req.body;
 
   if (!Array.isArray(qr_ids) || qr_ids.length === 0) {
     return res.status(400).json({ message: 'qr_ids must be a non-empty array.' });
@@ -292,12 +354,12 @@ router.post('/scan-move', async (req, res) => {
     await client.query('BEGIN');
 
     const codesResult = await client.query(
-      `SELECT qc.qr_id, qc.status, qc.current_store_id, qc.variant_id
-       FROM qr_codes qc
-       JOIN variants v ON v.variant_id = qc.variant_id
-       JOIN products p ON p.product_id = v.product_id
-       WHERE qc.qr_id = ANY($1::uuid[]) AND p.merchant_id = $2
-       FOR UPDATE`,
+      `SELECT qc.qr_batch, qc.status, qc.current_store_id, qc.variant_id
+      FROM qr_codes qc
+      JOIN variants v ON v.variant_id = qc.variant_id
+      JOIN products p ON p.product_id = v.product_id
+      WHERE qc.qr_batch = ANY($1::uuid[]) AND p.merchant_id = $2
+      FOR UPDATE`,
       [qr_ids, req.user.merchant_id]
     );
 
@@ -374,38 +436,35 @@ router.post('/scan-move', async (req, res) => {
     // --- qr_codes status ---------------------------------------------------
     if (transaction_type === 'RECEIVE') {
       await client.query(
-        `UPDATE qr_codes SET status = 'in_stock', current_store_id = $1 WHERE qr_id = ANY($2::uuid[])`,
+        `UPDATE qr_codes SET status = 'in_stock', current_store_id = $1 WHERE qr_batch = ANY($2::uuid[])`,
         [to_store_id, qr_ids]
       );
     } else if (transaction_type === 'TRANSFER') {
       await client.query(
-        `UPDATE qr_codes SET current_store_id = $1 WHERE qr_id = ANY($2::uuid[])`,
+        `UPDATE qr_codes SET current_store_id = $1 WHERE qr_batch = ANY($2::uuid[])`,
         [to_store_id, qr_ids]
       );
     } else if (needsApproval) {
-      // Distinct status — never the string 'pending', so it can't be
-      // confused with the "assigned but not yet received" meaning.
       await client.query(
-        `UPDATE qr_codes SET status = $1 WHERE qr_id = ANY($2::uuid[])`,
+        `UPDATE qr_codes SET status = $1 WHERE qr_batch = ANY($2::uuid[])`,
         [PENDING_QR_STATUS[transaction_type], qr_ids]
       );
     } else {
-      // CHECKOUT
       await client.query(
-        `UPDATE qr_codes SET status = 'checked_out', current_store_id = NULL WHERE qr_id = ANY($1::uuid[])`,
+        `UPDATE qr_codes SET status = 'checked_out', current_store_id = NULL WHERE qr_batch = ANY($1::uuid[])`,
         [qr_ids]
       );
     }
 
     const txResult = await client.query(
-      `INSERT INTO transactions (variant_id, transaction_type, from_store_id, to_store_id, qty, approval_status, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING transaction_id`,
-      [variant_id, transaction_type, from_store_id || null, to_store_id || null, qty, needsApproval ? 'pending' : 'approved', req.user.user_id]
+      `INSERT INTO transactions (variant_id, transaction_type, from_store_id, to_store_id, qty, approval_status, created_by, reference_doc)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING transaction_id`,
+      [variant_id, transaction_type, from_store_id || null, to_store_id || null, qty, needsApproval ? 'pending' : 'approved', req.user.user_id, reference_doc || null]
     );
     const transaction_id = txResult.rows[0].transaction_id;
 
     await client.query(
-      `INSERT INTO transaction_items (transaction_id, qr_id) SELECT $1, unnest($2::uuid[])`,
+      `INSERT INTO transaction_items (transaction_id, qr_batch) SELECT $1, unnest($2::uuid[])`,
       [transaction_id, qr_ids]
     );
 
@@ -425,16 +484,12 @@ router.post('/scan-move', async (req, res) => {
 // which is intentionally never the string 'pending' used elsewhere.
 router.post('/:id/approve', async (req, res) => {
 
-  if (!hasEditPermission(req.user)) {
+  if (!(await hasEditPermission(req))) {
     return res.status(403).json({ message: 'You do not have permission to approve adjustments.' });
   }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
-    if (!assertStoreInScope(req, from_store_id) || !assertStoreInScope(req, to_store_id)) {
-    return res.status(403).json({ message: 'You do not have access to one of the selected stores.' });
-  }
 
     const txResult = await client.query(
       `SELECT t.*, p.merchant_id FROM transactions t
@@ -453,11 +508,16 @@ router.post('/:id/approve', async (req, res) => {
       return res.status(409).json({ message: `This transaction is already ${tx.approval_status}.` });
     }
 
+    if (!assertStoreInScope(req, tx.from_store_id) || !assertStoreInScope(req, tx.to_store_id)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ message: 'You do not have access to one of the selected stores.' });
+    }
+
     const itemsResult = await client.query(
-      `SELECT qr_id FROM transaction_items WHERE transaction_id = $1`,
+      `SELECT qr_batch FROM transaction_items WHERE transaction_id = $1`,
       [tx.transaction_id]
     );
-    const qrIds = itemsResult.rows.map((r) => r.qr_id);
+    const qrIds = itemsResult.rows.map((r) => r.qr_batch);
 
     const balanceResult = await client.query(
       `SELECT quantity FROM inventory_balance WHERE variant_id = $1 AND store_id = $2 FOR UPDATE`,
@@ -483,7 +543,7 @@ router.post('/:id/approve', async (req, res) => {
     await client.query(`UPDATE variants SET quantity = quantity - $1 WHERE variant_id = $2`, [tx.qty, tx.variant_id]);
 
     await client.query(
-      `UPDATE qr_codes SET status = $1, current_store_id = NULL WHERE qr_id = ANY($2::uuid[])`,
+      `UPDATE qr_codes SET status = $1, current_store_id = NULL WHERE qr_batch = ANY($2::uuid[])`,
       [FINAL_QR_STATUS[tx.transaction_type], qrIds]
     );
 
@@ -503,7 +563,7 @@ router.post('/:id/approve', async (req, res) => {
 // deducted from inventory, so this just restores the scanned units to
 // their normal in_stock status at the store they were scanned from.
 router.post('/:id/reject', async (req, res) => {
-  if (!hasEditPermission(req.user)) {
+  if (!(await hasEditPermission(req))) {
     return res.status(403).json({ message: 'You do not have permission to reject adjustments.' });
   }
   const client = await pool.connect();
@@ -528,12 +588,12 @@ router.post('/:id/reject', async (req, res) => {
     }
 
     const itemsResult = await client.query(
-      `SELECT qr_id FROM transaction_items WHERE transaction_id = $1`,
+      `SELECT qr_batch FROM transaction_items WHERE transaction_id = $1`,
       [tx.transaction_id]
     );
-    const qrIds = itemsResult.rows.map((r) => r.qr_id);
+    const qrIds = itemsResult.rows.map((r) => r.qr_batch);
 
-    await client.query(`UPDATE qr_codes SET status = 'in_stock' WHERE qr_id = ANY($1::uuid[])`, [qrIds]);
+    await client.query(`UPDATE qr_codes SET status = 'in_stock' WHERE qr_batch = ANY($1::uuid[])`, [qrIds]);
     await client.query(`UPDATE transactions SET approval_status = 'rejected' WHERE transaction_id = $1`, [tx.transaction_id]);
 
     await client.query('COMMIT');

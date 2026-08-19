@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 import '../styles/EditVariantModal.css';
+import { useConfirm } from '../context/ConfirmContext';
 
 const ATTRIBUTE_PRESETS = ['Model', 'Color', 'Capacity', 'Material', 'Pack Size'];
 
@@ -16,6 +17,8 @@ function attributesObjectToArray(attributesObject) {
 }
 
 export default function EditVariantModal({ product, variant, onClose, onSaved, onDeleted, canDelete = true }) {
+  const confirm = useConfirm();
+
   const [sku, setSku] = useState(variant.sku || '');
   const [price, setPrice] = useState(variant.price || '');
   const [remarks, setRemarks] = useState(variant.remarks || '');
@@ -25,18 +28,30 @@ export default function EditVariantModal({ product, variant, onClose, onSaved, o
   const [errorMessage, setErrorMessage] = useState('');
 
   const handleDelete = async () => {
-    const confirmed = window.confirm(
-      `Delete "${variant.sku}"? It will be hidden from listings but the data is kept and can be restored later.`
+  const confirmed = await confirm(
+      `Confirm deletion of "${variant.sku}". This action cannot be undone.`,
+      {
+        title: 'Delete variant?',
+        confirmLabel: 'Delete',
+        cancelLabel: 'Cancel',
+        danger: true,
+      }
     );
+
     if (!confirmed) return;
 
     setIsDeleting(true);
     setErrorMessage('');
+
     try {
-      const res = await apiFetch(`/api/variants/${variant.variant_id}/status`, {
-        method: 'PUT',
-        body: JSON.stringify({ status: 'inactive' }),
-      });
+      const res = await apiFetch(
+        `/api/variants/${variant.variant_id}/status`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ status: 'inactive' }),
+        }
+      );
+
       const result = await res.json();
 
       if (!res.ok) {

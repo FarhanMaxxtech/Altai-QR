@@ -26,6 +26,12 @@ function pad(n) {
   return String(n).padStart(2, '0');
 }
 
+function roleBadgeLabel(user) {
+  if (user.role === 'admin') return 'Admin';
+  if (user.role === 'super_admin') return 'Super Admin';
+  return user.permission_preset || 'Viewer';
+}
+
 const handleLogout = () => {
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
@@ -42,12 +48,18 @@ export default function PageHeader() {
   const [dynamicSubtitle, setDynamicSubtitle] = useState(null);
   const [expiryDate, setExpiryDate] = useState(null); // Date | null
   const [expiryLoaded, setExpiryLoaded] = useState(false);
-  const [storeCount, setStoreCount] = useState(null);
+  const [scopedStores, setScopedStores] = useState([]);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [isScanLookupOpen, setIsScanLookupOpen] = useState(false);
 
   const headerRef = useRef(null);
 const [headerHeight, setHeaderHeight] = useState(64);
+
+const [isRenewContactOpen, setIsRenewContactOpen] = useState(false);
+
+const VENDOR_NAME = 'Maxxtech Systems Sdn Bhd';
+const VENDOR_PHONE_PRIMARY = '+603 3006 8302';
+const VENDOR_PHONE_SECONDARY = '016 645 8154';
 
 useEffect(() => {
   if (!headerRef.current) return;
@@ -69,6 +81,25 @@ useEffect(() => {
   const raw = localStorage.getItem('authUser');
   return raw ? JSON.parse(raw) : null;
   }, []);
+
+  const isFullStoreAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+
+// Closed (Inactive) stores shouldn't count toward "how many stores this
+// covers" — matches the same Active-only filtering used elsewhere (e.g.
+// StoreManagement, StockAdjustment).
+const activeScopedStores = useMemo(
+  () => scopedStores.filter((s) => s.status === 'Active'),
+  [scopedStores]
+);
+
+const storeCount = activeScopedStores.length;
+
+const storeScopeLabel = useMemo(() => {
+  if (isFullStoreAccess) return 'All stores';
+  if (activeScopedStores.length === 0) return 'No store access';
+  if (activeScopedStores.length === 1) return activeScopedStores[0].location;
+  return `${activeScopedStores.length} stores`;
+}, [isFullStoreAccess, activeScopedStores]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -107,7 +138,7 @@ useEffect(() => {
 
       apiFetch('/api/stores')
         .then((res) => res.json())
-        .then((stores) => setStoreCount(stores.length))
+        .then((stores) => setScopedStores(stores))
         .catch((err) => console.error('Failed to load stores:', err));
     }, []);
 
@@ -119,7 +150,7 @@ useEffect(() => {
         .then((res) => res.json())
         .then((products) => {
           const variantCount = products.reduce((sum, p) => sum + (p.variants?.length || 0), 0);
-          setDynamicSubtitle(`${products.length} items · ${variantCount} variants`);
+          setDynamicSubtitle(`${products.length} products · ${variantCount} variants`);
         })
         .catch(() => setDynamicSubtitle(null));
     }
@@ -128,7 +159,7 @@ useEffect(() => {
       apiFetch('/api/stores')
         .then((res) => res.json())
         .then((stores) => {
-          setDynamicSubtitle(`${stores.length} location${stores.length === 1 ? '' : 's'} · 12 scanning devices`);
+          setDynamicSubtitle(`${stores.length} location${stores.length === 1 ? '' : 's'}`);
         })
         .catch(() => setDynamicSubtitle(null));
     }
@@ -137,7 +168,12 @@ useEffect(() => {
       apiFetch('/api/users')
         .then((res) => res.json())
         .then((users) => {
-          const roleCount = new Set(users.map((u) => u.role)).size;
+          const roleLabel = (u) => {
+            if (u.role === 'admin') return 'Admin';
+            if (u.role === 'super_admin') return 'Super Admin';
+            return u.permission_preset || 'Viewer';
+          };
+          const roleCount = new Set(users.map(roleLabel)).size;
           setDynamicSubtitle(`${users.length} account${users.length === 1 ? '' : 's'} · ${roleCount} role${roleCount === 1 ? '' : 's'}`);
         })
         .catch(() => setDynamicSubtitle(null));
@@ -160,14 +196,36 @@ useEffect(() => {
   };
 }, []);
 
+  // Auto-open the notification bell the moment the licence actually
+  // expires — checked every second via `now`, but guarded by a ref so it
+  // only force-opens once per expiry event (won't reopen if the person
+  // closes it again while still expired).
+  const hasAutoOpenedExpiryNotifRef = useRef(false);
+
+  useEffect(() => {
+    if (!expiryDate) return;
+    const isExpiredNow = now >= expiryDate;
+
+    if (isExpiredNow && !hasAutoOpenedExpiryNotifRef.current) {
+      hasAutoOpenedExpiryNotifRef.current = true;
+      setIsNotifOpen(true);
+    }
+
+    // Licence got renewed (expiryDate moved into the future again) —
+    // reset the guard so a future expiry can trigger the popup again.
+    if (!isExpiredNow) {
+      hasAutoOpenedExpiryNotifRef.current = false;
+    }
+  }, [now, expiryDate]);
+
   const { title, subtitle } = useMemo(() => {
     const entry = STATIC_HEADERS[basePath];
     if (!entry) return { title: '', subtitle: '' };
     if (basePath === '/dashboard') {
-      return { title: entry.title, subtitle: `All stores · ${todayLabel()}` };
+      return { title: entry.title, subtitle: `${storeScopeLabel} · ${todayLabel()}` };
     }
     return { title: entry.title, subtitle: dynamicSubtitle || entry.subtitle || '' };
-  }, [basePath, dynamicSubtitle]);
+  },  [basePath, dynamicSubtitle, storeScopeLabel]);
 
   if (!title) return null;
 
@@ -296,7 +354,7 @@ useEffect(() => {
             </span>
             <span className="expiry-banner-subtitle">
               {expired ? 'Renew now to restore' : `Renew before ${expiryDateLabel} to keep`} scanning and stock sync
-              active{storeCount !== null ? ` across all ${storeCount} store${storeCount === 1 ? '' : 's'}` : ''}.
+              active{storeCount > 0 ? ` across all ${storeCount} store${storeCount === 1 ? '' : 's'}` : ''}.
             </span>
           </span>
           <span className="expiry-banner-countdown">
@@ -307,7 +365,23 @@ useEffect(() => {
               </span>
             ))}
           </span>
-          <button type="button" className="expiry-banner-renew-btn">Renew licence</button>
+          {isRenewContactOpen ? (
+            <div className="expiry-contact-card">
+              <div className="expiry-contact-label">Contact vendor to renew:</div>
+              <div className="expiry-contact-name">{VENDOR_NAME}</div>
+              <div className="expiry-contact-phone">
+                {VENDOR_PHONE_PRIMARY} · {VENDOR_PHONE_SECONDARY}
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="expiry-banner-renew-btn"
+              onClick={() => setIsRenewContactOpen(true)}
+            >
+              Renew licence
+            </button>
+          )}
           <button
             type="button"
             className="expiry-banner-dismiss"
@@ -316,6 +390,27 @@ useEffect(() => {
           >
             <X size={14} />
           </button>
+        </div>
+      )}
+
+      {expired && (
+        <div className="license-lockout-overlay">
+          <div className="license-lockout-card">
+            <Clock size={28} className="license-lockout-icon" />
+            <h2>Licence Expired</h2>
+            <p>
+              Your organisation's licence expired
+              {expiryDateLabel ? ` on ${expiryDateLabel}` : ''}. Access is
+              suspended until it's renewed — please contact your vendor below.
+            </p>
+            <div className="expiry-contact-card license-lockout-contact">
+              <div className="expiry-contact-label">Contact vendor to renew:</div>
+              <div className="expiry-contact-name">{VENDOR_NAME}</div>
+              <div className="expiry-contact-phone">
+                {VENDOR_PHONE_PRIMARY} · {VENDOR_PHONE_SECONDARY}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </>

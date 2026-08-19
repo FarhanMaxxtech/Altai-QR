@@ -18,9 +18,11 @@ import ProductDetails from './pages/merchant/ProductDetails';
 import ProductBalanceDetails from './pages/merchant/ProductBalanceDetails';
 import AssignQrToProduct from './pages/merchant/AssignQrToProduct';
 import PageHeader from './components/PageHeader';
+import ScrollToTop from './components/ScrollToTop';
 //import ApproveQrProduct from './pages/merchant/ApproveQrProduct';
 //import ApproveQrProductDetail from './pages/merchant/ApproveQrProductDetail';
 import { apiFetch } from './utils/api';
+import { ConfirmProvider } from './context/ConfirmContext';
 /// Authentication pages
 import Login from './authentication/Login';
 
@@ -31,7 +33,8 @@ import PlatformDashboard from './pages/superadmin/PlatformDashboard';
 import SuperAdminNavigation from './components/SuperAdminNavigation';
 
 import { getAuthToken, getAuthUser, updateAuthUser } from './utils/authStorage';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import ErrorBoundary from './components/ErrorBoundary';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 
 import './App.css';
@@ -94,7 +97,9 @@ useEffect(() => {
     return null; // or a small loading spinner
   }
   return (
+    <ConfirmProvider>
     <BrowserRouter>
+    <ErrorBoundary locationKey={location.pathname}>
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/login" element={<Login />} />
@@ -102,6 +107,7 @@ useEffect(() => {
           path="/*"
           element={
             <div className="app-shell">
+              <ScrollToTop />
               <Navigation />
               <main className="app-main">
                 <PageHeader />
@@ -128,6 +134,7 @@ useEffect(() => {
           path="/superadmin/*"
           element={
             <div className="app-shell">
+              <ScrollToTop />
               <SuperAdminNavigation />
               <main className="app-main">
                 <Routes>
@@ -141,7 +148,9 @@ useEffect(() => {
           }
         />
       </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
+    </ConfirmProvider>
   );
 }
 

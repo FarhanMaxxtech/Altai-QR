@@ -535,6 +535,12 @@
   color: #fff;
 }
 
+.pl-pill-active:hover {
+  background: #1e4010; /* keep the active pill dark on hover, don't fall back to the default hover tint */
+  border-color: #1e4010;
+  color: #fff;
+}
+
 .pl-toolbar-spacer {
   flex: 1;
 }
@@ -550,7 +556,7 @@
   border-radius: 10px;
   border: 1px solid #e5e7eb;
   background: #fff;
-  color: #374151;
+  color: #2f8f1e;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;

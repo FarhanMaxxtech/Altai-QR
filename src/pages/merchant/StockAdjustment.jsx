@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import { ScanBarcode, X, ChevronDown, ChevronRight, RotateCcw, Download } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
-import { exportRowsToCsv } from '../../utils/tableExport';
+import { exportRowsToCsv, exportRowsToPdf } from '../../utils/tableExport';
 import '../../styles/StockAdjustment.css';
 
 
@@ -23,6 +23,12 @@ function variantGroupLabel(variants) {
     return key.endsWith('s') ? key : `${key}s`;
   }
   return 'variants';
+}
+
+function skuPrefixOf(sku) {
+  if (!sku) return '—';
+  const match = sku.match(/^(.*)-V\d+$/i);
+  return match ? match[1] : sku;
 }
 
 function variantLabel(variant, sharedKey) {
@@ -61,6 +67,10 @@ export default function StockAdjustment() {
   const [storeFilter, setStoreFilter] = useState('');
   const [stockState, setStockState] = useState('all'); // all | low | critical
 
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
+
   // --- Expand state --------------------------------------------------------
   const [expandedRows, setExpandedRows] = useState({});
   const [allExpanded, setAllExpanded] = useState(false);
@@ -74,22 +84,26 @@ export default function StockAdjustment() {
   const scanInputRef = useRef(null);
 
   useEffect(() => {
-    apiFetch('/api/stores')
-      .then((res) => res.json())
-      .then((data) => setStores(data))
-      .catch((err) => console.error('Failed to load stores:', err));
+  apiFetch('/api/stores')
+    .then((res) => res.json())
+    .then((data) => setStores(data.filter((s) => s.status === 'Active')))
+    .catch((err) => console.error('Failed to load stores:', err));
 
-    apiFetch('/api/products')
-      .then((res) => res.json())
-      .then((data) => setProducts(data))
-      .catch((err) => console.error('Failed to load products:', err));
-  }, []);
+  apiFetch('/api/products')
+    .then((res) => res.json())
+    .then((data) => setProducts(data))
+    .catch((err) => console.error('Failed to load products:', err));
+}, []);
 
   useEffect(() => {
     return () => {
       if (html5QrRef.current) html5QrRef.current.stop().catch(() => {});
     };
   }, []);
+
+  useEffect(() => {
+  setPage(1);
+  }, [categoryFilter, skuFilter, storeFilter, stockState]);
 
   // --- One row per product, with per-store quantities summed across variants
   const rows = useMemo(() => {
@@ -115,7 +129,7 @@ export default function StockAdjustment() {
         totalAll,
         groupLabel: variantGroupLabel(variants),
         sharedKey,
-        primarySku: variants[0]?.sku || '—',
+        primarySku: skuPrefixOf(variants[0]?.sku),
       };
     });
   }, [products, stores]);
@@ -176,6 +190,20 @@ export default function StockAdjustment() {
     };
   }, [filteredRows, rows.length, stores, visibleStoreIds]);
 
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const pagedRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
+
+  const handlePageChange = (next) => {
+    if (next < 1 || next > totalPages) return;
+    setPage(next);
+  };
+
+  const handlePageSizeChange = (n) => {
+    setPageSize(n);
+    setPage(1);
+  };
+
   // --- Handlers --------------------------------------------------------------
 
   const resetFilters = () => {
@@ -201,17 +229,38 @@ export default function StockAdjustment() {
     }
   };
 
-  const handleExportCsv = () => {
-    const exportRows = [];
-    filteredRows.forEach((r) => {
-      const row = { Product: r.product.product_name, SKU: r.primarySku };
+
+
+const buildBalanceExportRows = () => {
+  const exportRows = [];
+  filteredRows.forEach((r) => {
+    const isOpen = !!expandedRows[r.product.product_id];
+    if (isOpen && r.variants.length > 0) {
+      r.variants.forEach((v) => {
+        const row = { Product: r.product.product_name, Variant: variantLabel(v, r.sharedKey), SKU: v.sku };
+        stores.forEach((s) => { row[s.location] = v.balances?.[s.store_id] || 0; });
+        row.Total = stores.reduce((a, s) => a + (v.balances?.[s.store_id] || 0), 0);
+        row['Reorder At'] = r.product.reorder_point ?? '';
+        exportRows.push(row);
+      });
+    } else {
+      const row = { Product: r.product.product_name, Variant: '', SKU: r.primarySku };
       stores.forEach((s) => { row[s.location] = r.storeQtys[s.store_id] || 0; });
       row.Total = r.totalAll;
       row['Reorder At'] = r.product.reorder_point ?? '';
       exportRows.push(row);
-    });
-    exportRowsToCsv(exportRows, 'inventory-balance.csv');
-  };
+    }
+  });
+  return exportRows;
+};
+
+const handleExportCsv = () => exportRowsToCsv(buildBalanceExportRows(), 'inventory-balance.csv');
+
+
+const handleExportPdf = () => {
+  const numbered = buildBalanceExportRows().map((row, index) => ({ 'No.': index + 1, ...row }));
+  exportRowsToPdf(numbered, 'inventory-balance.pdf', 'Inventory Balance');
+};
 
   // --- Scan-to-search --------------------------------------------------------
 
@@ -379,7 +428,7 @@ export default function StockAdjustment() {
       {/* --- Stats row --------------------------------------------------------- */}
       <section className="ib-stats-grid">
         <div className="ib-stat-card">
-          <span className="ib-stat-label">SKUs Matched</span>
+          <span className="ib-stat-label">Products Matched</span>
           <div className="ib-stat-row">
             <span className="ib-stat-value">{stats.matched}</span>
             <span className="ib-stat-unit">of {stats.total}</span>
@@ -428,6 +477,10 @@ export default function StockAdjustment() {
             <Download size={14} />
             Export CSV
           </button>
+          <button type="button" className="ib-export-btn" onClick={handleExportPdf} disabled={filteredRows.length === 0}>
+            <Download size={14} />
+            Export PDF
+          </button>
         </div>
 
         {stores.length === 0 ? (
@@ -449,7 +502,7 @@ export default function StockAdjustment() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r) => {
+                {pagedRows.map((r) => {
                   const productId = r.product.product_id;
                   const isOpen = !!expandedRows[productId];
                   const reorder = r.product.reorder_point;
@@ -550,6 +603,38 @@ export default function StockAdjustment() {
                 </tr>
               </tfoot>
             </table>
+            <div className="ib-table-footer">
+              <div className="ib-footer-left">
+                <span>Show</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <span>entries · Showing {pagedRows.length} of {filteredRows.length}</span>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="ib-pagination">
+                  <button disabled={page <= 1} onClick={() => handlePageChange(page - 1)}>‹</button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .slice(Math.max(0, page - 3), Math.max(0, page - 3) + 5)
+                    .map((n) => (
+                      <button
+                        key={n}
+                        className={n === page ? 'ib-page-active' : ''}
+                        onClick={() => handlePageChange(n)}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  <button disabled={page >= totalPages} onClick={() => handlePageChange(page + 1)}>›</button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>

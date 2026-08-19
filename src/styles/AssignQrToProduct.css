@@ -152,6 +152,17 @@
   cursor: pointer;
 }
 
+.aq-btn-camera-full {
+  width: 100%;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .aq-btn-camera:hover {
   background: rgba(255, 255, 255, 0.16);
 }
@@ -162,11 +173,45 @@
   border-color: #fff;
 }
 
+.aq-btn-camera-active:hover {
+  background: #f0f7ea;   /* light green tint instead of plain white, gives hover feedback */
+  color: #255f10;         /* slightly darker green than the active state's #2e7d14 */
+  border-color: #f0f7ea;
+}
+
 .aq-camera-block {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
+  position: relative;
+}
+
+.aq-camera-scan-flash {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(46, 125, 20, 0.92);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  z-index: 5;
+  animation: aqFlashIn 0.15s ease;
+}
+
+.sa-scan-success-flash {
+  font-size: 13px;
+  font-weight: 700;
+  color: #7fd05c;
+}
+
+@keyframes aqFlashIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .aq-camera-reader-box {
@@ -216,9 +261,10 @@
 
 .aq-range-row {
   display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;   /* was: flex-end (inherited from desktop) — change this */
+  gap: 6px;
 }
 
 .aq-range-prefix {
@@ -238,6 +284,7 @@
   flex-direction: column;
   gap: 4px;
   flex: 1 1 140px;
+  justify-content: center;
 }
 
 .aq-range-field-label {
@@ -246,6 +293,7 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #8fbe79;
+  display: none;
 }
 
 .aq-range-field input {
@@ -301,6 +349,10 @@
   color: #f0a899;
 }
 
+.aq-error-text-on-dark + .aq-error-text-on-dark {
+  margin-top: 4px;
+}
+
 .aq-success-text-on-dark {
   margin: 0;
   font-size: 13px;
@@ -347,7 +399,6 @@
 
 .aq-btn-clear-all {
   height: 32px;
-  padding: 0 14px;
   border-radius: 8px;
   border: 1px solid #d8d5c8;
   background: #fff;
@@ -373,7 +424,6 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 340px;
   overflow-y: auto;
 }
 
@@ -602,6 +652,16 @@
   cursor: not-allowed;
 }
 
+.aq-modal-footer-single {
+  justify-content: flex-end;
+}
+
+.aq-modal-footer-single .aq-btn-primary-auto {
+  flex: none;
+  min-width: 220px;
+  padding: 0 24px;
+}
+
 .aq-error-text {
   margin: 0;
   font-size: 13px;
@@ -779,6 +839,15 @@
   border-top: 1px solid #f0efe9;
 }
 
+.aq-modal-footer-end {
+  justify-content: flex-end;
+}
+
+.aq-modal-footer-end .aq-btn-primary-auto {
+  flex: none;
+  min-width: 220px;
+}
+
 .aq-btn-reject {
   height: 42px;
   padding: 0 18px;
@@ -814,16 +883,27 @@
 }
 
 @media (max-width: 640px) {
-  .aq-scan-row,
-  .aq-range-row {
-    flex-direction: column;
-    align-items: stretch;
+  .aq-scan-row {
+  flex-direction: row;    /* was: column, via the combined selector */
+  flex-wrap: nowrap;
+  align-items: center;
   }
 
-  .aq-btn-add,
-  .aq-btn-add-range,
+  .aq-range-row {
+    flex-direction: row;    /* was: column, via the combined selector */
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .aq-btn-add {
+    width: auto;    /* was: width: 100%; */
+    flex: none;
+  }
+
   .aq-range-prefix {
-    width: 100%;
+  width: 56px;    /* was: width: 100%; */
+  flex: none;
   }
 
   .aq-modal-footer {
@@ -835,8 +915,8 @@
   }
 
   .aq-btn-camera {
-    width: 100%;
-    height: 44px;
+    flex: none;
+    border-radius: 10px;
   }
 }
 
@@ -851,19 +931,34 @@
   }
 
   .aq-scan-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
+  flex-direction: row;   /* was: column */
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;               /* was: 10px, tighten a bit */
   }
 
   .aq-scan-input-wrap {
-    width: 100%;
-    box-sizing: border-box;
+    flex: 1 1 auto;   /* was: width: 100%; */
+    min-width: 0;
   }
 
-  .aq-btn-add,
+  .aq-scan-input-wrap input {
+  font-size: 13px;              /* was 14px — a bit more room */
+  min-width: 0;                 /* lets it actually shrink inside the flex row */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;          /* prevents the placeholder from bleeding out visually */
+}
+
+  .aq-btn-add {
+      flex: none;              /* was: flex: 1; */
+    padding: 0 14px;
+    height: 44px;
+    border-radius: 10px;
+  }
   .aq-btn-camera {
-    width: 100%;
+    flex: none;
+    border-radius: 10px;
   }
 
   .aq-scan-hints {
@@ -873,27 +968,34 @@
 
   /* Serial range: stack every field full-width, no wrap guesswork */
   .aq-range-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+    flex-direction: row;   /* was: column */
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
   }
 
   .aq-range-prefix {
-    width: 100%;
-    box-sizing: border-box;
+    width: 56px;      /* was: width: 100%; */
+    flex: none;
+    padding: 0 4px;
   }
 
   .aq-range-field {
-    width: 100%;
-    flex: none;
+    flex: 1 1 auto;   /* was: width: 100%; flex: none; */
+    min-width: 0;
+    width: auto;
   }
 
   .aq-range-arrow {
-    display: none; /* redundant once fields stack vertically */
+    display: inline;  /* was: display: none; — bring it back since it's a real row now */
+    flex: none;
+    padding-bottom: 0;
+    align-self: center;
   }
 
   .aq-btn-add-range {
-    width: 100%;
+    width: auto;      /* was: width: 100%; */
+    flex: none;
   }
 
   .aq-details-actions {

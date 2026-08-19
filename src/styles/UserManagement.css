@@ -610,6 +610,28 @@
   border-color: var(--um2-primary);
 }
 
+.um2-store-toggle-inactive {
+  opacity: 0.55;
+}
+
+.um2-store-toggle-inactive:disabled {
+  cursor: not-allowed;
+}
+
+.um2-store-inactive-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  vertical-align: middle;
+}
+
 .um2-store-meta {
   display: flex;
   flex-direction: column;
