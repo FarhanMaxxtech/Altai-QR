@@ -1,4 +1,4 @@
-const API_BASE = 'https://altai-qr-production-c29a.up.railway.app';
+const API_BASE = 'https://altai-qr-production-fdfc.up.railway.app';
 import { getAuthToken, clearAuth } from './authStorage';
 
 export async function apiFetch(path, options = {}) {
@@ -24,7 +24,12 @@ export async function apiFetch(path, options = {}) {
   console.log("Status:", res.status);
   console.log("Final URL:", res.url);
 
-  if (res.status === 401 || res.status === 403) {
+// The login endpoint legitimately returns 401 for bad credentials — that's
+// not an expired session, so it must NOT trigger the global logout/redirect.
+// Every other route treats 401/403 as "your session is invalid."
+const isLoginAttempt = path === '/api/auth/login';
+
+if (!isLoginAttempt && (res.status === 401 || res.status === 403)) {
     clearAuth();
     window.location.href = "/login";
     return;

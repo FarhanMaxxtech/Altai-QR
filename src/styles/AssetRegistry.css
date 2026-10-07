@@ -668,7 +668,12 @@
 }
 
 .register-product-full-span {
-  grid-column: 1 / -1;
+  /* No longer a child of .register-product-layout's grid, so this section
+     sits in normal document flow right after the two-column form. Keeping
+     it out of the grid gives the sticky Next Steps panel a containing
+     block that ends where the form does, instead of stretching down over
+     this table while scrolling. */
+  margin-top: 20px;
 }
 
 .product-details-card h2 {
@@ -780,7 +785,6 @@
   }
 
   .register-product-full-span {
-    order: 3;
     width: 100%;
   }
 
@@ -882,13 +886,34 @@
     text-align: center;
   }
 
-  /* Just Registered table: allow horizontal scroll instead of squeezing */
+
+  /* Just Registered table: stack like other variant tables on mobile — no horizontal scroll needed */
   .variant-table-wrapper {
-    overflow-x: auto;
+    overflow-x: auto; /* kept only as a safety net */
   }
 
-  .just-registered-card .variant-list-table {
-    min-width: 480px;
+  .just-registered-card .variant-list-table th,
+  .just-registered-card .variant-list-table td {
+    white-space: normal;
+  }
+
+  .just-registered-card .variant-list-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f3f4f6;
+    text-align: right;
+  }
+
+  .just-registered-card .variant-list-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    font-size: 12px;
+    color: #6b7280;
+    text-align: left;
+    flex-shrink: 0;
   }
 
   .just-registered-card {

@@ -92,6 +92,8 @@ export default function StockManager() {
   const [scanCart, setScanCart] = useState([]);
   const [scanInput, setScanInput] = useState('');
   const scanCartRef = useRef([]);
+  const scanQueueRef = useRef([]);
+  const isProcessingQueueRef = useRef(false);
 
   const [rangePrefix, setRangePrefix] = useState('');
   const [rangeFrom, setRangeFrom] = useState('');
@@ -391,10 +393,28 @@ const handleRejectDetail = async () => {
   }
 };
 
-  const handleScanSubmit = (e) => {
+  // Serializes scans so a fast USB scanner (which fires Enter far quicker
+  // than addToCart's network round-trip) can't run addToCart concurrently
+  // and race on scanCartRef.current, silently dropping scans.
+  const enqueueScan = (value) => {
+    scanQueueRef.current.push(value);
+    processScanQueue();
+  };
+
+  const processScanQueue = async () => {
+    if (isProcessingQueueRef.current) return;
+    isProcessingQueueRef.current = true;
+    while (scanQueueRef.current.length > 0) {
+      const value = scanQueueRef.current.shift();
+      await addToCart(value);
+    }
+    isProcessingQueueRef.current = false;
+  };
+
+    const handleScanSubmit = (e) => {
     e.preventDefault();
     if (!scanInput.trim()) return;
-    addToCart(scanInput.trim());
+    enqueueScan(scanInput.trim());
     setScanInput('');
   };
 
@@ -581,7 +601,7 @@ const handleRejectDetail = async () => {
             const trimmed = decodedText.trim();
             if (trimmed === lastScannedRef.current) return;
             lastScannedRef.current = trimmed;
-            addToCart(trimmed);
+            enqueueScan(trimmed);
           },
           () => {}
         );

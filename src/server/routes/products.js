@@ -125,16 +125,9 @@ router.post('/', async (req, res) => {
       }
 
       const variantResult = await client.query(
-        `INSERT INTO variants (product_id, sku, price, remarks, color, attributes, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'active') RETURNING *`,
-        [
-          product.product_id,
-          v.sku,
-          v.price || null,
-          v.remarks || null,
-          v.color || null,
-          JSON.stringify(attributesObject),
-        ]
+        `INSERT INTO variants (product_id, merchant_id, sku, price, remarks, color, attributes, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'active') RETURNING *`,
+        [product.product_id, req.user.merchant_id, v.sku, v.price || null, v.remarks || null, v.color || null, JSON.stringify(attributesObject)]
       );
       insertedVariants.push(variantResult.rows[0]);
     }

@@ -69,6 +69,10 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
+    if (user.status === 'Inactive') {
+      return res.status(403).json({ message: 'This account has been deactivated. Please contact your administrator.' });
+    }
+
     await pool.query('UPDATE users SET last_seen = now() WHERE user_id = $1', [user.user_id]);
 
     const token = jwt.sign(

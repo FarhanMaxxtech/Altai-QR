@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { PackageCheck } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import '../../styles/AssetRegistry.css';
+import { useConfirm } from '../../context/ConfirmContext';
 
 const DRAFT_STORAGE_KEY = 'register-product-draft-v2';
 
@@ -28,6 +29,32 @@ function attributesObjectToArray(attributesObject) {
 // near the top, with the other constants
 const ATTRIBUTE_PRESETS = ['Model', 'Color', 'Capacity', 'Material', 'Pack Size'];
 
+function normalizeText(str) {
+  return (str || '').trim().toLowerCase();
+}
+
+// Finds an existing product whose name matches (case-insensitive), excluding
+// the product currently being edited (there is no edit-in-place flow on this
+// page today, but this keeps the helper reusable if that changes).
+function findDuplicateProductName(existingProducts, name) {
+  const target = normalizeText(name);
+  if (!target) return null;
+  return existingProducts.find((p) => normalizeText(p.product_name) === target) || null;
+}
+
+// Finds an existing variant (on ANY product) whose SKU matches — this is
+// what actually collides against the DB's unique constraint on variants.sku.
+function findDuplicateSku(existingProducts, sku) {
+  const target = normalizeText(sku);
+  if (!target) return null;
+  for (const product of existingProducts) {
+    const variant = (product.variants || []).find((v) => normalizeText(v.sku) === target);
+    if (variant) return { product, variant };
+  }
+  return null;
+}
+
+
 function makeEmptyVariant() {
   return {
     variant_id: crypto.randomUUID(),
@@ -47,12 +74,24 @@ function makeEmptyProductForm() {
 }
 
 export default function RegisterProduct() {
+
+  const confirm = useConfirm();
+  // Dismiss-only dialog for validation/status messages — matches the pattern
+  // already used on StockManager.jsx / AssignQrToProduct.jsx instead of
+  // window.alert().
+  const notify = (message, options = {}) => {
+  confirm(message, { confirmLabel: 'OK', hideCancel: true, ...options });
+  };
+
+
+  
   const [productForm, setProductForm] = useState(makeEmptyProductForm());
   const [autoSkuPrefix, setAutoSkuPrefix] = useState(true);
   const [variantDrafts, setVariantDrafts] = useState([makeEmptyVariant()]);
   const [draftSavedMessage, setDraftSavedMessage] = useState('');
   const [categoryOptions, setCategoryOptions] = useState([]);
   const [isNewCategory, setIsNewCategory] = useState(false);
+  const [existingProducts, setExistingProducts] = useState([]);
 
   const [lastRegistered, setLastRegistered] = useState(null);
 
@@ -100,6 +139,16 @@ const handleCancelNewCategory = () => {
       .catch((err) => console.error('Failed to load categories:', err));
   }, []);
 
+
+// Used purely for client-side duplicate-name/SKU checks before submit —
+// the same list ProductListing.jsx already fetches.
+  useEffect(() => {
+    apiFetch('/api/products')
+      .then((res) => res.json())
+      .then((data) => setExistingProducts(data))
+      .catch((err) => console.error('Failed to load existing products:', err));
+  }, []);
+
 const handleSingleVariant = () => {
   setVariantDrafts((prev) => [
     { ...prev[0], variant_id: prev[0]?.variant_id || crypto.randomUUID() },
@@ -143,14 +192,19 @@ const duplicateVariantDraft = (variantId) => {
     const idx = prev.findIndex((v) => v.variant_id === variantId);
     if (idx === -1) return prev;
     const source = prev[idx];
-    const sourceSku = computeVariantSku(source, idx, productForm.skuPrefix);
+    
 
     const copy = {
       ...source,
       variant_id: crypto.randomUUID(),
       attributes: source.attributes.map((attr) => ({ ...attr, id: crypto.randomUUID() })),
-      autoSku: false,
-      sku: `${sourceSku}-COPY`,
+      // Auto-generated SKUs stay auto — they'll recompute from this new
+      // index + whatever the current SKU Prefix is, so they keep tracking
+      // prefix edits exactly like every other auto variant. Only a
+      // genuinely manual SKU (autoSku already false) gets the "-COPY"
+      // suffix, since a manual SKU was never going to follow the prefix.
+      autoSku: source.autoSku,
+      sku: source.autoSku ? source.sku : `${source.sku}-COPY`,
     };
 
     return [...prev, copy];
@@ -220,16 +274,82 @@ const addAttribute = (variantId) => {
   const handleProductSubmit = async (e) => {
     e.preventDefault();
 
-    if (!productForm.name.trim()) return;
+      if (!productForm.name.trim()) {
+      notify('Product name is required.', { title: 'Missing product name', danger: true });
+      return;
+    }
+    if (!productForm.skuPrefix.trim()) {
+      notify('SKU prefix is required.', { title: 'Missing SKU prefix', danger: true });
+      return;
+    }
+    if (!productForm.category.trim()) {
+      notify('Category is required.', { title: 'Missing category', danger: true });
+      return;
+    }
+    if (productForm.reorderPoint === '' || productForm.reorderPoint === null) {
+      notify('Reorder point is required.', { title: 'Missing reorder point', danger: true });
+      return;
+    }
     if (variantDrafts.length === 0) return;
 
+    const missingPriceIndex = variantDrafts.findIndex(
+      (v) => v.price === '' || v.price === null
+    );
+    if (missingPriceIndex !== -1) {
+      notify(`Variant ${missingPriceIndex + 1} is missing a price.`, {
+        title: 'Missing price',
+        danger: true,
+      });
+      return;
+    }
+
     const missingSku = variantDrafts.some(
-    (v, i) => !computeVariantSku(v, i, productForm.skuPrefix).trim()
-  );
-  if (missingSku) {
-    alert('Every variant needs a SKU.');
-    return;
-  }
+      (v, i) => !computeVariantSku(v, i, productForm.skuPrefix).trim()
+    );
+    if (missingSku) {
+      notify('Every variant needs a SKU.', { title: 'Missing SKU', danger: true });
+      return;
+    }
+
+    // --- Duplicate product name -------------------------------------------
+    const duplicateProduct = findDuplicateProductName(existingProducts, productForm.name);
+    if (duplicateProduct) {
+      notify(`"${productForm.name.trim()}" already exists as a registered product.`, {
+        title: 'Product name already exists',
+        danger: true,
+      });
+      return;
+    }
+
+    // --- Duplicate SKUs, both against existing products AND within this batch --
+    const computedSkus = variantDrafts.map((v, i) => computeVariantSku(v, i, productForm.skuPrefix).trim());
+
+    for (const sku of computedSkus) {
+      const clash = findDuplicateSku(existingProducts, sku);
+      if (clash) {
+        notify(`SKU "${sku}" is already used by "${clash.product.product_name}".`, {
+          title: 'SKU already exists',
+          danger: true,
+        });
+        return;
+      }
+    }
+
+    const seenInBatch = new Set();
+    const internalDupe = computedSkus.find((sku) => {
+      const key = normalizeText(sku);
+      if (seenInBatch.has(key)) return true;
+      seenInBatch.add(key);
+      return false;
+    });
+    if (internalDupe) {
+      notify(`SKU "${internalDupe}" is used by more than one variant in this form.`, {
+        title: 'Duplicate SKU',
+        danger: true,
+      });
+      return;
+    }
+
 
     const payload = {
     product_name: productForm.name.trim(),
@@ -252,9 +372,9 @@ const addAttribute = (variantId) => {
       const result = await res.json();
 
       if (!res.ok) {
-        alert(result.message || 'Failed to save product.');
+        notify(result.message || 'Failed to save product.', { title: 'Could not save product', danger: true });
         return;
-      }
+      } 
 
       setLastRegistered(result);
       localStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -262,17 +382,18 @@ const addAttribute = (variantId) => {
       setAutoSkuPrefix(true);
       setVariantDrafts([makeEmptyVariant(1, '')]);
     } catch (err) {
-      alert('Could not reach server. Check it is running.');
+      notify('Could not reach server. Check it is running.', { title: 'Network error', danger: true });
       console.error(err);
     }
   };
 
   return (
+    <>
     <div className="register-product-layout">
       <section className="listing-card product-details-card">
         <h2>Product Details</h2>
 
-        <form className="product-form" onSubmit={handleProductSubmit}>
+        <form className="product-form" onSubmit={handleProductSubmit} noValidate>
           <div className="product-details-grid">
             <div className="form-group form-group-wide">
               <label htmlFor="name">Product Name <span className="required-asterisk">*</span></label>
@@ -358,7 +479,7 @@ const addAttribute = (variantId) => {
             </div>
 
             <div className="form-group">
-              <label htmlFor="reorderPoint">Reorder Point</label>
+               <label htmlFor="reorderPoint">Reorder Point <span className="required-asterisk">*</span></label>
               <input
                 id="reorderPoint"
                 name="reorderPoint"
@@ -367,6 +488,7 @@ const addAttribute = (variantId) => {
                 value={productForm.reorderPoint}
                 onChange={handleProductFieldChange}
                 placeholder="10"
+                required
               />
             </div>
           </div>
@@ -470,12 +592,13 @@ const addAttribute = (variantId) => {
 
       <div className="variant-fields-row">
         <div className="form-group">
-          <label>Price (RM)</label>
+          <label>Price (RM) <span className="required-asterisk">*</span></label>
           <input
             type="number" min="0" step="0.01"
             value={variant.price}
             onChange={(e) => updateVariant(variant.variant_id, 'price', e.target.value)}
             placeholder="0.00"
+            required
           />
         </div>
 
@@ -548,6 +671,7 @@ const addAttribute = (variantId) => {
           </li>
         </ol>
       </aside>
+    </div>
 
       {lastRegistered && (
   <section className="just-registered-card register-product-full-span">
@@ -607,6 +731,6 @@ const addAttribute = (variantId) => {
           </div>
         </section>
       )}
-    </div>
+    </>
   );
 }

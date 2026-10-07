@@ -19,7 +19,7 @@ router.get('/summary', async (req, res) => {
 
     const [deliveries, transfers, totalStock, scans, trends] = await Promise.all([
       pool.query(
-        `SELECT COUNT(*) FROM transactions t
+        `SELECT COALESCE(SUM(t.qty), 0) AS count FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
          JOIN products p ON p.product_id = v.product_id
          WHERE t.transaction_type = 'RECEIVE' AND t.created_at >= $1 AND p.merchant_id = $2
@@ -27,7 +27,7 @@ router.get('/summary', async (req, res) => {
         deliveriesParams
       ),
       pool.query(
-        `SELECT COUNT(*) FROM transactions t
+        `SELECT COALESCE(SUM(t.qty), 0) AS count FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
          JOIN products p ON p.product_id = v.product_id
          WHERE t.transaction_type = 'TRANSFER' AND t.created_at >= $1 AND p.merchant_id = $2
@@ -43,7 +43,7 @@ router.get('/summary', async (req, res) => {
         stockParams
       ),
       pool.query(
-        `SELECT COUNT(*) FROM transactions t
+        `SELECT COALESCE(SUM(t.qty), 0) AS count FROM transactions t
          JOIN variants v ON v.variant_id = t.variant_id
          JOIN products p ON p.product_id = v.product_id
          WHERE p.merchant_id = $2 AND t.created_at >= $1
@@ -55,8 +55,8 @@ router.get('/summary', async (req, res) => {
         `WITH days AS (
            SELECT generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day')::date AS day
          ),
-         daily_receive AS (
-           SELECT t.created_at::date AS day, COUNT(*) AS cnt
+        daily_receive AS (
+           SELECT t.created_at::date AS day, SUM(t.qty) AS cnt
            FROM transactions t
            JOIN variants v ON v.variant_id = t.variant_id
            JOIN products p ON p.product_id = v.product_id
@@ -66,7 +66,7 @@ router.get('/summary', async (req, res) => {
            GROUP BY t.created_at::date
          ),
          daily_transfer AS (
-           SELECT t.created_at::date AS day, COUNT(*) AS cnt
+           SELECT t.created_at::date AS day, SUM(t.qty) AS cnt
            FROM transactions t
            JOIN variants v ON v.variant_id = t.variant_id
            JOIN products p ON p.product_id = v.product_id
@@ -76,7 +76,7 @@ router.get('/summary', async (req, res) => {
            GROUP BY t.created_at::date
          ),
          daily_scans AS (
-           SELECT t.created_at::date AS day, COUNT(*) AS cnt
+           SELECT t.created_at::date AS day, SUM(t.qty) AS cnt
            FROM transactions t
            JOIN variants v ON v.variant_id = t.variant_id
            JOIN products p ON p.product_id = v.product_id

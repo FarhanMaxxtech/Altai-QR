@@ -49,6 +49,8 @@ export default function AssignQrToProduct() {
 
   const scanCartRef = useRef([]);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const scanQueueRef = useRef([]);
+  const isProcessingQueueRef = useRef(false);
   const html5QrRef = useRef(null);
   const lastScannedRef = useRef('');
   const isScannerRunningRef = useRef(false);
@@ -176,10 +178,29 @@ useEffect(() => {
   }
   };
 
-  const handleScanSubmit = (e) => {
+    // Ensures scans are processed one at a time, in order — a fast USB
+  // scanner fires Enter (and thus handleScanSubmit) far quicker than
+  // addManyToCart's network round-trip, so without a queue, concurrent
+  // calls race on scanCartRef.current and silently drop scans.
+  const enqueueScan = (value) => {
+    scanQueueRef.current.push(value);
+    processScanQueue();
+  };
+
+  const processScanQueue = async () => {
+    if (isProcessingQueueRef.current) return;
+    isProcessingQueueRef.current = true;
+    while (scanQueueRef.current.length > 0) {
+      const value = scanQueueRef.current.shift();
+      await addManyToCart([value]);
+    }
+    isProcessingQueueRef.current = false;
+  };
+
+    const handleScanSubmit = (e) => {
     e.preventDefault();
     if (!scanInput.trim()) return;
-    addManyToCart([scanInput.trim()]);
+    enqueueScan(scanInput.trim());
     setScanInput('');
   };
 
@@ -229,7 +250,7 @@ useEffect(() => {
             const trimmed = decodedText.trim();
             if (trimmed === lastScannedRef.current) return;
             lastScannedRef.current = trimmed;
-            addManyToCart([trimmed]);
+            enqueueScan(trimmed);
           },
           () => {}
         );

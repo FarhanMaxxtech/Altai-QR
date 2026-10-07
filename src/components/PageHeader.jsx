@@ -238,7 +238,7 @@ useEffect(() => {
   const urgent = expired || (msLeft !== null && dd <= 7);
 
   const expiryDateLabel = expiryDate
-    ? expiryDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+    ? expiryDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
     : '';
   // Banner only makes sense as an urgency nudge — same threshold as the
   // badge's color change (<=7 days), not shown once the plan has room to spare.

@@ -2,10 +2,11 @@ import React, { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from '../../src/utils/api';
-import { Mail, Lock } from "lucide-react";
+import { Mail, Lock, X } from "lucide-react";
 import { setAuth } from "../utils/authStorage";
 import logo from "../assets/logo.png";
 import "../styles/LoginPage.css";
+
 
 function Login() {
     const {
@@ -19,6 +20,7 @@ function Login() {
     const [revealPassword, setRevealPassword] = useState(false);
     const [rememberMe, setRememberMe] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isSalesContactOpen, setIsSalesContactOpen] = useState(false);
     const navigate = useNavigate();
 
     const emailValue = watch("email", "");
@@ -36,7 +38,7 @@ function Login() {
             const result = await res.json();
 
             if (!res.ok) {
-                setServerError(result.message || "Login failed.");
+                setServerError(result.message || "Invalid email or password.");
                 return;
             }
 
@@ -140,11 +142,37 @@ function Login() {
                     </div>
                 </div>
 
-                <div className="al-below-card">
-                    <div className="al-sales-row">
-                        <span>No merchant account?</span>
-                        <a href="#">Talk to sales</a>
-                    </div>
+                                <div className="al-below-card">
+                                        {isSalesContactOpen ? (
+                        <div className="al-sales-contact-card">
+                            <button
+                                type="button"
+                                className="al-sales-contact-close"
+                                onClick={() => setIsSalesContactOpen(false)}
+                                aria-label="Close"
+                            >
+                                <X size={14} />
+                            </button>
+                            <div className="al-sales-contact-label">Contact vendor:</div>
+                            <div className="al-sales-contact-name">Maxxtech Systems Sdn Bhd</div>
+                            <div className="al-sales-contact-phone">
+                                +603 3006 8302 · 016 645 8154
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="al-sales-row">
+                            <span>No merchant account?</span>
+                            
+                              <a   href="#"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    setIsSalesContactOpen(true);
+                                }}
+                            >
+                                Talk to sales
+                            </a>
+                        </div>
+                    )}
                     <div className="al-powered-by">POWERED BY MAXXTECH SYSTEMS SDN BHD</div>
                 </div>
             </div>

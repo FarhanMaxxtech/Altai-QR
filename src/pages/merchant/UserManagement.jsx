@@ -10,7 +10,8 @@ import '../../styles/UserManagement.css';
 import { useConfirm } from '../../context/ConfirmContext';
 
 const PAGE_SIZE = 10;
-const ROLE_OPTIONS = ['Admin', 'Staff']; // account-level role for invites; super_admin is platform-level only
+const ROLE_OPTIONS = ['Staff']; // account-level role for invites; super_admin is platform-level only
+const MAX_STAFF_ACCOUNTS = 5;
 
 // UI-only extension: 'delete' is stored the same way as any other action
 // string inside the existing permissions JSONB — no schema/API change.
@@ -98,6 +99,11 @@ export default function UserManagement() {
 
   const isFullAccess = currentMerchant?.role === 'admin' || currentMerchant?.role === 'super_admin';
   const canCreateUsers = isFullAccess || (currentMerchant?.permissions?.['User Management'] || []).includes('create');
+
+  // Only non-admin accounts count toward the staff cap — the merchant's
+  // own admin account(s) don't count as "staff".
+  const staffCount = users.filter((u) => u.role === 'staff').length;
+  const staffLimitReached = staffCount >= MAX_STAFF_ACCOUNTS;
   const canEditUsers = isFullAccess || (currentMerchant?.permissions?.['User Management'] || []).includes('edit');
   const canDeleteUsers = isFullAccess || (currentMerchant?.permissions?.['User Management'] || []).includes('delete');
 
@@ -167,6 +173,11 @@ export default function UserManagement() {
 
   if (!inviteForm.name.trim() || !inviteForm.email.trim() || !inviteForm.password) {
     setInviteError('Name, email, and password are required.');
+    return;
+  }
+
+  if (inviteForm.role === 'Staff' && staffLimitReached) {
+    setInviteError(`You've reached the maximum of ${MAX_STAFF_ACCOUNTS} staff accounts.`);
     return;
   }
 
@@ -439,6 +450,10 @@ const toggleColumnAll = (action) => {
         <div className="um2-sidebar-header">
           <h2>Users</h2>
           <span className="um2-count-badge">{users.length}</span>
+          <span className="um2-spacer" />
+          <span className={`um2-staff-limit-badge ${staffLimitReached ? 'um2-staff-limit-badge-full' : ''}`}>
+            {staffCount}/{MAX_STAFF_ACCOUNTS} staff
+          </span>
         </div>
 
         <div className="um2-search">
@@ -498,11 +513,22 @@ const toggleColumnAll = (action) => {
           </div>
         )}
 
-        {canCreateUsers && (
-            <button type="button" className="um2-invite-btn" onClick={() => setIsInviteOpen(true)}>
+            {canCreateUsers && (
+            <button
+              type="button"
+              className="um2-invite-btn"
+              onClick={() => setIsInviteOpen(true)}
+              disabled={staffLimitReached}
+              title={staffLimitReached ? `Staff limit reached (${MAX_STAFF_ACCOUNTS} max)` : undefined}
+            >
               <Plus size={15} /> Add user
             </button>
           )}
+        {staffLimitReached && (
+          <p className="um2-hint" style={{ padding: '0 16px 12px' }}>
+            {staffCount} of {MAX_STAFF_ACCOUNTS} staff accounts used.
+          </p>
+        )}
       </aside>
 
       {/* --- Right: detail --- */}
