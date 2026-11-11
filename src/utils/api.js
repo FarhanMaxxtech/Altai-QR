@@ -1,4 +1,4 @@
-const API_BASE = 'https://altai-qr-production-fdfc.up.railway.app';
+const API_BASE = 'https://altai-qr-8mks.onrender.com';
 import { getAuthToken, clearAuth } from './authStorage';
 
 export async function apiFetch(path, options = {}) {
