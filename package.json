@@ -4,13 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-  "dev": "vite",
-  "build": "vite build",
-  "lint": "oxlint",
-  "preview": "vite preview",
-  "start": "serve -s dist -l $PORT"
-} ,
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "start": "serve -s dist -l $PORT"
+  },
   "dependencies": {
+    "@undecaf/zbar-wasm": "^0.11.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
