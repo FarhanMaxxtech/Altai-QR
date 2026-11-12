@@ -1,11 +1,11 @@
 // src/pages/merchant/StockManager.jsx
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
 import { ScanBarcode, Camera, X, Trash2, Info } from 'lucide-react';
-import { apiFetch } from '../../utils/api';
+import { apiFetch, apiFetchScanLookupBatch } from '../../utils/api';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormat';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useConfirm } from '../../context/ConfirmContext';
+import MultiQrScanner from '../../components/MultiQrScanner';
 
 import '../../styles/StockManager.css';
 
@@ -92,6 +92,10 @@ export default function StockManager() {
   const [scanCart, setScanCart] = useState([]);
   const [scanInput, setScanInput] = useState('');
   const scanCartRef = useRef([]);
+  const commitCart = (next) => {
+    scanCartRef.current = next;
+    setScanCart(next);
+  };
   const scanQueueRef = useRef([]);
   const isProcessingQueueRef = useRef(false);
 
@@ -99,15 +103,24 @@ export default function StockManager() {
   const [rangeFrom, setRangeFrom] = useState('');
   const [rangeTo, setRangeTo] = useState('');
   const [isAddingRange, setIsAddingRange] = useState(false);
-  
+
   const [page, setPage] = useState(1);
   const scanInputRef = useRef(null);
 
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [scanSuccessMessage, setScanSuccessMessage] = useState('');
-  const html5QrRef = useRef(null);
-  const lastScannedRef = useRef('');
-  const isScannerRunningRef = useRef(false);
+  const [cameraToast, setCameraToast] = useState('');
+  const [isCameraDialogOpen, setIsCameraDialogOpen] = useState(false);
+  const scanSessionRef = useRef(0);
+  const scannerRef = useRef(null);
+  const cameraPendingValuesRef = useRef(new Map());
+  const cameraPendingStoreRef = useRef(null);
+  const cameraBatchTimerRef = useRef(null);
+  const cameraBatchRequestRef = useRef(null);
+  const flushCameraBatchRef = useRef(null);
+  const cameraDialogRef = useRef(false);
+  const recentFailuresRef = useRef(new Map());
+  const scanCartSectionRef = useRef(null);
 
   const [remark, setRemark] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -135,9 +148,97 @@ export default function StockManager() {
 
   useEffect(() => { loadRecent(); }, []);
 
+  const resetScanSession = () => {
+    scanSessionRef.current += 1;
+    scanQueueRef.current = [];
+    scannerRef.current?.resetSession();
+    recentFailuresRef.current.clear();
+    if (cameraBatchTimerRef.current !== null) {
+      window.clearTimeout(cameraBatchTimerRef.current);
+      cameraBatchTimerRef.current = null;
+    }
+    cameraPendingValuesRef.current.clear();
+    cameraPendingStoreRef.current = null;
+    cameraBatchRequestRef.current?.controller.abort();
+    cameraBatchRequestRef.current = null;
+  };
+
+  useEffect(() => () => {
+    scanSessionRef.current += 1;
+    if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
+    cameraBatchRequestRef.current?.controller.abort();
+  }, []);
+
+  const showCameraFailures = (failures, allowImmediateRetry = false) => {
+    const now = Date.now();
+    const grouped = {};
+    failures.forEach(({ value, message }) => {
+      const lastFailure = recentFailuresRef.current.get(value);
+      if (!allowImmediateRetry && lastFailure && now - lastFailure < 5000) return;
+      if (allowImmediateRetry) recentFailuresRef.current.delete(value);
+      else recentFailuresRef.current.set(value, now);
+      (grouped[message] ||= []).push(value);
+    });
+    const text = Object.entries(grouped)
+      .map(([message, values]) => {
+        const serials = values.slice(0, 3).join(', ');
+        const more = values.length > 3 ? ` +${values.length - 3} more` : '';
+        return `${values.length} code${values.length === 1 ? '' : 's'}: ${message} (${serials}${more})`;
+      })
+      .join(' · ');
+    if (text) setCameraToast(text);
+  };
+
   useEffect(() => {
-  scanCartRef.current = scanCart;
-  }, [scanCart]);
+    const recoverStaleLookups = () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      const stalePending = scanCartRef.current.some((row) => (
+        row.scanState === 'checking'
+        && now - (row.checkingSince || now) > 10000
+        && cameraPendingValuesRef.current.has(row.scanValue)
+      ));
+      if (stalePending && !cameraBatchRequestRef.current) {
+        if (cameraBatchTimerRef.current !== null) {
+          window.clearTimeout(cameraBatchTimerRef.current);
+          cameraBatchTimerRef.current = null;
+        }
+        flushCameraBatchRef.current?.();
+      }
+      const timedOutRows = scanCartRef.current.filter((row) => {
+        if (row.scanState !== 'checking' || now - (row.checkingSince || now) <= 10000) return false;
+        const value = row.scanValue;
+        const pending = cameraPendingValuesRef.current.has(value);
+        const inFlight = cameraBatchRequestRef.current?.rowKeys.get(value) === row.scanKey;
+        return !pending && !inFlight;
+      });
+      if (timedOutRows.length === 0) return;
+
+      const timedOutKeys = new Set(timedOutRows.map((row) => row.scanKey));
+      timedOutRows.forEach((row) => recentFailuresRef.current.delete(row.scanValue));
+      commitCart(scanCartRef.current.filter((row) => !timedOutKeys.has(row.scanKey)));
+      showCameraFailures(timedOutRows.map((row) => ({
+        value: row.scanValue,
+        message: 'Lookup timed out, scan again',
+      })), true);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') recoverStaleLookups();
+    };
+    const intervalId = window.setInterval(recoverStaleLookups, 2000);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cameraToast) return undefined;
+    const timeoutId = window.setTimeout(() => setCameraToast(''), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [cameraToast]);
 
   const openDetail = (t) => {
   setIsDetailOpen(true);
@@ -206,7 +307,6 @@ const handleRejectDetail = async () => {
   }
 };
 
-  
 
   // --- Type / store selection handlers -------------------------------------
 
@@ -218,13 +318,16 @@ const handleRejectDetail = async () => {
   };
 
   const resetCartIfDirty = async () => {
-    if (scanCart.length > 0) {
+    if (scanCartRef.current.length > 0) {
       const ok = await confirm(
         'Changing the adjustment type or store will clear your current batch. Continue?',
         { title: 'Discard Changes', confirmLabel: 'Continue', danger: true }
       );
       if (!ok) return false;
-      setScanCart([]); setScanError(''); setSubmitMessage(''); setPage(1);
+      resetScanSession();
+      commitCart([]);
+      setSubmitMessage('');
+      setPage(1);
     }
     return true;
   };
@@ -237,6 +340,7 @@ const handleRejectDetail = async () => {
       return;
     }
     if (!(await resetCartIfDirty())) return;
+    resetScanSession();
     setSelectedTypeKey(type.key);
     setSourceStore('');
     setFromStore('');
@@ -248,6 +352,7 @@ const handleRejectDetail = async () => {
   const handleSourceStoreChange = async (e) => {
     const value = e.target.value;
     if (!(await resetCartIfDirty())) return;
+    resetScanSession();
     setSourceStore(value);
     setConfigError('');
   };
@@ -255,6 +360,7 @@ const handleRejectDetail = async () => {
   const handleFromStoreChange = async (e) => {
     const value = e.target.value;
     if (!(await resetCartIfDirty())) return;
+    resetScanSession();
     setFromStore(value);
     setConfigError('');
   };
@@ -262,19 +368,19 @@ const handleRejectDetail = async () => {
   const handleToStoreChange = async (e) => {
     const value = e.target.value;
     if (!(await resetCartIfDirty())) return;
+    resetScanSession();
     setToStore(value);
     setConfigError('');
   };
 
   // --- Scanning --------------------------------------------------------------
 
-  const addToCart = async (value) => {
+  const addToCart = async (value, sessionId = scanSessionRef.current) => {
   if (!canCreateAdjustments) return;
   if (!isConfigValid) {
     notify('Please select an adjustment type and store before scanning.');
     return;
   }
-  
 
   const existingItem = scanCartRef.current.find(
   (item) => item.label_id === value || item.qr_id === value
@@ -304,6 +410,7 @@ const handleRejectDetail = async () => {
 
   try {
     const { res, result } = await lookup();
+    if (sessionId !== scanSessionRef.current) return;
 
     if (!res.ok) {
       // Scanned an in-stock unit against the wrong source store — offer
@@ -316,9 +423,9 @@ const handleRejectDetail = async () => {
         // Batch already has units scanned from the currently selected store —
         // switching stores would silently mix two stores in one batch, so make
         // the trade-off explicit instead of auto-switching underneath the user.
-        if (scanCart.length > 0) {
+        if (scanCartRef.current.length > 0) {
           const switchAndClear = await confirm(
-            `${result.message}\n\nYour current batch has ${scanCart.length} unit(s) from "${currentStoreName}". Switching to "${storeName}" will clear that batch and start fresh with this code.`,
+            `${result.message}\n\nYour current batch has ${scanCartRef.current.length} unit(s) from "${currentStoreName}". Switching to "${storeName}" will clear that batch and start fresh with this code.`,
             {
               title: 'Different store',
               confirmLabel: `Switch & clear batch`,
@@ -326,8 +433,10 @@ const handleRejectDetail = async () => {
               danger: true,
             }
           );
+          if (sessionId !== scanSessionRef.current) return;
           if (!switchAndClear) return; // keep the existing batch, skip this code entirely
 
+          resetScanSession();
           if (isTransfer) {
             setFromStore(result.current_store_id);
           } else {
@@ -335,11 +444,12 @@ const handleRejectDetail = async () => {
           }
 
           const retry = await lookup(result.current_store_id);
+          if (scanSessionRef.current !== sessionId + 1) return;
           if (!retry.res.ok) {
             notify(`"${value}": ${retry.result.message || 'Could not recognize this code.'}`, { title: 'Scan issue', danger: true });
             return;
           }
-          setScanCart([retry.result]); // start fresh — old batch is discarded
+          commitCart([retry.result]); // start fresh — old batch is discarded
           setPage(1);
           return;
         }
@@ -349,6 +459,7 @@ const handleRejectDetail = async () => {
           `${result.message}\n\nSwitch the source store to "${storeName}" and add this code?`,
           { title: 'Wrong store', confirmLabel: 'Switch & add' }
         );
+        if (sessionId !== scanSessionRef.current) return;
         if (!confirmed) return;
 
         if (isTransfer) {
@@ -358,16 +469,13 @@ const handleRejectDetail = async () => {
         }
 
         const retry = await lookup(result.current_store_id);
+        if (sessionId !== scanSessionRef.current) return;
         if (!retry.res.ok) {
           notify(`"${value}": ${retry.result.message || 'Could not recognize this code.'}`, { title: 'Scan issue', danger: true });
           return;
         }
-        setScanCart((prev) => {
-          const next = [...prev, retry.result];
-          scanCartRef.current = next;
-          setPage(Math.ceil(next.length / PAGE_SIZE));
-          return next;
-        });
+        commitCart([...scanCartRef.current, retry.result]);
+        setPage(1);
         return;
       }
 
@@ -375,20 +483,16 @@ const handleRejectDetail = async () => {
       return;
     }
 
-    
 
-    setScanCart((prev) => {
-      const next = [...prev, result];
-      scanCartRef.current = next;
-      setPage(Math.ceil(next.length / PAGE_SIZE));
-      return next;
-    });
+    commitCart([...scanCartRef.current, result]);
+    setPage(1);
 
     if (navigator.vibrate) navigator.vibrate(80);
     setScanSuccessMessage(`✓ ${result.label_id} added.`);
     setTimeout(() => setScanSuccessMessage(''), 2000);
     } catch (err) {
-    notify('Could not reach server. Check it is running.', { title: 'Network error', danger: true });
+      if (sessionId !== scanSessionRef.current) return;
+      notify('Could not reach server. Check it is running.', { title: 'Network error', danger: true });
     console.error(err);
   }
 };
@@ -396,17 +500,26 @@ const handleRejectDetail = async () => {
   // Serializes scans so a fast USB scanner (which fires Enter far quicker
   // than addToCart's network round-trip) can't run addToCart concurrently
   // and race on scanCartRef.current, silently dropping scans.
-  const enqueueScan = (value) => {
-    scanQueueRef.current.push(value);
+  const enqueueScanBatch = (values) => {
+    const batch = values.map((value) => value.trim()).filter(Boolean);
+    if (batch.length === 0) return;
+    scanQueueRef.current.push({ batch, sessionId: scanSessionRef.current });
     processScanQueue();
   };
+
+  const enqueueScan = (value) => enqueueScanBatch([value]);
 
   const processScanQueue = async () => {
     if (isProcessingQueueRef.current) return;
     isProcessingQueueRef.current = true;
     while (scanQueueRef.current.length > 0) {
-      const value = scanQueueRef.current.shift();
-      await addToCart(value);
+      const { batch, sessionId } = scanQueueRef.current.shift();
+      if (sessionId !== scanSessionRef.current) continue;
+      if (batch.length > 1) {
+        await addManyToCart(batch);
+      } else {
+        await addToCart(batch[0], sessionId);
+      }
     }
     isProcessingQueueRef.current = false;
   };
@@ -426,6 +539,7 @@ const handleRejectDetail = async () => {
   // (e.g. "TE-021631") hit which problem. Mirrors the addManyToCart pattern
   // used on the Assign QR to Product page.
   const addManyToCart = async (values) => {
+    const sessionId = scanSessionRef.current;
     if (!canCreateAdjustments) return;
     if (!isConfigValid) {
       notify('Please select an adjustment type and store before scanning.');
@@ -436,47 +550,61 @@ const handleRejectDetail = async () => {
       ? sourceStore
       : (isTransfer ? fromStore : '');
 
-    let current = [...scanCart];
+    let current = [...scanCartRef.current];
     const failures = [];
     let successCount = 0;
 
-    for (const raw of values) {
-      const value = raw.trim();
-      if (!value) continue;
-
-      const alreadyScanned = current.some(
-        (item) => item.label_id === value || item.qr_id === value
-      );
-      if (alreadyScanned) {
-        failures.push({ value, message: 'already scanned' });
-        continue;
-      }
+    for (let offset = 0; offset < values.length; offset += 100) {
+      const chunk = values.slice(offset, offset + 100).map((value) => value.trim()).filter(Boolean);
+      const candidates = [];
+      chunk.forEach((value) => {
+        if (current.some((item) => item.label_id === value || item.qr_id === value)
+          || candidates.includes(value)) {
+          failures.push({ value, message: 'already scanned' });
+        } else {
+          candidates.push(value);
+        }
+      });
+      if (candidates.length === 0) continue;
 
       try {
-        const params = new URLSearchParams({
-          serial_number: value,
-          transaction_type: selectedType.txType,
+        const results = await apiFetchScanLookupBatch(
+          '/api/transactions/scan-lookup-batch',
+          candidates,
+          {
+            transaction_type: selectedType.txType,
+            from_store_id: fromStoreForType,
+          },
+          (value) => {
+            const params = new URLSearchParams({
+              serial_number: value,
+              transaction_type: selectedType.txType,
+            });
+            if (fromStoreForType) params.set('from_store_id', fromStoreForType);
+            return `/api/transactions/scan-lookup?${params.toString()}`;
+          }
+        );
+        if (sessionId !== scanSessionRef.current) return;
+        current = [...scanCartRef.current];
+        results.forEach((result) => {
+          if (!result.ok) {
+            failures.push({ value: result.label_id || result.value, message: result.message || 'could not be recognized' });
+            return;
+          }
+          if (current.some((item) => item.qr_batch === result.data.qr_batch || item.label_id === result.data.label_id)) return;
+          current = [...current, result.data];
+          successCount++;
         });
-        if (fromStoreForType) params.set('from_store_id', fromStoreForType);
-
-        const res = await apiFetch(`/api/transactions/scan-lookup?${params.toString()}`);
-        const result = await res.json();
-
-        if (!res.ok) {
-        failures.push({ value: result.label_id || value, message: result.message || 'could not be recognized' });
-        continue;
-      }
-
-        current = [...current, result];
-        successCount++;
+        commitCart(current);
+        setPage(1);
       } catch (err) {
-        failures.push({ value, message: 'could not reach server' });
+        if (sessionId !== scanSessionRef.current) return;
+        candidates.forEach((value) => failures.push({ value, message: 'could not reach server' }));
         console.error(err);
       }
     }
 
-    setScanCart(current);
-    setPage(Math.max(1, Math.ceil(current.length / PAGE_SIZE)));
+    if (sessionId !== scanSessionRef.current) return;
 
     if (successCount > 0) {
       if (navigator.vibrate) navigator.vibrate(80);
@@ -496,10 +624,241 @@ const handleRejectDetail = async () => {
           return `${codes.length} code${codes.length === 1 ? '' : 's'} ${message}: ${shown}${more}`;
         })
         .join('\n');
-      notify(text, { title: 'Scan issue', danger: true });
+      if (isCameraOpen) {
+        showCameraFailures(failures);
+      } else {
+        notify(text, { title: 'Scan issue', danger: true });
+      }
     }
 
     return { successCount, failures };
+  };
+
+  const flushCameraBatch = async () => {
+    if (cameraBatchRequestRef.current || cameraPendingValuesRef.current.size === 0) return;
+    const sessionId = scanSessionRef.current;
+    const pending = [...cameraPendingValuesRef.current.entries()].slice(0, 100);
+    const storeIdOverride = cameraPendingStoreRef.current;
+    pending.forEach(([value]) => cameraPendingValuesRef.current.delete(value));
+    if (cameraPendingValuesRef.current.size === 0) cameraPendingStoreRef.current = null;
+    const values = pending.map(([value]) => value);
+    const rowKeys = new Map(pending);
+    const controller = new AbortController();
+    const request = { controller, rowKeys };
+    cameraBatchRequestRef.current = request;
+    let timedOut = false;
+    let timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 8000);
+
+    try {
+      const currentFromStore = storeIdOverride || (
+        SOURCE_STORE_TYPES.includes(selectedTypeKey)
+          ? sourceStore
+          : (isTransfer ? fromStore : '')
+      );
+      const results = await apiFetchScanLookupBatch(
+        '/api/transactions/scan-lookup-batch',
+        values,
+        {
+          transaction_type: selectedType.txType,
+          from_store_id: currentFromStore,
+        },
+        (value) => {
+          const params = new URLSearchParams({
+            serial_number: value,
+            transaction_type: selectedType.txType,
+          });
+          if (currentFromStore) params.set('from_store_id', currentFromStore);
+          return `/api/transactions/scan-lookup?${params.toString()}`;
+        },
+        controller.signal
+      );
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+      if (sessionId !== scanSessionRef.current) return;
+
+      const successfulRows = new Map();
+      const failures = [];
+      const wrongStoreResults = [];
+      const receivedValues = new Set();
+      let successCount = 0;
+      results.forEach((result) => {
+        receivedValues.add(result.value);
+        const scanKey = rowKeys.get(result.value);
+        if (result.ok) {
+          successfulRows.set(scanKey, {
+            ...result.data,
+            scanKey,
+            scanValue: result.value,
+            scanState: 'ok',
+            checkingSince: undefined,
+          });
+          successCount++;
+        } else if (result.wrong_store && result.current_store_id) {
+          wrongStoreResults.push({ ...result, value: result.value });
+        } else {
+          failures.push({ value: result.label_id || result.value, message: result.message || 'Could not recognize this code.' });
+        }
+      });
+      values.filter((value) => !receivedValues.has(value))
+        .forEach((value) => failures.push({ value, message: 'Could not recognize this code.' }));
+
+      const resolvedCart = scanCartRef.current.flatMap((row) => {
+        if (!rowKeys.has(row.scanValue)) return [row];
+        const success = successfulRows.get(row.scanKey);
+        return success ? [success] : [];
+      });
+      commitCart(resolvedCart);
+      if (successCount > 0) {
+        setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
+        setTimeout(() => setScanSuccessMessage(''), 2500);
+      }
+      showCameraFailures(failures);
+
+      if (wrongStoreResults.length === 0) return;
+
+      const storeGroups = new Map();
+      wrongStoreResults.forEach((item) => {
+        const group = storeGroups.get(item.current_store_id) || [];
+        group.push(item);
+        storeGroups.set(item.current_store_id, group);
+      });
+      const groupedText = [...storeGroups.entries()]
+        .map(([storeId, items]) => {
+          const storeName = items[0].current_store_name || stores.find((store) => store.store_id === storeId)?.location || 'another store';
+          return `${items.length} code${items.length === 1 ? '' : 's'} belong${items.length === 1 ? 's' : ''} to "${storeName}": ${items.map((item) => item.value).join(', ')}`;
+        })
+        .join('\n');
+
+      cameraDialogRef.current = true;
+      setIsCameraDialogOpen(true);
+      const targetStoreIds = [...storeGroups.keys()];
+      const canSwitchTogether = targetStoreIds.length === 1;
+      const readyCount = scanCartRef.current.filter((item) => item.scanState === 'ok' || !item.scanState).length;
+      const message = canSwitchTogether
+        ? `${groupedText}\n\n${readyCount > 0 ? `Your current batch has ${readyCount} unit(s). Switching stores will clear that batch. ` : ''}Switch to this store and add these codes?`
+        : `${groupedText}\n\nThese codes belong to different stores. Scan codes from one store at a time.`;
+      const confirmed = await confirm(message, {
+        title: 'Different store',
+        confirmLabel: canSwitchTogether ? (readyCount > 0 ? 'Switch & clear batch' : 'Switch & add') : 'OK',
+        hideCancel: !canSwitchTogether,
+        cancelLabel: 'Keep current store',
+        danger: readyCount > 0 && canSwitchTogether,
+      });
+      cameraDialogRef.current = false;
+      setIsCameraDialogOpen(false);
+
+      if (sessionId !== scanSessionRef.current || !confirmed || !canSwitchTogether) {
+        wrongStoreResults.forEach((item) => recentFailuresRef.current.set(item.value, Date.now()));
+        return;
+      }
+
+      const targetStoreId = targetStoreIds[0];
+      resetScanSession();
+      commitCart([]);
+      setPage(1);
+      if (isTransfer) {
+        setFromStore(targetStoreId);
+      } else {
+        setSourceStore(targetStoreId);
+      }
+      wrongStoreResults.forEach((item) => recentFailuresRef.current.delete(item.value));
+      scanCameraBatch(wrongStoreResults.map((item) => item.value), targetStoreId);
+    } catch (err) {
+      if (sessionId !== scanSessionRef.current) return;
+      const message = timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.';
+      commitCart(scanCartRef.current.filter((row) => !rowKeys.has(row.scanValue)));
+      showCameraFailures(values.map((value) => ({ value, message })), timedOut);
+      if (!timedOut) console.error(err);
+    } finally {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      const unresolvedKeys = new Set(
+        scanCartRef.current
+          .filter((row) => rowKeys.get(row.scanValue) === row.scanKey && row.scanState === 'checking')
+          .map((row) => row.scanKey)
+      );
+      if (unresolvedKeys.size > 0) {
+        const unresolvedRows = scanCartRef.current.filter((row) => unresolvedKeys.has(row.scanKey));
+        unresolvedRows.forEach((row) => recentFailuresRef.current.delete(row.scanValue));
+        commitCart(scanCartRef.current.filter((row) => !unresolvedKeys.has(row.scanKey)));
+        showCameraFailures(unresolvedRows.map((row) => ({
+          value: row.scanValue,
+          message: timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.',
+        })), timedOut);
+      }
+      if (cameraBatchRequestRef.current === request) {
+        cameraBatchRequestRef.current = null;
+        if (cameraPendingValuesRef.current.size > 0) {
+          if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
+          cameraBatchTimerRef.current = window.setTimeout(flushCameraBatch, 0);
+        }
+      }
+    }
+  };
+  flushCameraBatchRef.current = flushCameraBatch;
+
+  const scanCameraBatch = (values, storeIdOverride = null) => {
+    if (!canCreateAdjustments || !isConfigValid || cameraDialogRef.current) return;
+    const sessionId = scanSessionRef.current;
+    const now = Date.now();
+    const current = [...scanCartRef.current];
+    const duplicates = [];
+    const pendingValues = new Map();
+    recentFailuresRef.current.forEach((lastFailure, value) => {
+      if (now - lastFailure >= 5000) recentFailuresRef.current.delete(value);
+    });
+
+    values.forEach((rawValue) => {
+      const value = rawValue.trim();
+      if (!value) return;
+      const existing = current.find((item) => (item.scanValue || item.label_id) === value);
+      const existingIsInFlight = existing
+        && (cameraPendingValuesRef.current.has(value)
+          || cameraBatchRequestRef.current?.rowKeys.get(value) === existing.scanKey);
+      if ((existing && (existing.scanState !== 'checking' || existingIsInFlight))
+        || cameraPendingValuesRef.current.has(value)
+        || pendingValues.has(value)) {
+        duplicates.push({ value, message: 'already in batch' });
+        return;
+      }
+      const lastFailure = recentFailuresRef.current.get(value);
+      if (lastFailure && now - lastFailure < 5000) return;
+      pendingValues.set(value, `camera-${sessionId}-${now}-${pendingValues.size}`);
+    });
+
+    if (pendingValues.size > 0) {
+      const next = [
+        ...current,
+        ...[...pendingValues.entries()].map(([value, scanKey]) => ({
+          scanKey,
+          scanValue: value,
+          qr_batch: scanKey,
+          label_id: value,
+          scanState: 'checking',
+          checkingSince: now,
+        })),
+      ];
+      const rescanValues = new Set(pendingValues.keys());
+      const filtered = current.filter((row) => (
+        !rescanValues.has(row.scanValue || row.label_id)
+        || row.scanState !== 'checking'
+        || cameraPendingValuesRef.current.has(row.scanValue)
+        || cameraBatchRequestRef.current?.rowKeys.get(row.scanValue) === row.scanKey
+      ));
+      const nextCart = [...filtered, ...next.slice(current.length)];
+      pendingValues.forEach((scanKey, value) => cameraPendingValuesRef.current.set(value, scanKey));
+      if (storeIdOverride) cameraPendingStoreRef.current = storeIdOverride;
+      commitCart(nextCart);
+      setPage(1);
+      if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
+      cameraBatchTimerRef.current = window.setTimeout(() => {
+        cameraBatchTimerRef.current = null;
+        flushCameraBatch();
+      }, 150);
+    }
+    if (duplicates.length > 0) showCameraFailures(duplicates);
   };
 
   const handleAddRange = async (e) => {
@@ -549,87 +908,44 @@ const handleRejectDetail = async () => {
 };
 
   const removeFromCart = (qrBatch) => {
-    setScanCart((prev) => {
-      const next = prev.filter((item) => item.qr_batch !== qrBatch);
-      scanCartRef.current = next;
-      const totalPages = Math.max(1, Math.ceil(next.length / PAGE_SIZE));
-      setPage((p) => Math.min(p, totalPages));
-      return next;
-    });
+    const next = scanCartRef.current.filter((item) => item.qr_batch !== qrBatch);
+    commitCart(next);
+    const totalPages = Math.max(1, Math.ceil(next.length / PAGE_SIZE));
+    setPage((p) => Math.min(p, totalPages));
   };
 
   const clearCart = () => {
-    setScanCart([]);
+    resetScanSession();
+    commitCart([]);
     setSubmitMessage('');
-    scanCartRef.current = next;
     setPage(1);
   };
 
-  const toggleCamera = async () => {
-    if (!canCreateAdjustments) return;
-    if (isCameraOpen) {
-      if (html5QrRef.current && isScannerRunningRef.current) {
-        try {
-          await html5QrRef.current.stop();
-          await html5QrRef.current.clear();
-        } catch (e) {
-          // ignore — scanner may already be stopped
-        }
+  const toggleCamera = () => {
+    if (!isCameraOpen) {
+      if (!canCreateAdjustments) return;
+      if (!isConfigValid) {
+        notify('Please select an adjustment type and store before scanning.');
+        return;
       }
-      isScannerRunningRef.current = false;
-      setIsCameraOpen(false);
-      return;
     }
-
-    if (!isConfigValid) {
-      notify('Please select an adjustment type and store before scanning.');
-      return;
-    }
-
-    lastScannedRef.current = '';
-    setIsCameraOpen(true);
-
-    setTimeout(async () => {
-      try {
-        const html5Qr = new Html5Qrcode('sa-qr-reader');
-        html5QrRef.current = html5Qr;
-
-        await html5Qr.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 220, height: 220 } },
-          (decodedText) => {
-            const trimmed = decodedText.trim();
-            if (trimmed === lastScannedRef.current) return;
-            lastScannedRef.current = trimmed;
-            enqueueScan(trimmed);
-          },
-          () => {}
-        );
-        isScannerRunningRef.current = true;
-      } catch (err) {
-        notify('Could not access camera. Check permissions and try again.', { title: 'Camera error', danger: true });
-        setIsCameraOpen(false);
+    if (isCameraOpen && cameraPendingValuesRef.current.size > 0) {
+      if (cameraBatchTimerRef.current !== null) {
+        window.clearTimeout(cameraBatchTimerRef.current);
+        cameraBatchTimerRef.current = null;
       }
-    }, 0);
+      flushCameraBatch();
+    }
+    setIsCameraOpen((open) => !open);
   };
-
-  useEffect(() => {
-    return () => {
-      if (html5QrRef.current && isScannerRunningRef.current) {
-        try {
-          html5QrRef.current.stop().catch(() => {});
-        } catch (e) {
-          // ignore synchronous throw
-        }
-      }
-      isScannerRunningRef.current = false;
-    };
-  }, []);
 
   // --- Pagination ------------------------------------------------------------
 
   const totalPages = Math.max(1, Math.ceil(scanCart.length / PAGE_SIZE));
-  const pagedCart = scanCart.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const readyCart = scanCart.filter((item) => item.scanState !== 'checking');
+  const checkingCount = scanCart.filter((item) => item.scanState === 'checking').length;
+  const orderedScanCart = [...scanCart].reverse();
+  const pagedCart = orderedScanCart.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const handlePageChange = (next) => {
     if (next < 1 || next > totalPages) return;
     setPage(next);
@@ -644,8 +960,8 @@ const handleRejectDetail = async () => {
   // --- Review summary --------------------------------------------------------
 
   const distinctSkuCount = useMemo(
-    () => new Set(scanCart.map((i) => i.variant_id)).size,
-    [scanCart]
+    () => new Set(readyCart.map((i) => i.variant_id)).size,
+    [readyCart]
   );
 
   const sourceStoreName = stores.find((s) => s.store_id === sourceStore)?.location;
@@ -670,14 +986,14 @@ const handleRejectDetail = async () => {
     );
 
   const netChangeText = (() => {
-    if (scanCart.length === 0) return '0 units';
-    if (selectedTypeKey === 'STOCK_OUT' || selectedTypeKey === 'DAMAGE') return `-${scanCart.length} units`;
-    if (selectedTypeKey === 'TRANSFER') return `+${scanCart.length} units`;
-    return `+${scanCart.length} units`;
+    if (readyCart.length === 0) return '0 units';
+    if (selectedTypeKey === 'STOCK_OUT' || selectedTypeKey === 'DAMAGE') return `-${readyCart.length} units`;
+    if (selectedTypeKey === 'TRANSFER') return `+${readyCart.length} units`;
+    return `+${readyCart.length} units`;
   })();
 
   const netChangeClass = (() => {
-    if (scanCart.length === 0) return '';
+    if (readyCart.length === 0) return '';
     if (selectedTypeKey === 'STOCK_OUT' || selectedTypeKey === 'DAMAGE') return 'sa-net-negative';
     return 'sa-net-positive';
   })();
@@ -691,11 +1007,15 @@ const handleRejectDetail = async () => {
         notify('Please select an adjustment type and store before submitting.');
         return;
       }
-      if (scanCart.length === 0) {
+      if (checkingCount > 0) {
+        setSubmitMessage('Wait for all QR lookups to finish.');
+        return;
+      }
+      if (readyCart.length === 0) {
         notify('Scan at least one unit first.');
         return;
       }
-      setReviewRows(scanCart.map((item) => ({ ...item })));
+      setReviewRows(readyCart.map((item) => ({ ...item })));
       setReviewPage(1);
       setIsReviewOpen(true);
     };
@@ -705,9 +1025,10 @@ const handleRejectDetail = async () => {
     };
 
     const rejectReview = () => {
+      resetScanSession();
       setIsReviewOpen(false);
       setReviewRows([]);
-      setScanCart([]);
+      commitCart([]);
       setPage(1);
       setSubmitMessage('Batch discarded.');
     };
@@ -770,7 +1091,8 @@ const handleRejectDetail = async () => {
               : `${totalCount} unit(s) recorded.`
           );
 
-          setScanCart([]);
+          resetScanSession();
+          commitCart([]);
           setPage(1);
           setIsReviewOpen(false);
           setReviewRows([]);
@@ -784,22 +1106,22 @@ const handleRejectDetail = async () => {
       };
 
   const handleDiscard = async () => {
-    if (scanCart.length > 0) {
+    if (scanCartRef.current.length > 0) {
       const ok = await confirm('Discard this batch and reset the form?', {
-        title: 'Discard Changes', 
+        title: 'Discard Changes',
         confirmLabel: 'Discard',
         danger: true,
       });
       if (!ok) return;
     }
-    setScanCart([]);
+    resetScanSession();
+    commitCart([]);
     setSelectedTypeKey('');
     setSourceStore('');
     setFromStore('');
     setToStore('');
     setReferenceDoc('');
     setRemark('');
-    setScanError('');
     setSubmitMessage('');
     setConfigError('');
     setPage(1);
@@ -831,7 +1153,7 @@ const handleRejectDetail = async () => {
     }
 
   return (
-    <div className="sa-page">
+    <div className={`sa-page ${isCameraOpen ? 'sa-camera-active' : ''}`}>
       {/* ============================ LEFT COLUMN ============================ */}
       <div className="sa-left">
         {/* --- Adjustment type + stores --- */}
@@ -948,19 +1270,41 @@ const handleRejectDetail = async () => {
 
           {isCameraOpen && (
             <div className="sa-camera-block">
-              <div id="sa-qr-reader" className="sa-camera-reader-box" />
-              {/*<button type="button" className="sa-btn-stop-camera" onClick={toggleCamera}>
-                Stop Camera
-              </button>*/}
-            </div>
-          )}
-
-          <div className="sa-camera-block">
-              <div id="sa-qr-reader" className="sa-camera-reader-box" />
+              <MultiQrScanner
+                ref={scannerRef}
+                isActive={isCameraOpen}
+                paused={isCameraDialogOpen || isReviewOpen || isSubmitting}
+                maxCodesPerShot={200}
+                scannedCount={scanCart.length}
+                onDetected={scanCameraBatch}
+                onError={(message) => {
+                  notify(message, { title: 'Camera error', danger: true });
+                  setIsCameraOpen(false);
+                }}
+                overlayContent={
+                  <>
+                    <div className="sa-camera-summary">
+                      <strong>{scanCart.length} scanned</strong>
+                      <div className="sa-camera-chips">
+                        {[...scanCart].slice(-3).reverse().map((item) => (
+                          <span
+                            key={item.scanKey || item.qr_batch}
+                            className={`sa-camera-chip sa-camera-chip-${item.scanState || 'ok'}`}
+                          >
+                            {item.scanState === 'checking' ? 'Checking…' : item.label_id}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    {cameraToast && <div className="sa-camera-toast" role="status">{cameraToast}</div>}
+                  </>
+                }
+              />
               {scanSuccessMessage && (
                 <div className="sa-camera-scan-flash">{scanSuccessMessage}</div>
               )}
             </div>
+          )}
 
           <div className="sa-scan-hints">
             <span>ENTER to add · each unit is looked up automatically</span>
@@ -1014,7 +1358,7 @@ const handleRejectDetail = async () => {
         </section>
 
         {/* --- Batch table --- */}
-        <section className="sa-card">
+        <section className="sa-card" ref={scanCartSectionRef}>
           <div className="sa-batch-header">
             <span className="sa-batch-title">Batch</span>
             <span className="sa-batch-count-badge">{scanCart.length} UNIT{scanCart.length === 1 ? '' : 'S'}</span>
@@ -1049,14 +1393,14 @@ const handleRejectDetail = async () => {
                       const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
                       const sign = qtySign(selectedTypeKey);
                       return (
-                        <tr key={item.qr_batch}>
+                        <tr key={item.scanKey || item.qr_batch} className={item.scanState === 'checking' ? 'sa-scan-row-checking' : ''}>
                           <td className="sa-col-no">{String(rowNumber).padStart(2, '0')}</td>
                           <td className="sa-serial-cell">{item.label_id}</td>
-                          <td className="sa-sku-cell">{item.sku}</td>
+                          <td className="sa-sku-cell">{item.scanState === 'checking' ? 'Checking…' : item.sku}</td>
                           <td>{item.product_name}</td>
                           <td className={`sa-col-qty ${sign.className}`}>{sign.text}</td>
                           <td className="sa-col-remove">
-                            <button type="button" className="sa-remove-btn" onClick={() => removeFromCart(item.qr_batch)} aria-label="Remove">
+                            <button type="button" className="sa-remove-btn" onClick={() => removeFromCart(item.qr_batch)} disabled={item.scanState === 'checking'} aria-label="Remove">
                               <X size={14} />
                             </button>
                           </td>
@@ -1081,6 +1425,7 @@ const handleRejectDetail = async () => {
             </>
           )}
         </section>
+
       </div>
 
       {/* ============================ RIGHT COLUMN ============================ */}
@@ -1098,7 +1443,7 @@ const handleRejectDetail = async () => {
           </div>
           <div className="sa-review-row">
             <span className="sa-review-label">Units Scanned</span>
-            <span className="sa-review-value">{scanCart.length}</span>
+            <span className="sa-review-value">{readyCart.length}</span>
           </div>
           <div className="sa-review-row">
             <span className="sa-review-label">Distinct SKUs</span>
@@ -1130,8 +1475,8 @@ const handleRejectDetail = async () => {
             <button type="button" className="sa-btn-secondary" onClick={handleDiscard}>
               Discard
             </button>
-            <button type="button" className="sa-btn-primary" onClick={openReview} disabled={!isConfigValid || scanCart.length === 0 || isSubmitting || !canCreateAdjustments}>
-            {isSubmitting ? 'Submitting…' : `Submit ${scanCart.length} unit${scanCart.length === 1 ? '' : 's'}`}
+            <button type="button" className="sa-btn-primary" onClick={openReview} disabled={!isConfigValid || readyCart.length === 0 || checkingCount > 0 || isSubmitting || !canCreateAdjustments}>
+            {isSubmitting ? 'Submitting…' : `Submit ${readyCart.length} unit${readyCart.length === 1 ? '' : 's'}`}
           </button>
           </div>
         </section>
@@ -1280,7 +1625,7 @@ const handleRejectDetail = async () => {
                 </div>
               </div>
             </div>
-            
+
           )}
           {isDetailOpen && (
   <div className="sa-modal-overlay" onClick={closeDetail}>
@@ -1392,6 +1737,15 @@ const handleRejectDetail = async () => {
     </div>
   </div>
 )}
+      {isCameraOpen && (
+        <div className="sa-camera-bottom-bar">
+          <span>{scanCart.length} scanned</span>
+          <button type="button" onClick={() => scanCartSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            View list
+          </button>
+          <button type="button" onClick={toggleCamera}>Stop scanning</button>
+        </div>
+      )}
     </div>
   );
 }

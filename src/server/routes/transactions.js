@@ -183,6 +183,62 @@ function scanStatusMessage(status) {
   return `This code is ${SCAN_STATUS_LABELS[status] || status} and can't be used for this adjustment.`;
 }
 
+function getTransactionScanFailure(code, transactionType, fromStoreId) {
+  if (!transactionType) return null;
+
+  if (transactionType === 'RECEIVE') {
+    if (code.status !== 'pending') {
+      return {
+        status: 409,
+        body: {
+          message: scanStatusMessage(code.status),
+          status: code.status,
+          label_id: code.label_id,
+        },
+      };
+    }
+    return null;
+  }
+
+  if (code.status !== 'in_stock') {
+    return {
+      status: 409,
+      body: {
+        message: scanStatusMessage(code.status),
+        status: code.status,
+        label_id: code.label_id,
+      },
+    };
+  }
+
+  if (fromStoreId && code.current_store_id !== fromStoreId) {
+    return {
+      status: 409,
+      body: {
+        message: `This code is currently in stock at "${code.current_store_name || 'another store'}", not the store you selected.`,
+        wrong_store: true,
+        current_store_id: code.current_store_id,
+        current_store_name: code.current_store_name,
+        label_id: code.label_id,
+      },
+    };
+  }
+
+  return null;
+}
+
+function normalizeScanValues(values) {
+  if (!Array.isArray(values) || values.length === 0 || values.length > 200) return null;
+  const unique = new Map();
+  for (const rawValue of values) {
+    if (typeof rawValue !== 'string') return null;
+    const value = rawValue.trim();
+    if (!value) return null;
+    if (!unique.has(value)) unique.set(value, value);
+  }
+  return [...unique.values()];
+}
+
 // GET look up a single scanned unit before adding it to the scan cart —
 // validates ownership and current status without committing anything.
 // Uses serial_number as the lookup key (previously qr_value).
@@ -239,45 +295,71 @@ router.get('/scan-lookup', async (req, res) => {
 
     const code = result.rows[0];
 
-    // No adjustment context supplied — old behaviour, just return the code.
-    if (!transaction_type) {
-      return res.json(code);
-    }
-
-    if (transaction_type === 'RECEIVE') {
-      if (code.status !== 'pending') {
-        return res.status(409).json({
-          message: scanStatusMessage(code.status),
-          status: code.status,
-          label_id: code.label_id,
-        });
-      }
-      return res.json(code);
-    }
-
-    if (code.status !== 'in_stock') {
-      return res.status(409).json({
-        message: scanStatusMessage(code.status),
-        status: code.status,
-        label_id: code.label_id,
-      });
-    }
-
-    if (from_store_id && code.current_store_id !== from_store_id) {
-      return res.status(409).json({
-        message: `This code is currently in stock at "${code.current_store_name || 'another store'}", not the store you selected.`,
-        wrong_store: true,
-        current_store_id: code.current_store_id,
-        current_store_name: code.current_store_name,
-        label_id: code.label_id,
-      });
-    }
+    const failure = getTransactionScanFailure(code, transaction_type, from_store_id);
+    if (failure) return res.status(failure.status).json(failure.body);
 
     res.json(code);
   } catch (err) {
     res.status(500).json({
       message: err.message
     });
+  }
+});
+
+router.post('/scan-lookup-batch', async (req, res) => {
+  const values = normalizeScanValues(req.body?.values);
+  if (!values) {
+    return res.status(400).json({ message: 'values must be a non-empty array of up to 200 non-empty strings.' });
+  }
+
+  const transaction_type = req.body.transaction_type?.trim();
+  const from_store_id = req.body.from_store_id?.trim();
+
+  try {
+    const normalizedValues = values.map((value) => value.toUpperCase());
+    const result = await pool.query(
+      `WITH latest_codes AS (
+        SELECT DISTINCT ON (UPPER(qc.label_id))
+               qc.qr_batch, qc.qr_id, qc.label_id, qc.status, qc.current_store_id,
+               cs.location AS current_store_name,
+               v.variant_id, v.sku, p.product_id, p.product_name, qc.created_at
+        FROM qr_codes qc
+        JOIN variants v ON v.variant_id = qc.variant_id
+        JOIN products p ON p.product_id = v.product_id
+        LEFT JOIN stores cs ON cs.store_id = qc.current_store_id
+        WHERE (UPPER(qc.label_id) = ANY($1::text[]) OR qc.qr_id = ANY($2::text[]))
+          AND p.merchant_id = $3
+        ORDER BY UPPER(qc.label_id), qc.created_at DESC
+      )
+      SELECT requested.value, matched.*
+      FROM unnest($4::text[]) AS requested(value)
+      LEFT JOIN LATERAL (
+        SELECT code.*
+        FROM latest_codes code
+        WHERE UPPER(code.label_id) = UPPER(requested.value) OR code.qr_id = requested.value
+        ORDER BY code.created_at DESC
+        LIMIT 1
+      ) matched ON true`,
+      [normalizedValues, values, req.user.merchant_id, values]
+    );
+
+    const resultsByValue = new Map(result.rows.map((row) => [row.value, row]));
+    const results = values.map((value) => {
+      const code = resultsByValue.get(value);
+      if (!code?.label_id && !code?.qr_id) return { value, ok: false, message: 'Code not found.' };
+
+      const failure = getTransactionScanFailure(code, transaction_type, from_store_id);
+      if (failure) return { value, ok: false, ...failure.body };
+
+      const data = { ...code };
+      delete data.value;
+      delete data.created_at;
+      return { value, ok: true, data };
+    });
+
+    res.json({ results });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 

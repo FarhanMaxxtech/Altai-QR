@@ -14,6 +14,55 @@ const BLOCKED_STATUS_MESSAGES = {
   cycle_adjusted: 'This code was removed via a cycle count adjustment and can no longer be assigned.',
 };
 
+function getAssignmentScanFailure(req, code) {
+  if (code.status === 'in_stock') {
+    if (!assertStoreInScope(req, code.current_store_id)) {
+      return {
+        status: 403,
+        body: {
+          message: 'This code is in stock at a store you do not have access to.',
+          label_id: code.label_id,
+        },
+      };
+    }
+    return {
+      status: 409,
+      body: {
+        message: 'This code is currently in stock and must be checked out before it can be reassigned.',
+        label_id: code.label_id,
+      },
+    };
+  }
+
+  if (BLOCKED_STATUS_MESSAGES[code.status]) {
+    return { status: 409, body: { message: BLOCKED_STATUS_MESSAGES[code.status], label_id: code.label_id } };
+  }
+
+  if (code.pending_variant_id) {
+    return {
+      status: 409,
+      body: {
+        message: 'This code already has a pending assignment awaiting approval.',
+        label_id: code.label_id,
+      },
+    };
+  }
+
+  return null;
+}
+
+function normalizeScanValues(values) {
+  if (!Array.isArray(values) || values.length === 0 || values.length > 200) return null;
+  const unique = new Map();
+  for (const rawValue of values) {
+    if (typeof rawValue !== 'string') return null;
+    const value = rawValue.trim();
+    if (!value) return null;
+    if (!unique.has(value)) unique.set(value, value);
+  }
+  return [...unique.values()];
+}
+
 // GET this merchant's batches that still have unassigned codes
 router.get('/batches/available', async (req, res) => {
   try {
@@ -86,36 +135,66 @@ router.get('/scan-lookup', async (req, res) => {
 
     const code = result.rows[0];
 
-    // In-stock codes must be checked out first — they can't be reassigned
-    // to a different product while still physically in a store.
-    if (code.status === 'in_stock') {
-      if (!assertStoreInScope(req, code.current_store_id)) {
-        return res.status(403).json({
-          message: 'This code is in stock at a store you do not have access to.',
-          label_id: code.label_id,
-        });
-      }
-      return res.status(409).json({
-        message: 'This code is currently in stock and must be checked out before it can be reassigned.',
-        label_id: code.label_id,
-      });
-    }
-
-    if (BLOCKED_STATUS_MESSAGES[code.status]) {
-      return res.status(409).json({
-        message: BLOCKED_STATUS_MESSAGES[code.status],
-        label_id: code.label_id,
-      });
-    }
-
-    if (code.pending_variant_id) {
-      return res.status(409).json({
-        message: 'This code already has a pending assignment awaiting approval.',
-        label_id: code.label_id,
-      });
-    }
+    const failure = getAssignmentScanFailure(req, code);
+    if (failure) return res.status(failure.status).json(failure.body);
 
     res.json(code);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/scan-lookup-batch', async (req, res) => {
+  const values = normalizeScanValues(req.body?.values);
+  if (!values) {
+    return res.status(400).json({ message: 'values must be a non-empty array of up to 200 non-empty strings.' });
+  }
+
+  try {
+    const normalizedValues = values.map((value) => value.toUpperCase());
+    const result = await pool.query(
+      `WITH latest_codes AS (
+        SELECT DISTINCT ON (UPPER(qc.label_id))
+               qc.qr_batch, qc.label_id, qc.qr_id, qc.status, qc.assigned_user_id,
+               qc.current_store_id, qc.variant_id, qc.pending_variant_id,
+               v.sku AS current_sku, p.product_name AS current_product_name, qc.created_at
+        FROM qr_codes qc
+        JOIN users u ON u.user_id = qc.assigned_user_id
+        LEFT JOIN variants v ON v.variant_id = qc.variant_id
+        LEFT JOIN products p ON p.product_id = v.product_id
+        WHERE (UPPER(qc.label_id) = ANY($1::text[]) OR qc.qr_id = ANY($2::text[]))
+          AND u.merchant_id = $3
+        ORDER BY UPPER(qc.label_id), qc.created_at DESC
+      )
+      SELECT requested.value, matched.*
+      FROM unnest($4::text[]) AS requested(value)
+      LEFT JOIN LATERAL (
+        SELECT code.*
+        FROM latest_codes code
+        WHERE UPPER(code.label_id) = UPPER(requested.value) OR code.qr_id = requested.value
+        ORDER BY code.created_at DESC
+        LIMIT 1
+      ) matched ON true`,
+      [normalizedValues, values, req.user.merchant_id, values]
+    );
+
+    const resultsByValue = new Map(result.rows.map((row) => [row.value, row]));
+    const results = values.map((value) => {
+      const code = resultsByValue.get(value);
+      if (!code?.label_id && !code?.qr_id) {
+        return { value, ok: false, message: 'Code not found.' };
+      }
+
+      const failure = getAssignmentScanFailure(req, code);
+      if (failure) return { value, ok: false, ...failure.body };
+
+      const data = { ...code };
+      delete data.value;
+      delete data.created_at;
+      return { value, ok: true, data };
+    });
+
+    res.json({ results });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

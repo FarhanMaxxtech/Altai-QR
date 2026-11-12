@@ -1,12 +1,12 @@
 // src/pages/merchant/AssignQrToProduct.jsx
 import React, { useState, useRef } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
 import { ScanBarcode, Camera, X } from 'lucide-react';
-import { apiFetch } from '../../utils/api';
+import { apiFetch, apiFetchScanLookupBatch } from '../../utils/api';
 import { useEffect } from 'react';
 import '../../styles/AssignQrToProduct.css';
 import { useLocation } from 'react-router-dom';
 import { useConfirm } from '../../context/ConfirmContext';
+import MultiQrScanner from '../../components/MultiQrScanner';
 
 const MAX_RANGE_SIZE = 500;
 const SUMMARY_PAGE_SIZE = 50;
@@ -18,6 +18,9 @@ function displayName(sku, productName) {
 }
 
 function badgeInfo(item) {
+  if (item.scanState === 'checking') {
+    return { label: 'Checking…', className: 'aq-badge aq-badge-checking' };
+  }
   // A code that was previously checked out is being reused on a new label —
   // everything else (unassigned / pending / first-time) counts as "New".
   return item.status === 'checked_out'
@@ -48,12 +51,22 @@ export default function AssignQrToProduct() {
   const scanInputRef = useRef(null);
 
   const scanCartRef = useRef([]);
+  const commitCart = (next) => {
+    scanCartRef.current = next;
+    setScanCart(next);
+  };
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const scanQueueRef = useRef([]);
   const isProcessingQueueRef = useRef(false);
-  const html5QrRef = useRef(null);
-  const lastScannedRef = useRef('');
-  const isScannerRunningRef = useRef(false);
+  const scanSessionRef = useRef(0);
+  const scannerRef = useRef(null);
+  const cameraPendingValuesRef = useRef(new Map());
+  const cameraBatchTimerRef = useRef(null);
+  const cameraBatchRequestRef = useRef(null);
+  const flushCameraBatchRef = useRef(null);
+  const recentFailuresRef = useRef(new Map());
+  const scannedListRef = useRef(null);
+  const [cameraToast, setCameraToast] = useState('');
 
   const [rangePrefix, setRangePrefix] = useState('');
   const [rangeFrom, setRangeFrom] = useState('');
@@ -93,13 +106,100 @@ export default function AssignQrToProduct() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [products]);
 
-useEffect(() => {
-  scanCartRef.current = scanCart;
-}, [scanCart]);
-
   const selectedProduct = products.find((p) => p.product_id === productId);
   const variantOptions = selectedProduct ? selectedProduct.variants : [];
   const selectedVariant = variantOptions.find((v) => v.variant_id === variantId);
+
+  const resetScanSession = () => {
+    scanSessionRef.current += 1;
+    scanQueueRef.current = [];
+    scannerRef.current?.resetSession();
+    recentFailuresRef.current.clear();
+    if (cameraBatchTimerRef.current !== null) {
+      window.clearTimeout(cameraBatchTimerRef.current);
+      cameraBatchTimerRef.current = null;
+    }
+    cameraPendingValuesRef.current.clear();
+    cameraBatchRequestRef.current?.controller.abort();
+    cameraBatchRequestRef.current = null;
+  };
+
+  useEffect(() => () => {
+    scanSessionRef.current += 1;
+    if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
+    cameraBatchRequestRef.current?.controller.abort();
+  }, []);
+
+  const showCameraFailures = (failures, allowImmediateRetry = false) => {
+    const now = Date.now();
+    const grouped = {};
+    failures.forEach(({ value, message }) => {
+      const lastFailure = recentFailuresRef.current.get(value);
+      if (!allowImmediateRetry && lastFailure && now - lastFailure < 5000) return;
+      if (allowImmediateRetry) recentFailuresRef.current.delete(value);
+      else recentFailuresRef.current.set(value, now);
+      (grouped[message] ||= []).push(value);
+    });
+    const text = Object.entries(grouped)
+      .map(([message, values]) => {
+        const serials = values.slice(0, 3).join(', ');
+        const more = values.length > 3 ? ` +${values.length - 3} more` : '';
+        return `${values.length} code${values.length === 1 ? '' : 's'}: ${message} (${serials}${more})`;
+      })
+      .join(' · ');
+    if (text) setCameraToast(text);
+  };
+
+  useEffect(() => {
+    const recoverStaleLookups = () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      const stalePending = scanCartRef.current.some((row) => (
+        row.scanState === 'checking'
+        && now - (row.checkingSince || now) > 10000
+        && cameraPendingValuesRef.current.has(row.scanValue)
+      ));
+      if (stalePending && !cameraBatchRequestRef.current) {
+        if (cameraBatchTimerRef.current !== null) {
+          window.clearTimeout(cameraBatchTimerRef.current);
+          cameraBatchTimerRef.current = null;
+        }
+        flushCameraBatchRef.current?.();
+      }
+      const timedOutRows = scanCartRef.current.filter((row) => {
+        if (row.scanState !== 'checking' || now - (row.checkingSince || now) <= 10000) return false;
+        const value = row.scanValue;
+        const pending = cameraPendingValuesRef.current.has(value);
+        const inFlight = cameraBatchRequestRef.current?.rowKeys.get(value) === row.scanKey;
+        return !pending && !inFlight;
+      });
+      if (timedOutRows.length === 0) return;
+
+      const timedOutKeys = new Set(timedOutRows.map((row) => row.scanKey));
+      timedOutRows.forEach((row) => recentFailuresRef.current.delete(row.scanValue));
+      commitCart(scanCartRef.current.filter((row) => !timedOutKeys.has(row.scanKey)));
+      showCameraFailures(timedOutRows.map((row) => ({
+        value: row.scanValue,
+        message: 'Lookup timed out, scan again',
+      })), true);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') recoverStaleLookups();
+    };
+    const intervalId = window.setInterval(recoverStaleLookups, 2000);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cameraToast) return undefined;
+    const timeoutId = window.setTimeout(() => setCameraToast(''), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [cameraToast]);
 
   const handleProductChange = (e) => {
     setProductId(e.target.value);
@@ -108,48 +208,54 @@ useEffect(() => {
 
   // --- Scanning helpers -------------------------------------------------
 
-  // Looks up one or more serials/QR values, skipping ones already in the
-  // cart, and reports any that couldn't be recognized.
-    const addManyToCart = async (values) => {
+  const addManyToCart = async (values) => {
+    const sessionId = scanSessionRef.current;
     setScanSuccessMessage('');
     let current = [...scanCartRef.current];
     const failures = [];
     let successCount = 0;
 
-    for (const raw of values) {
-      const value = raw.trim();
-      if (!value) continue;
-
-      const alreadyScanned = current.some(
-        (item) => item.label_id === value || item.qr_id === value
-      );
-      if (alreadyScanned) {
-        const existing = current.find(
-          (item) => item.label_id === value || item.qr_id === value
-        );
-        failures.push({ value: existing.label_id, message: 'Already scanned in this batch.' });
-        continue;
-      }
+    for (let offset = 0; offset < values.length; offset += 100) {
+      const chunk = values.slice(offset, offset + 100).map((value) => value.trim()).filter(Boolean);
+      const candidates = [];
+      chunk.forEach((value) => {
+        if (current.some((item) => item.label_id === value || item.qr_id === value)
+          || candidates.includes(value)) {
+          failures.push({ value, message: 'Already scanned in this batch.' });
+        } else {
+          candidates.push(value);
+        }
+      });
+      if (candidates.length === 0) continue;
 
       try {
-        const res = await apiFetch(`/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`);
-        const result = await res.json();
-
-        if (!res.ok) {
-          failures.push({ value: result.label_id || value, message: result.message || 'Could not recognize this code.' });
-          continue;
-        }
-        current = [...current, result];
-        successCount++;
+        const results = await apiFetchScanLookupBatch(
+          '/api/qrcode/scan-lookup-batch',
+          candidates,
+          {},
+          (value) => `/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`
+        );
+        if (sessionId !== scanSessionRef.current) return;
+        current = [...scanCartRef.current];
+        results.forEach((result) => {
+          if (!result.ok) {
+            failures.push({ value: result.label_id || result.value, message: result.message || 'Could not recognize this code.' });
+            return;
+          }
+          if (current.some((item) => item.qr_batch === result.data.qr_batch || item.label_id === result.data.label_id)) return;
+          current = [...current, result.data];
+          successCount++;
+        });
+        commitCart(current);
+        setScanCartPage(1);
       } catch (err) {
-        failures.push({ value, message: 'Could not reach server. Check it is running.' });
+        if (sessionId !== scanSessionRef.current) return;
+        candidates.forEach((value) => failures.push({ value, message: 'Could not reach server. Check it is running.' }));
         console.error(err);
       }
     }
 
-    setScanCart(current);
-    scanCartRef.current = current;
-    setScanCartPage(Math.max(1, Math.ceil(current.length / SCAN_CART_PAGE_SIZE)));
+    if (sessionId !== scanSessionRef.current) return;
 
     if (failures.length > 0) {
       const grouped = {};
@@ -163,7 +269,11 @@ useEffect(() => {
           return `${values.length} code${values.length === 1 ? '' : 's'} — ${message} (${shown}${more})`;
         })
         .join('\n');
-      notify(text, { title: 'Scan issue', danger: true });
+      if (isCameraOpen) {
+        showCameraFailures(failures);
+      } else {
+        notify(text, { title: 'Scan issue', danger: true });
+      }
     }
 
     if (successCount > 0) {
@@ -178,21 +288,182 @@ useEffect(() => {
   }
   };
 
+  const flushCameraBatch = async () => {
+    if (cameraBatchRequestRef.current || cameraPendingValuesRef.current.size === 0) return;
+    const sessionId = scanSessionRef.current;
+    const pending = [...cameraPendingValuesRef.current.entries()].slice(0, 100);
+    pending.forEach(([value]) => cameraPendingValuesRef.current.delete(value));
+    const values = pending.map(([value]) => value);
+    const rowKeys = new Map(pending);
+    const controller = new AbortController();
+    const request = { controller, rowKeys };
+    cameraBatchRequestRef.current = request;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 8000);
+    try {
+      const results = await apiFetchScanLookupBatch(
+        '/api/qrcode/scan-lookup-batch',
+        values,
+        {},
+        (value) => `/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`,
+        controller.signal
+      );
+      if (sessionId !== scanSessionRef.current) return;
+
+      const successfulRows = new Map();
+      const failures = [];
+      const receivedValues = new Set();
+      let successCount = 0;
+      results.forEach((result) => {
+        receivedValues.add(result.value);
+        const scanKey = rowKeys.get(result.value);
+        if (result.ok) {
+          successfulRows.set(scanKey, {
+            ...result.data,
+            scanKey,
+            scanValue: result.value,
+            scanState: 'ok',
+            checkingSince: undefined,
+          });
+          successCount++;
+        } else {
+          failures.push({ value: result.label_id || result.value, message: result.message || 'Could not recognize this code.' });
+        }
+      });
+      values.filter((value) => !receivedValues.has(value))
+        .forEach((value) => failures.push({ value, message: 'Could not recognize this code.' }));
+
+      const resolvedCart = scanCartRef.current.flatMap((row) => {
+        if (!rowKeys.has(row.scanValue)) return [row];
+        const success = successfulRows.get(row.scanKey);
+        return success ? [success] : [];
+      });
+      commitCart(resolvedCart);
+      if (successCount > 0) {
+        setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
+        setTimeout(() => setScanSuccessMessage(''), 2500);
+      }
+      showCameraFailures(failures);
+    } catch (err) {
+      if (sessionId !== scanSessionRef.current) return;
+      const message = timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.';
+      commitCart(scanCartRef.current.filter((row) => !rowKeys.has(row.scanValue)));
+      showCameraFailures(values.map((value) => ({ value, message })), timedOut);
+      if (!timedOut) console.error(err);
+    } finally {
+      window.clearTimeout(timeoutId);
+      const unresolvedKeys = new Set(
+        scanCartRef.current
+          .filter((row) => rowKeys.get(row.scanValue) === row.scanKey && row.scanState === 'checking')
+          .map((row) => row.scanKey)
+      );
+      if (unresolvedKeys.size > 0) {
+        const unresolvedRows = scanCartRef.current.filter((row) => unresolvedKeys.has(row.scanKey));
+        unresolvedRows.forEach((row) => recentFailuresRef.current.delete(row.scanValue));
+        commitCart(scanCartRef.current.filter((row) => !unresolvedKeys.has(row.scanKey)));
+        showCameraFailures(unresolvedRows.map((row) => ({
+          value: row.scanValue,
+          message: timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.',
+        })));
+      }
+      if (cameraBatchRequestRef.current === request) {
+        cameraBatchRequestRef.current = null;
+        if (cameraPendingValuesRef.current.size > 0) {
+          if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
+          cameraBatchTimerRef.current = window.setTimeout(flushCameraBatch, 0);
+        }
+      }
+    }
+  };
+  flushCameraBatchRef.current = flushCameraBatch;
+
+  const scanCameraBatch = (values) => {
+    const sessionId = scanSessionRef.current;
+    const now = Date.now();
+    const current = [...scanCartRef.current];
+    const duplicates = [];
+    const pendingValues = new Map();
+    recentFailuresRef.current.forEach((lastFailure, value) => {
+      if (now - lastFailure >= 5000) recentFailuresRef.current.delete(value);
+    });
+
+    values.forEach((rawValue) => {
+      const value = rawValue.trim();
+      if (!value) return;
+      const existing = current.find((item) => (item.scanValue || item.label_id) === value);
+      const existingIsInFlight = existing
+        && (cameraPendingValuesRef.current.has(value)
+          || cameraBatchRequestRef.current?.rowKeys.get(value) === existing.scanKey);
+      if ((existing && (existing.scanState !== 'checking' || existingIsInFlight))
+        || cameraPendingValuesRef.current.has(value)
+        || pendingValues.has(value)) {
+        duplicates.push({ value, message: 'already in batch' });
+        return;
+      }
+      const lastFailure = recentFailuresRef.current.get(value);
+      if (lastFailure && now - lastFailure < 5000) return;
+
+      const scanKey = `camera-${sessionId}-${now}-${pendingValues.size}`;
+      pendingValues.set(value, scanKey);
+    });
+
+    if (pendingValues.size > 0) {
+      const next = [
+        ...current,
+        ...[...pendingValues.entries()].map(([value, scanKey]) => ({
+          scanKey,
+          scanValue: value,
+          qr_batch: scanKey,
+          label_id: value,
+          scanState: 'checking',
+          checkingSince: now,
+        })),
+      ];
+      const rescanValues = new Set(pendingValues.keys());
+      const filtered = current.filter((row) => (
+        !rescanValues.has(row.scanValue || row.label_id)
+        || row.scanState !== 'checking'
+        || cameraPendingValuesRef.current.has(row.scanValue)
+        || cameraBatchRequestRef.current?.rowKeys.get(row.scanValue) === row.scanKey
+      ));
+      const nextCart = [
+        ...filtered,
+        ...next.slice(current.length),
+      ];
+      pendingValues.forEach((scanKey, value) => cameraPendingValuesRef.current.set(value, scanKey));
+      commitCart(nextCart);
+      setScanCartPage(1);
+      if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
+      cameraBatchTimerRef.current = window.setTimeout(() => {
+        cameraBatchTimerRef.current = null;
+        flushCameraBatch();
+      }, 150);
+    }
+    if (duplicates.length > 0) showCameraFailures(duplicates);
+  };
+
     // Ensures scans are processed one at a time, in order — a fast USB
   // scanner fires Enter (and thus handleScanSubmit) far quicker than
   // addManyToCart's network round-trip, so without a queue, concurrent
   // calls race on scanCartRef.current and silently drop scans.
-  const enqueueScan = (value) => {
-    scanQueueRef.current.push(value);
+  const enqueueScanBatch = (values) => {
+    const batch = values.map((value) => value.trim()).filter(Boolean);
+    if (batch.length === 0) return;
+    scanQueueRef.current.push(batch);
     processScanQueue();
   };
+
+  const enqueueScan = (value) => enqueueScanBatch([value]);
 
   const processScanQueue = async () => {
     if (isProcessingQueueRef.current) return;
     isProcessingQueueRef.current = true;
     while (scanQueueRef.current.length > 0) {
-      const value = scanQueueRef.current.shift();
-      await addManyToCart([value]);
+      const values = scanQueueRef.current.shift();
+      await addManyToCart(values);
     }
     isProcessingQueueRef.current = false;
   };
@@ -206,74 +477,29 @@ useEffect(() => {
 
   // removeFromCart
   const removeFromCart = (qrBatch) => {
-  setScanCart((prev) => {
-    const next = prev.filter((item) => item.qr_batch !== qrBatch);
-    const totalPages = Math.max(1, Math.ceil(next.length / SCAN_CART_PAGE_SIZE));
-    setScanCartPage((p) => Math.min(p, totalPages));
-    return next;
-  });
+  const next = scanCartRef.current.filter((item) => item.qr_batch !== qrBatch);
+  commitCart(next);
+  const totalPages = Math.max(1, Math.ceil(next.length / SCAN_CART_PAGE_SIZE));
+  setScanCartPage((p) => Math.min(p, totalPages));
   };
 
   const clearCart = () => {
-   setScanCart([]);
+   resetScanSession();
+   commitCart([]);
    setSubmitMessage('');
    setScanCartPage(1);
   };
 
-  const toggleCamera = async () => {
-    if (isCameraOpen) {
-      if (html5QrRef.current && isScannerRunningRef.current) {
-        try {
-          await html5QrRef.current.stop();
-          await html5QrRef.current.clear();
-        } catch (e) {
-          // ignore — scanner may already be stopped
-        }
+  const toggleCamera = () => {
+    if (isCameraOpen && cameraPendingValuesRef.current.size > 0) {
+      if (cameraBatchTimerRef.current !== null) {
+        window.clearTimeout(cameraBatchTimerRef.current);
+        cameraBatchTimerRef.current = null;
       }
-      isScannerRunningRef.current = false;
-      setIsCameraOpen(false);
-      return;
+      flushCameraBatch();
     }
-
-    lastScannedRef.current = '';
-    setIsCameraOpen(true);
-
-    setTimeout(async () => {
-      try {
-        const html5Qr = new Html5Qrcode('assign-qr-camera-reader');
-        html5QrRef.current = html5Qr;
-
-        await html5Qr.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 220, height: 220 } },
-          (decodedText) => {
-            const trimmed = decodedText.trim();
-            if (trimmed === lastScannedRef.current) return;
-            lastScannedRef.current = trimmed;
-            enqueueScan(trimmed);
-          },
-          () => {}
-        );
-        isScannerRunningRef.current = true;
-      } catch (err) {
-        notify('Could not access camera. Check permissions and try again.', { title: 'Camera error', danger: true });
-        setIsCameraOpen(false);
-      }
-    }, 0);
+    setIsCameraOpen((open) => !open);
   };
-
-  useEffect(() => {
-    return () => {
-      if (html5QrRef.current && isScannerRunningRef.current) {
-        try {
-          html5QrRef.current.stop().catch(() => {});
-        } catch (e) {
-          // ignore synchronous throw
-        }
-      }
-      isScannerRunningRef.current = false;
-    };
-  }, []);
 
   // --- Serial range ----------------------------------------------------
 
@@ -321,17 +547,19 @@ useEffect(() => {
 
   // --- Assignment submit -------------------------------------------------
 
-  const codesQueued = scanCart.length;
+  const readyCart = scanCart.filter((item) => item.scanState !== 'checking');
+  const codesQueued = readyCart.length;
+  const checkingCount = scanCart.filter((item) => item.scanState === 'checking').length;
   const targetLabel = selectedVariant ? displayName(selectedVariant.sku, selectedProduct.product_name) : null;
-  const isReady = codesQueued > 0 && Boolean(variantId);
+  const isReady = codesQueued > 0 && checkingCount === 0 && Boolean(variantId);
 
   const handleCancel = () => {
-    setScanCart([]);
+    resetScanSession();
+    commitCart([]);
     setProductId('');
     setVariantId('');
     setBatchNumber('');
     setExpiryDate('');
-    setScanErrorGroups({});
     setSubmitMessage('');
   };
 
@@ -363,7 +591,13 @@ useEffect(() => {
     e.preventDefault();
     setSubmitMessage('');
 
-    if (scanCart.length === 0) {
+    const currentCart = scanCartRef.current;
+    const readyCart = currentCart.filter((item) => item.scanState !== 'checking');
+    if (currentCart.some((item) => item.scanState === 'checking')) {
+      setSubmitMessage('Wait for all QR lookups to finish.');
+      return;
+    }
+    if (readyCart.length === 0) {
       setSubmitMessage('Scan at least one QR code first.');
       return;
     }
@@ -377,7 +611,7 @@ useEffect(() => {
       const res = await apiFetch('/api/qrcode/assign-scan', {
         method: 'POST',
         body: JSON.stringify({
-          qr_ids: scanCart.map((item) => item.qr_batch),
+          qr_ids: readyCart.map((item) => item.qr_batch),
           variant_id: variantId,
           remarks: batchNumber.trim() || null,
           expiry_date: expiryDate || null,
@@ -393,7 +627,8 @@ useEffect(() => {
       const label = targetLabel;
       const varId = variantId;
 
-      setScanCart([]);
+      resetScanSession();
+      commitCart([]);
       setBatchNumber('');
       setExpiryDate('');
       setProductId('');
@@ -493,8 +728,9 @@ useEffect(() => {
     }
   };
 
+  const orderedScanCart = [...scanCart].reverse();
   const scanCartTotalPages = Math.max(1, Math.ceil(scanCart.length / SCAN_CART_PAGE_SIZE));
-  const pagedScanCart = scanCart.slice((scanCartPage - 1) * SCAN_CART_PAGE_SIZE, scanCartPage * SCAN_CART_PAGE_SIZE);
+  const pagedScanCart = orderedScanCart.slice((scanCartPage - 1) * SCAN_CART_PAGE_SIZE, scanCartPage * SCAN_CART_PAGE_SIZE);
 
   const summaryTotalPages = Math.max(1, Math.ceil(summaryRows.length / SUMMARY_PAGE_SIZE));
   const pagedSummaryRows = summaryRows.slice(
@@ -504,7 +740,7 @@ useEffect(() => {
   
 
   return (
-    <div className="aq-page">
+    <div className={`aq-page ${isCameraOpen ? 'aq-camera-active' : ''}`}>
 
       <div className="aq-layout">
         {/* --- Left column: Scan station + scanned list --- */}
@@ -555,24 +791,43 @@ useEffect(() => {
               </button>
             )}
 
-            {/*{isCameraOpen && (
+            {isCameraOpen && (
               <div className="aq-camera-block">
-                <div id="assign-qr-camera-reader" className="aq-camera-reader-box" />
+                <MultiQrScanner
+                  ref={scannerRef}
+                  isActive={isCameraOpen}
+                  paused={isSubmitting || isSummaryOpen}
+                  maxCodesPerShot={200}
+                  scannedCount={scanCart.length}
+                  onDetected={scanCameraBatch}
+                  onError={(message) => {
+                    notify(message, { title: 'Camera error', danger: true });
+                    setIsCameraOpen(false);
+                  }}
+                  overlayContent={
+                    <>
+                      <div className="aq-camera-summary">
+                        <strong>{scanCart.length} scanned</strong>
+                        <div className="aq-camera-chips">
+                          {[...scanCart].slice(-3).reverse().map((item) => (
+                            <span
+                              key={item.scanKey || item.qr_batch}
+                              className={`aq-camera-chip aq-camera-chip-${item.scanState || 'ok'}`}
+                            >
+                              {item.scanState === 'checking' ? 'Checking…' : item.label_id}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      {cameraToast && <div className="aq-camera-toast" role="status">{cameraToast}</div>}
+                    </>
+                  }
+                />
                 {scanSuccessMessage && (
                   <div className="aq-camera-scan-flash">{scanSuccessMessage}</div>
                 )}
-                <button type="button" className="aq-btn-stop-camera" onClick={toggleCamera}>
-                  Stop Camera
-                </button>
               </div>
-            )}*/}
-
-            <div className="aq-camera-block">
-                <div id="assign-qr-camera-reader" className="aq-camera-reader-box" />
-                {scanSuccessMessage && (
-                  <div className="aq-camera-scan-flash">{scanSuccessMessage}</div>
-                )}
-              </div>
+            )}
 
             <div className="aq-scan-hints">
               <span>ENTER to add · scans append automatically</span>
@@ -632,7 +887,7 @@ useEffect(() => {
               )}
           </section>
 
-          <section className="aq-scanned-card">
+          <section className="aq-scanned-card" ref={scannedListRef}>
             <div className="aq-scanned-header">
               <span className="aq-scanned-title">Scanned this session</span>
               <span className="aq-scanned-count-badge">{scanCart.length}</span>
@@ -650,7 +905,10 @@ useEffect(() => {
                   const badge = badgeInfo(item);
                   const rowNumber = (scanCartPage - 1) * SCAN_CART_PAGE_SIZE + index + 1;
                   return (
-                    <li key={item.qr_batch} className="aq-scanned-row">
+                    <li
+                      key={item.scanKey || item.qr_batch}
+                      className={`aq-scanned-row ${item.scanState ? `aq-scanned-row-${item.scanState}` : ''}`}
+                    >
                       <span className="aq-scanned-index">{String(rowNumber).padStart(2, '0')}</span>
                       <span className="aq-scanned-serial">{item.label_id}</span>
                       <span className={badge.className}>{badge.label}</span>
@@ -658,6 +916,7 @@ useEffect(() => {
                         type="button"
                         className="aq-scanned-remove"
                         onClick={() => removeFromCart(item.qr_batch)}
+                        disabled={item.scanState === 'checking'}
                         aria-label="Remove"
                       >
                         <X size={14} />
@@ -680,6 +939,16 @@ useEffect(() => {
             )}
           </section>
         </div>
+
+        {isCameraOpen && (
+          <div className="aq-camera-bottom-bar">
+            <span>{scanCart.length} scanned</span>
+            <button type="button" onClick={() => scannedListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+              View list
+            </button>
+            <button type="button" onClick={toggleCamera}>Stop scanning</button>
+          </div>
+        )}
 
         {/* --- Right column: Assignment details --- */}
         <section className="aq-details-card">
@@ -735,6 +1004,7 @@ useEffect(() => {
           <div className="aq-queue-summary">
             <span className="aq-queue-count">
               {codesQueued} code{codesQueued === 1 ? '' : 's'} queued
+              {checkingCount > 0 && ` · ${checkingCount} checking`}
               {targetLabel && <span className="aq-queue-target"> → {targetLabel}</span>}
             </span>
             <span className={`aq-status-pill ${isReady ? 'aq-status-pill-ready' : ''}`}>
