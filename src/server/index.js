@@ -24,6 +24,9 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Health check — lets hosting (and you) confirm the API is up
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+
 // Public — login/register only
 app.use('/api/auth', authRouter);
 

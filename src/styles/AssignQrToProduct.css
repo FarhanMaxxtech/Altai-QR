@@ -179,6 +179,22 @@
   border-color: #f0f7ea;
 }
 
+.aq-camera-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.aq-camera-actions .aq-btn-camera-full {
+  width: auto;
+  flex: 1;
+}
+
+.aq-camera-actions-full {
+  width: 100%;
+}
+
 .aq-camera-block {
   display: flex;
   flex-direction: column;
@@ -1147,5 +1163,501 @@
     border-radius: 9px;     /* matches .aq-btn-add-range radius */
     font-size: 13.5px;
     font-weight: 700;
+  }
+}
+
+.aq-scan-station {
+  container-type: inline-size;
+  overflow: visible;
+  min-width: 0;
+}
+
+.aq-scan-row {
+  width: 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.aq-scan-input-wrap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.aq-scan-input-wrap input {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aq-btn-add,
+.aq-btn-camera {
+  flex: none;
+  height: 48px;
+}
+
+.aq-camera-actions {
+  width: auto;
+  min-width: 0;
+  gap: 8px;
+}
+
+.aq-camera-actions .multi-qr-snap {
+  flex: none;
+  width: auto;
+}
+
+.aq-scanned-header {
+  flex-wrap: wrap;
+}
+
+.aq-sort-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid #e5e7eb;
+  border-radius: 9px;
+  background: #f7f8f6;
+}
+
+.aq-sort-toggle button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #6b7280;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.aq-sort-toggle button.is-active {
+  background: #edf7e8;
+  color: #2f8f1e;
+}
+
+.aq-sort-toggle button:focus-visible {
+  outline: 2px solid #2f8f1e;
+  outline-offset: 1px;
+}
+
+@container (max-width: 420px) {
+  .aq-scan-row,
+  .aq-camera-actions {
+    gap: 6px;
+  }
+
+  .aq-scan-input-wrap {
+    gap: 6px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .aq-btn-add {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+}
+
+@container (max-width: 300px) {
+  .aq-scan-row {
+    flex-wrap: wrap;
+  }
+
+  .aq-scan-input-wrap {
+    flex: 1 1 100%;
+  }
+
+  .aq-camera-actions {
+    margin-left: auto;
+  }
+}
+
+@media (pointer: coarse) {
+  .aq-scan-input-wrap,
+  .aq-btn-add,
+  .aq-btn-camera,
+  .aq-camera-actions .multi-qr-snap__button {
+    height: 44px;
+  }
+
+  .aq-btn-camera {
+    width: 44px;
+  }
+}
+
+@media (max-width: 640px) {
+  .aq-scanned-header-spacer {
+    display: none;
+  }
+}
+
+.aq-snap-report {
+  position: static;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+  color: #111827;
+}
+
+.aq-scan-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px 0 12px;
+  border: 1px solid #e3e9dc;
+  border-radius: 10px;
+  background: #fff;
+  color: #6b7280;
+}
+
+.aq-scan-search:focus-within {
+  border-color: #2f8f1e;
+  box-shadow: 0 0 0 3px rgba(47, 143, 30, 0.12);
+}
+
+.aq-scan-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #111827;
+  font: inherit;
+  font-size: 14px;
+}
+
+.aq-scan-search input::placeholder {
+  color: #9ca3af;
+}
+
+.aq-scan-search button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.aq-scan-search button:hover {
+  background: #f3f7f0;
+  color: #111827;
+}
+
+.aq-scan-search-results {
+  margin: -6px 0 0;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.aq-scan-search-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e3e9dc;
+  border-radius: 10px;
+  background: #f9fbf7;
+  color: #374151;
+  font-size: 13px;
+}
+
+.aq-scan-search-empty > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.aq-scan-search-add,
+.aq-scan-search-clear {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.aq-scan-search-add {
+  border: 1px solid #2f8f1e;
+  background: #2f8f1e;
+  color: #fff;
+}
+
+.aq-scan-search-clear {
+  border: 1px solid #d9ded7;
+  background: #fff;
+  color: #374151;
+}
+
+.aq-snap-report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.aq-snap-report-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.aq-snap-report-dismiss {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.aq-snap-report-dismiss:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.aq-snap-report-success {
+  margin: 0;
+  color: #2f8f1e;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.aq-snap-report-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.aq-snap-report-counts strong {
+  margin-left: 4px;
+  color: #111827;
+}
+
+.aq-snap-report-note,
+.aq-snap-report-hint {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.aq-snap-report-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #374151;
+  font-size: 13px;
+}
+
+.aq-snap-report-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.aq-snap-report-chip {
+  min-height: 44px;
+  padding: 4px 9px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #f9fafb;
+  color: #374151;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.aq-snap-report-chip:hover {
+  border-color: #2f8f1e;
+  background: #edf7e8;
+}
+
+.aq-snap-report-chip-missing {
+  border-color: #f5d58b;
+  background: #fffbeb;
+  color: #854d0e;
+}
+
+.aq-snap-report-chip-failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.aq-snap-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.aq-snap-report-actions button {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.aq-snap-report-add {
+  border: 1px solid #2f8f1e;
+  background: #2f8f1e;
+  color: #fff;
+}
+
+.aq-snap-report-add:hover:not(:disabled) {
+  background: #267417;
+}
+
+.aq-snap-report-add:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.aq-snap-report-manual {
+  border: 1px solid #d9ded7;
+  background: #fff;
+  color: #111827;
+}
+
+.aq-snap-report button:focus-visible {
+  outline: 3px solid rgba(47, 143, 30, 0.3);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .aq-snap-report-chips {
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .aq-scan-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .aq-scan-row .aq-scan-input-wrap {
+    box-sizing: border-box;
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .aq-scan-row > .aq-btn-add {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 44px;
+  }
+
+  .aq-scan-row > .aq-camera-actions {
+    display: contents;
+  }
+
+  .aq-scan-row .aq-btn-camera {
+    width: 44px;
+    height: 44px;
+  }
+
+  .aq-scan-row .multi-qr-snap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .aq-scan-row .multi-qr-snap__button {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .aq-camera-actions-full {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+
+  .aq-camera-actions-full .aq-btn-camera-full,
+  .aq-camera-actions-full .multi-qr-snap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .aq-camera-actions-full .multi-qr-snap__button {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+  }
+}
+
+@container (max-width: 420px) {
+  .aq-scan-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .aq-scan-row .aq-scan-input-wrap {
+    box-sizing: border-box;
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .aq-scan-row > .aq-btn-add {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 44px;
+  }
+
+  .aq-scan-row > .aq-camera-actions {
+    display: contents;
+  }
+
+  .aq-scan-row .aq-btn-camera {
+    width: 44px;
+    height: 44px;
+  }
+
+  .aq-scan-row .multi-qr-snap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .aq-scan-row .multi-qr-snap__button {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
   }
 }

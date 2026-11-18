@@ -1,17 +1,60 @@
 // src/pages/merchant/StockManager.jsx
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { ScanBarcode, Camera, X, Trash2, Info } from 'lucide-react';
+import { ScanBarcode, Camera, X, Trash2, Info, Search } from 'lucide-react';
 import { apiFetch, apiFetchScanLookupBatch } from '../../utils/api';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormat';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useConfirm } from '../../context/ConfirmContext';
 import MultiQrScanner from '../../components/MultiQrScanner';
+import SnapAndScanButton from '../../components/SnapAndScanButton';
 
 import '../../styles/StockManager.css';
 
 const PAGE_SIZE = 10;
 const RECENT_DAYS = 3;
 const MAX_RANGE_SIZE = 500;
+
+function normalizeSerialSearch(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/\d+/g, (digits) => digits.replace(/^0+(?=\d)/, ''));
+}
+
+function findSequenceGaps(values, maxMissing) {
+  const groups = new Map();
+  values.forEach((value) => {
+    const match = String(value).match(/^(.*?)(\d+)$/);
+    if (!match) return;
+    const [, prefix, digits] = match;
+    const key = `${prefix}\u0000${digits.length}`;
+    const group = groups.get(key) || { prefix, width: digits.length, numbers: new Set() };
+    group.numbers.add(Number(digits));
+    groups.set(key, group);
+  });
+
+  const sequences = [...groups.values()].map(({ prefix, width, numbers }) => ({
+    prefix,
+    width,
+    sorted: [...numbers].sort((a, b) => a - b),
+  }));
+  let totalGaps = 0;
+  sequences.forEach(({ sorted }) => {
+    for (let index = 1; index < sorted.length; index += 1) {
+      totalGaps += Math.max(0, sorted[index] - sorted[index - 1] - 1);
+    }
+  });
+  if (totalGaps > 30 || totalGaps > maxMissing) return [];
+
+  const gaps = [];
+  sequences.forEach(({ prefix, width, sorted }) => {
+    for (let index = 1; index < sorted.length; index += 1) {
+      for (let number = sorted[index - 1] + 1; number < sorted[index]; number += 1) {
+        gaps.push(`${prefix}${String(number).padStart(width, '0')}`);
+      }
+    }
+  });
+  return gaps;
+}
 
 
 
@@ -91,6 +134,10 @@ export default function StockManager() {
   // --- Scan cart -----------------------------------------------------------
   const [scanCart, setScanCart] = useState([]);
   const [scanInput, setScanInput] = useState('');
+  const [snapReport, setSnapReport] = useState(null);
+  const [lastSnapExpectedCount, setLastSnapExpectedCount] = useState(0);
+  const [scanSearchTerm, setScanSearchTerm] = useState('');
+  const [debouncedScanSearchTerm, setDebouncedScanSearchTerm] = useState('');
   const scanCartRef = useRef([]);
   const commitCart = (next) => {
     scanCartRef.current = next;
@@ -106,8 +153,23 @@ export default function StockManager() {
 
   const [page, setPage] = useState(1);
   const scanInputRef = useRef(null);
+  const snapValuesRef = useRef(new Set());
+  const snapFailuresRef = useRef(new Map());
+  const snapExpectedRef = useRef(0);
+  const snapCompleteRef = useRef(false);
+  const snapMissingCellHintRef = useRef(0);
+  const snapReportTimerRef = useRef(null);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      setDebouncedScanSearchTerm(scanSearchTerm);
+      setPage(1);
+    }, 150);
+    return () => window.clearTimeout(timerId);
+  }, [scanSearchTerm]);
 
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isPhotoScanning, setIsPhotoScanning] = useState(false);
   const [scanSuccessMessage, setScanSuccessMessage] = useState('');
   const [cameraToast, setCameraToast] = useState('');
   const [isCameraDialogOpen, setIsCameraDialogOpen] = useState(false);
@@ -190,6 +252,128 @@ export default function StockManager() {
   };
 
   useEffect(() => {
+    if (!snapReport?.allAdded) return undefined;
+    snapReportTimerRef.current = window.setTimeout(() => {
+      setSnapReport(null);
+      snapReportTimerRef.current = null;
+    }, 4000);
+    return () => {
+      if (snapReportTimerRef.current !== null) {
+        window.clearTimeout(snapReportTimerRef.current);
+        snapReportTimerRef.current = null;
+      }
+    };
+  }, [snapReport]);
+
+  const recordSnapFailure = (value, reason) => {
+    if (snapValuesRef.current.has(value)) snapFailuresRef.current.set(value, reason);
+  };
+
+  const recordSnapFailures = (failures) => {
+    failures.forEach(({ value, message }) => recordSnapFailure(value, message));
+  };
+
+  const handleSnapStart = ({ expected }) => {
+    snapValuesRef.current = new Set();
+    snapFailuresRef.current.clear();
+    snapExpectedRef.current = expected;
+    snapCompleteRef.current = false;
+    snapMissingCellHintRef.current = 0;
+    setSnapReport(null);
+    if (snapReportTimerRef.current !== null) {
+      window.clearTimeout(snapReportTimerRef.current);
+      snapReportTimerRef.current = null;
+    }
+  };
+
+  const handleSnapDetected = (values, metadata) => {
+    if (metadata?.source === 'snap') {
+      if (metadata.expected > 0) snapExpectedRef.current = metadata.expected;
+      values.forEach((value) => snapValuesRef.current.add(value));
+      if (!canCreateAdjustments || !isConfigValid || cameraDialogRef.current) {
+        values.forEach((value) => {
+          snapFailuresRef.current.set(
+            value,
+            'Select an adjustment type and store before scanning.'
+          );
+        });
+        return;
+      }
+    }
+    scanCameraBatch(values, null, metadata);
+  };
+
+  const maybeBuildSnapReport = () => {
+    if (
+      !snapCompleteRef.current
+      || cameraPendingValuesRef.current.size > 0
+      || cameraBatchRequestRef.current
+    ) return;
+
+    const values = [...snapValuesRef.current];
+    const expected = snapExpectedRef.current;
+    const addedValues = new Set(
+      scanCartRef.current
+        .filter((row) => row.scanState === 'ok')
+        .map((row) => row.scanValue || row.label_id)
+        .filter((value) => snapValuesRef.current.has(value))
+    );
+    const failures = [...snapFailuresRef.current.entries()]
+      .filter(([serial]) => !addedValues.has(serial))
+      .map(([serial, reason]) => ({ serial, reason }));
+    const notDetected = Math.max(0, expected - values.length);
+    const showMissingHints = expected === 0 || values.length < expected;
+    const sequenceGaps = showMissingHints
+      ? findSequenceGaps(values, Math.max(0, expected - addedValues.size) + 5)
+      : [];
+    const allAdded = values.length > 0
+      && addedValues.size === values.length
+      && failures.length === 0
+      && sequenceGaps.length === 0
+      && notDetected === 0;
+    const failureGroups = [...new Map(
+      failures.map(({ reason }) => [reason, { reason, serials: [] }])
+    ).values()];
+    failureGroups.forEach((group) => {
+      group.serials = failures
+        .filter((failure) => failure.reason === group.reason)
+        .map((failure) => failure.serial);
+    });
+
+    snapCompleteRef.current = false;
+    setSnapReport({
+      read: values.length,
+      added: addedValues.size,
+      expected,
+      notDetected,
+      failures,
+      failureGroups,
+      sequenceGaps,
+      retrySerials: [...new Set([...sequenceGaps, ...failures.map(({ serial }) => serial)])],
+      missingCellHint: snapMissingCellHintRef.current,
+      allAdded,
+    });
+  };
+
+  const handleSnapComplete = ({ values, expected, missingCells }) => {
+    snapValuesRef.current = new Set(values);
+    snapExpectedRef.current = expected || 0;
+    snapMissingCellHintRef.current = missingCells?.count || 0;
+    snapCompleteRef.current = true;
+    maybeBuildSnapReport();
+  };
+
+  const focusScanInput = (serial) => {
+    if (serial) setScanInput(serial);
+    if (isCameraOpen) {
+      toggleCamera();
+      window.setTimeout(() => scanInputRef.current?.focus(), 0);
+      return;
+    }
+    scanInputRef.current?.focus();
+  };
+
+  useEffect(() => {
     const recoverStaleLookups = () => {
       if (document.visibilityState === 'hidden') return;
       const now = Date.now();
@@ -217,6 +401,7 @@ export default function StockManager() {
       const timedOutKeys = new Set(timedOutRows.map((row) => row.scanKey));
       timedOutRows.forEach((row) => recentFailuresRef.current.delete(row.scanValue));
       commitCart(scanCartRef.current.filter((row) => !timedOutKeys.has(row.scanKey)));
+      timedOutRows.forEach((row) => recordSnapFailure(row.scanValue, 'Lookup timed out, scan again'));
       showCameraFailures(timedOutRows.map((row) => ({
         value: row.scanValue,
         message: 'Lookup timed out, scan again',
@@ -698,12 +883,19 @@ const handleRejectDetail = async () => {
           successCount++;
         } else if (result.wrong_store && result.current_store_id) {
           wrongStoreResults.push({ ...result, value: result.value });
+          recordSnapFailure(result.value, result.message || 'belongs to another store');
         } else {
-          failures.push({ value: result.label_id || result.value, message: result.message || 'Could not recognize this code.' });
+          const message = result.message || 'Could not recognize this code.';
+          failures.push({ value: result.label_id || result.value, message });
+          recordSnapFailure(result.value, message);
         }
       });
       values.filter((value) => !receivedValues.has(value))
-        .forEach((value) => failures.push({ value, message: 'Could not recognize this code.' }));
+        .forEach((value) => {
+          const message = 'Could not recognize this code.';
+          failures.push({ value, message });
+          recordSnapFailure(value, message);
+        });
 
       const resolvedCart = scanCartRef.current.flatMap((row) => {
         if (!rowKeys.has(row.scanValue)) return [row];
@@ -715,6 +907,7 @@ const handleRejectDetail = async () => {
         setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
         setTimeout(() => setScanSuccessMessage(''), 2500);
       }
+      recordSnapFailures(failures);
       showCameraFailures(failures);
 
       if (wrongStoreResults.length === 0) return;
@@ -770,6 +963,7 @@ const handleRejectDetail = async () => {
       if (sessionId !== scanSessionRef.current) return;
       const message = timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.';
       commitCart(scanCartRef.current.filter((row) => !rowKeys.has(row.scanValue)));
+      values.forEach((value) => recordSnapFailure(value, message));
       showCameraFailures(values.map((value) => ({ value, message })), timedOut);
       if (!timedOut) console.error(err);
     } finally {
@@ -783,6 +977,10 @@ const handleRejectDetail = async () => {
         const unresolvedRows = scanCartRef.current.filter((row) => unresolvedKeys.has(row.scanKey));
         unresolvedRows.forEach((row) => recentFailuresRef.current.delete(row.scanValue));
         commitCart(scanCartRef.current.filter((row) => !unresolvedKeys.has(row.scanKey)));
+        unresolvedRows.forEach((row) => recordSnapFailure(
+          row.scanValue,
+          timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.'
+        ));
         showCameraFailures(unresolvedRows.map((row) => ({
           value: row.scanValue,
           message: timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.',
@@ -795,11 +993,12 @@ const handleRejectDetail = async () => {
           cameraBatchTimerRef.current = window.setTimeout(flushCameraBatch, 0);
         }
       }
+      maybeBuildSnapReport();
     }
   };
   flushCameraBatchRef.current = flushCameraBatch;
 
-  const scanCameraBatch = (values, storeIdOverride = null) => {
+  const scanCameraBatch = (values, storeIdOverride = null, metadata = null) => {
     if (!canCreateAdjustments || !isConfigValid || cameraDialogRef.current) return;
     const sessionId = scanSessionRef.current;
     const now = Date.now();
@@ -824,7 +1023,12 @@ const handleRejectDetail = async () => {
         return;
       }
       const lastFailure = recentFailuresRef.current.get(value);
-      if (lastFailure && now - lastFailure < 5000) return;
+      if (lastFailure && now - lastFailure < 5000) {
+        if (metadata?.source === 'snap') {
+          duplicates.push({ value, message: 'previous lookup failed recently' });
+        }
+        return;
+      }
       pendingValues.set(value, `camera-${sessionId}-${now}-${pendingValues.size}`);
     });
 
@@ -858,7 +1062,10 @@ const handleRejectDetail = async () => {
         flushCameraBatch();
       }, 150);
     }
-    if (duplicates.length > 0) showCameraFailures(duplicates);
+    if (duplicates.length > 0) {
+      recordSnapFailures(duplicates);
+      showCameraFailures(duplicates);
+    }
   };
 
   const handleAddRange = async (e) => {
@@ -919,6 +1126,10 @@ const handleRejectDetail = async () => {
     commitCart([]);
     setSubmitMessage('');
     setPage(1);
+    snapCompleteRef.current = false;
+    snapValuesRef.current.clear();
+    snapFailuresRef.current.clear();
+    setSnapReport(null);
   };
 
   const toggleCamera = () => {
@@ -941,11 +1152,20 @@ const handleRejectDetail = async () => {
 
   // --- Pagination ------------------------------------------------------------
 
-  const totalPages = Math.max(1, Math.ceil(scanCart.length / PAGE_SIZE));
   const readyCart = scanCart.filter((item) => item.scanState !== 'checking');
   const checkingCount = scanCart.filter((item) => item.scanState === 'checking').length;
-  const orderedScanCart = [...scanCart].reverse();
-  const pagedCart = orderedScanCart.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const orderedScanCart = useMemo(() => [...scanCart].reverse(), [scanCart]);
+  const normalizedScanSearch = normalizeSerialSearch(debouncedScanSearchTerm.trim());
+  const filteredScanCart = useMemo(() => (
+    normalizedScanSearch
+      ? orderedScanCart.filter((item) => normalizeSerialSearch(item.label_id).includes(normalizedScanSearch))
+      : orderedScanCart
+  ), [orderedScanCart, normalizedScanSearch]);
+  const totalPages = Math.max(1, Math.ceil(filteredScanCart.length / PAGE_SIZE));
+  const pagedCart = filteredScanCart.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  useEffect(() => {
+    setPage((currentPage) => Math.min(currentPage, totalPages));
+  }, [totalPages]);
   const handlePageChange = (next) => {
     if (next < 1 || next > totalPages) return;
     setPage(next);
@@ -1252,18 +1472,40 @@ const handleRejectDetail = async () => {
                 />
               </div>
               <button type="submit" className="sa-btn-add" disabled={!isConfigValid || !canCreateAdjustments}>Add</button>
-              <button type="button" className="sa-btn-camera" onClick={toggleCamera} disabled={!isConfigValid || !canCreateAdjustments}>
-                <Camera size={18} />
-              </button>
+              <div className="sa-camera-actions">
+                <button type="button" className="sa-btn-camera" onClick={toggleCamera} disabled={!isConfigValid || !canCreateAdjustments}>
+                  <Camera size={18} />
+                </button>
+                <SnapAndScanButton
+                  onDetected={handleSnapDetected}
+                  onScanningChange={setIsPhotoScanning}
+                  onSnapStart={handleSnapStart}
+                  onSnapComplete={handleSnapComplete}
+                  lastExpectedCount={lastSnapExpectedCount}
+                  onExpectedCountChange={setLastSnapExpectedCount}
+                  disabled={!isConfigValid || !canCreateAdjustments}
+                />
+              </div>
             </form>
           ) : (
-            <button
-              type="button"
-              className="sa-btn-camera sa-btn-camera-active sa-btn-camera-full"
-              onClick={toggleCamera}
-            >
-              <Camera size={18} /> Stop scanning
-            </button>
+            <div className="sa-camera-actions sa-camera-actions-full">
+              <button
+                type="button"
+                className="sa-btn-camera sa-btn-camera-active sa-btn-camera-full"
+                onClick={toggleCamera}
+              >
+                <Camera size={18} /> Stop scanning
+              </button>
+              <SnapAndScanButton
+                onDetected={handleSnapDetected}
+                onScanningChange={setIsPhotoScanning}
+                onSnapStart={handleSnapStart}
+                onSnapComplete={handleSnapComplete}
+                lastExpectedCount={lastSnapExpectedCount}
+                onExpectedCountChange={setLastSnapExpectedCount}
+                disabled={!isConfigValid || !canCreateAdjustments}
+              />
+            </div>
           )}
 
 
@@ -1273,7 +1515,7 @@ const handleRejectDetail = async () => {
               <MultiQrScanner
                 ref={scannerRef}
                 isActive={isCameraOpen}
-                paused={isCameraDialogOpen || isReviewOpen || isSubmitting}
+                paused={isCameraDialogOpen || isReviewOpen || isSubmitting || isPhotoScanning}
                 maxCodesPerShot={200}
                 scannedCount={scanCart.length}
                 onDetected={scanCameraBatch}
@@ -1357,6 +1599,100 @@ const handleRejectDetail = async () => {
             <p className="sa-range-hint">Numbers only · prefix is optional · leading zeros kept</p>
         </section>
 
+        {snapReport && (
+          <section className="sa-snap-report" aria-label="Snap result" role="status" aria-live="polite">
+            <div className="sa-snap-report-header">
+              <h4>Snap result</h4>
+              <button
+                type="button"
+                className="sa-snap-report-dismiss"
+                onClick={() => setSnapReport(null)}
+                aria-label="Dismiss snap result"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            {snapReport.allAdded && (
+              <p className="sa-snap-report-success">
+                All {snapReport.added} codes added
+              </p>
+            )}
+            <div className="sa-snap-report-counts">
+              <span>
+                Photo read <strong>{snapReport.read}</strong>
+                {snapReport.expected > 0 && ` (expected ${snapReport.expected})`}
+              </span>
+              <span>Added to list <strong>{snapReport.added}</strong></span>
+              <span>Failed lookup <strong>{snapReport.failures.length}</strong></span>
+              {snapReport.notDetected > 0 && (
+                <span>Not detected <strong>{snapReport.notDetected}</strong></span>
+              )}
+            </div>
+            {snapReport.notDetected > 0 && (
+              <p className="sa-snap-report-note">
+                {snapReport.notDetected} expected code{snapReport.notDetected === 1 ? '' : 's'} not detected.
+              </p>
+            )}
+            {snapReport.missingCellHint > 0
+              && (snapReport.expected === 0 || snapReport.read < snapReport.expected) && (
+              <p className="sa-snap-report-hint">
+                Photo may be missing ~{snapReport.missingCellHint} code{snapReport.missingCellHint === 1 ? '' : 's'}.
+              </p>
+            )}
+            {snapReport.sequenceGaps.length > 0 && (
+              <div className="sa-snap-report-group">
+                <strong>Possibly missing</strong>
+                <div className="sa-snap-report-chips">
+                  {snapReport.sequenceGaps.map((serial) => (
+                    <button
+                      key={serial}
+                      type="button"
+                      className="sa-snap-report-chip sa-snap-report-chip-missing"
+                      onClick={() => focusScanInput(serial)}
+                    >
+                      {serial}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {snapReport.failureGroups.map(({ reason, serials }) => (
+              <div className="sa-snap-report-group" key={reason}>
+                <strong>{reason}</strong>
+                <div className="sa-snap-report-chips">
+                  {serials.map((serial) => (
+                    <button
+                      key={serial}
+                      type="button"
+                      className="sa-snap-report-chip sa-snap-report-chip-failed"
+                      onClick={() => focusScanInput(serial)}
+                    >
+                      {serial}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className="sa-snap-report-actions">
+              <button
+                type="button"
+                className="sa-snap-report-add"
+                onClick={() => enqueueScanBatch(snapReport.retrySerials)}
+                disabled={snapReport.retrySerials.length === 0}
+              >
+                Add missing ({snapReport.retrySerials.length})
+              </button>
+              <button
+                type="button"
+                className="sa-snap-report-manual"
+                onClick={() => focusScanInput()}
+              >
+                Scan manually
+              </button>
+            </div>
+          </section>
+        )}
+
         {/* --- Batch table --- */}
         <section className="sa-card" ref={scanCartSectionRef}>
           <div className="sa-batch-header">
@@ -1368,7 +1704,67 @@ const handleRejectDetail = async () => {
             </button>
           </div>
 
-          {scanCart.length === 0 ? (
+          <div className="sa-scan-search">
+            <Search size={17} aria-hidden="true" />
+            <input
+              type="text"
+              value={scanSearchTerm}
+              onChange={(event) => {
+                setScanSearchTerm(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Search serial, e.g. 021745"
+              aria-label="Search batch serials"
+            />
+            {scanSearchTerm && (
+              <button
+                type="button"
+                onClick={() => {
+                  setScanSearchTerm('');
+                  setDebouncedScanSearchTerm('');
+                  setPage(1);
+                }}
+                aria-label="Clear search"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          {debouncedScanSearchTerm.trim() && (
+            <p className="sa-scan-search-results" aria-live="polite">
+              Showing {filteredScanCart.length} of {scanCart.length}
+            </p>
+          )}
+
+          {debouncedScanSearchTerm.trim() && filteredScanCart.length === 0 ? (
+            <div className="sa-scan-search-empty">
+              <p>{debouncedScanSearchTerm.trim()} is not in this list</p>
+              <div>
+                {/^[A-Za-z0-9-]{3,}$/.test(debouncedScanSearchTerm.trim()) && (
+                  <button
+                    type="button"
+                    className="sa-scan-search-add"
+                    onClick={() => {
+                      enqueueScanBatch([debouncedScanSearchTerm.trim()]);
+                    }}
+                  >
+                    Add this serial
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="sa-scan-search-clear"
+                  onClick={() => {
+                    setScanSearchTerm('');
+                    setDebouncedScanSearchTerm('');
+                    setPage(1);
+                  }}
+                >
+                  Clear search
+                </button>
+              </div>
+            </div>
+          ) : scanCart.length === 0 ? (
             <div className="sa-empty-batch">
               <ScanBarcode size={28} className="sa-empty-batch-icon" />
               <p className="sa-empty-batch-title">Nothing scanned yet</p>

@@ -1,4 +1,4 @@
-const API_BASE = 'https://altai-qr-8mks.onrender.com';
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://api.altaitech.tech';
 import { getAuthToken, clearAuth } from './authStorage';
 
 export async function apiFetch(path, options = {}) {

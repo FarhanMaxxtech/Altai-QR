@@ -213,7 +213,8 @@
 }
 
 .sa-scan-input-wrap {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -230,6 +231,7 @@
 
 .sa-scan-input-wrap input {
   flex: 1 1 auto;
+  min-width: 0;
   border: none;
   outline: none;
   background: transparent;
@@ -342,6 +344,22 @@
   font-size: 14px;
   font-weight: 700;
   border-radius: 10px;
+}
+
+.sa-camera-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.sa-camera-actions .sa-btn-camera-full {
+  width: auto;
+  flex: 1;
+}
+
+.sa-camera-actions-full {
+  width: 100%;
 }
 
 .sa-camera-reader-box {
@@ -1206,6 +1224,94 @@
   background: #f6fbf3;
 }
 
+.sa-scan-station {
+  container-type: inline-size;
+  overflow: visible;
+  min-width: 0;
+}
+
+.sa-scan-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.sa-scan-input-wrap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.sa-scan-input-wrap input {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sa-btn-add,
+.sa-btn-camera {
+  flex: none;
+  height: 48px;
+}
+
+.sa-camera-actions {
+  width: auto;
+  min-width: 0;
+  gap: 8px;
+}
+
+.sa-camera-actions .multi-qr-snap {
+  flex: none;
+  width: auto;
+}
+
+@container (max-width: 420px) {
+  .sa-scan-row,
+  .sa-camera-actions {
+    gap: 6px;
+  }
+
+  .sa-scan-input-wrap {
+    gap: 6px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .sa-btn-add {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+}
+
+@container (max-width: 300px) {
+  .sa-scan-row {
+    flex-wrap: wrap;
+  }
+
+  .sa-scan-input-wrap {
+    flex: 1 1 100%;
+  }
+
+  .sa-camera-actions {
+    margin-left: auto;
+  }
+}
+
+@media (pointer: coarse) {
+  .sa-scan-input-wrap,
+  .sa-btn-add,
+  .sa-btn-camera,
+  .sa-camera-actions .multi-qr-snap__button {
+    height: 44px;
+  }
+
+  .sa-btn-camera {
+    width: 44px;
+  }
+}
+
 @media (max-width: 768px) {
   .sa-page.sa-camera-active {
     padding-bottom: calc(76px + env(safe-area-inset-bottom));
@@ -1260,6 +1366,371 @@
   .sa-remove-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+  }
+}
+
+.sa-snap-report {
+  position: static;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+  color: #111827;
+}
+
+.sa-scan-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px 0 12px;
+  border: 1px solid #e3e9dc;
+  border-radius: 10px;
+  background: #fff;
+  color: #6b7280;
+}
+
+.sa-scan-search:focus-within {
+  border-color: #2f8f1e;
+  box-shadow: 0 0 0 3px rgba(47, 143, 30, 0.12);
+}
+
+.sa-scan-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #111827;
+  font: inherit;
+  font-size: 14px;
+}
+
+.sa-scan-search input::placeholder {
+  color: #9ca3af;
+}
+
+.sa-scan-search button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.sa-scan-search button:hover {
+  background: #f3f7f0;
+  color: #111827;
+}
+
+.sa-scan-search-results {
+  margin: -6px 0 0;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.sa-scan-search-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e3e9dc;
+  border-radius: 10px;
+  background: #f9fbf7;
+  color: #374151;
+  font-size: 13px;
+}
+
+.sa-scan-search-empty > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sa-scan-search-add,
+.sa-scan-search-clear {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sa-scan-search-add {
+  border: 1px solid #2f8f1e;
+  background: #2f8f1e;
+  color: #fff;
+}
+
+.sa-scan-search-clear {
+  border: 1px solid #d9ded7;
+  background: #fff;
+  color: #374151;
+}
+
+.sa-snap-report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sa-snap-report-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.sa-snap-report-dismiss {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.sa-snap-report-dismiss:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.sa-snap-report-success {
+  margin: 0;
+  color: #2f8f1e;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sa-snap-report-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.sa-snap-report-counts strong {
+  margin-left: 4px;
+  color: #111827;
+}
+
+.sa-snap-report-note,
+.sa-snap-report-hint {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.sa-snap-report-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #374151;
+  font-size: 13px;
+}
+
+.sa-snap-report-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sa-snap-report-chip {
+  min-height: 44px;
+  padding: 4px 9px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #f9fafb;
+  color: #374151;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sa-snap-report-chip:hover {
+  border-color: #2f8f1e;
+  background: #edf7e8;
+}
+
+.sa-snap-report-chip-missing {
+  border-color: #f5d58b;
+  background: #fffbeb;
+  color: #854d0e;
+}
+
+.sa-snap-report-chip-failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.sa-snap-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sa-snap-report-actions button {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sa-snap-report-add {
+  border: 1px solid #2f8f1e;
+  background: #2f8f1e;
+  color: #fff;
+}
+
+.sa-snap-report-add:hover:not(:disabled) {
+  background: #267417;
+}
+
+.sa-snap-report-add:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sa-snap-report-manual {
+  border: 1px solid #d9ded7;
+  background: #fff;
+  color: #111827;
+}
+
+.sa-snap-report button:focus-visible {
+  outline: 3px solid rgba(47, 143, 30, 0.3);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .sa-snap-report-chips {
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .sa-scan-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .sa-scan-row .sa-scan-input-wrap {
+    box-sizing: border-box;
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .sa-scan-row > .sa-btn-add {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 44px;
+  }
+
+  .sa-scan-row > .sa-camera-actions {
+    display: contents;
+  }
+
+  .sa-scan-row .sa-btn-camera {
+    width: 44px;
+    height: 44px;
+  }
+
+  .sa-scan-row .multi-qr-snap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .sa-scan-row .multi-qr-snap__button {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sa-camera-actions-full {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+
+  .sa-camera-actions-full .sa-btn-camera-full,
+  .sa-camera-actions-full .multi-qr-snap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .sa-camera-actions-full .multi-qr-snap__button {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+  }
+}
+
+@container (max-width: 420px) {
+  .sa-scan-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .sa-scan-row .sa-scan-input-wrap {
+    box-sizing: border-box;
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .sa-scan-row > .sa-btn-add {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 44px;
+  }
+
+  .sa-scan-row > .sa-camera-actions {
+    display: contents;
+  }
+
+  .sa-scan-row .sa-btn-camera {
+    width: 44px;
+    height: 44px;
+  }
+
+  .sa-scan-row .multi-qr-snap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .sa-scan-row .multi-qr-snap__button {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
   }
 }
 

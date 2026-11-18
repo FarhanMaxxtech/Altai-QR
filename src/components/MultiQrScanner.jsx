@@ -1,41 +1,16 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Zap } from 'lucide-react';
+import { detectionValue, getQrScanner, scanTiled } from '../utils/qrImageScanner';
 import '../styles/MultiQrScanner.css';
 
 const CAMERA_ERROR = 'Could not access camera. Check permissions and try again.';
 const CAMERA_CONSTRAINTS = {
   video: {
     facingMode: { ideal: 'environment' },
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
+    width: { ideal: 3840 },
+    height: { ideal: 2160 },
   },
   audio: false,
-};
-
-let qrScannerPromise;
-
-const getQrScanner = () => {
-  if (!qrScannerPromise) {
-    qrScannerPromise = Promise.all([
-      import('@undecaf/zbar-wasm'),
-      import('@undecaf/zbar-wasm/dist/zbar.wasm?url'),
-    ])
-      .then(([zbar, wasmAsset]) => {
-        zbar.setModuleArgs({
-          locateFile: (filename) => (filename === 'zbar.wasm' ? wasmAsset.default : filename),
-        });
-        return zbar.getDefaultScanner().then((scanner) => {
-          scanner.setConfig(zbar.ZBarSymbolType.ZBAR_NONE, zbar.ZBarConfigType.ZBAR_CFG_ENABLE, 0);
-          scanner.setConfig(zbar.ZBarSymbolType.ZBAR_QRCODE, zbar.ZBarConfigType.ZBAR_CFG_ENABLE, 1);
-          return { scanner, scanImageData: zbar.scanImageData };
-        });
-      })
-      .catch((error) => {
-        qrScannerPromise = null;
-        throw error;
-      });
-  }
-  return qrScannerPromise;
 };
 
 const detectionPoints = (detection) => {
@@ -111,6 +86,8 @@ const MultiQrScanner = forwardRef(function MultiQrScanner({
     let intervalId = null;
     let isDecoding = false;
     let isStarting = false;
+    let decodeScaleCap = 2560;
+    let previousFrameCount = 0;
     let flashTimeoutId = null;
     let visibilityRetryTimeoutId = null;
     const cooldownValues = cooldownValuesRef.current;
@@ -241,11 +218,12 @@ const MultiQrScanner = forwardRef(function MultiQrScanner({
         intervalId = window.setInterval(async () => {
           if (cancelled || pausedRef.current || document.visibilityState === 'hidden' || isDecoding || !video.videoWidth || !video.videoHeight) return;
           isDecoding = true;
+          const decodeStartedAt = performance.now();
 
           try {
             const sourceWidth = video.videoWidth;
             const sourceHeight = video.videoHeight;
-            const scale = Math.min(1, 1280 / sourceWidth);
+            const scale = Math.min(1, decodeScaleCap / sourceWidth);
             const width = Math.round(sourceWidth * scale);
             const height = Math.round(sourceHeight * scale);
             if (frameCanvas.width !== width || frameCanvas.height !== height) {
@@ -259,21 +237,37 @@ const MultiQrScanner = forwardRef(function MultiQrScanner({
 
             frameContext.drawImage(video, 0, 0, width, height);
             let detections;
+            let overlayDetections;
             if (detector) {
               detections = await detector.detect(frameCanvas);
+              overlayDetections = detections;
             } else {
               const imageData = frameContext.getImageData(0, 0, width, height);
               detections = await scanWithZbar(imageData, zbarScanner);
+              overlayDetections = detections;
+              const plainFrameCount = detections.length;
+              if (plainFrameCount < previousFrameCount) {
+                const tiledDetections = await scanTiled(video, sourceWidth, sourceHeight);
+                const detectionsByValue = new Map(
+                  detections.map((detection) => [detectionValue(detection), detection])
+                );
+                tiledDetections.forEach((detection) => {
+                  const value = detectionValue(detection);
+                  if (value && !detectionsByValue.has(value)) detectionsByValue.set(value, detection);
+                });
+                detections = [...detectionsByValue.values()];
+              }
+              previousFrameCount = plainFrameCount;
             }
 
             if (cancelled) return;
-            drawDetections(overlayContext, detections, sourceWidth, sourceHeight, 1 / scale);
+            drawDetections(overlayContext, overlayDetections, sourceWidth, sourceHeight, 1 / scale);
 
             const maxCodes = Math.max(1, Math.floor(Number(maxCodesPerShot) || 5));
             const values = [];
             const now = Date.now();
             detections.forEach((detection) => {
-              const value = (detection.rawValue ?? detection.decode?.() ?? '').trim();
+              const value = detectionValue(detection);
               if (!value || values.includes(value)) return;
               const lastSeen = cooldownValues.get(value);
               cooldownValues.set(value, now);
@@ -297,6 +291,9 @@ const MultiQrScanner = forwardRef(function MultiQrScanner({
             console.error('QR camera decoding failed:', error);
             reportError('Could not read QR codes from the camera. Please try again.');
           } finally {
+            if (performance.now() - decodeStartedAt > 400) {
+              decodeScaleCap = Math.max(1280, Math.round(decodeScaleCap * 0.8));
+            }
             isDecoding = false;
           }
         }, 200);

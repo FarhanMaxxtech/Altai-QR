@@ -34,7 +34,8 @@
 .sidebar {
   width: 290px;
   flex: 0 0 260px;
-  height: 100vh;      /* was min-height: 100vh */
+  height: 100vh;
+  height: 100dvh;
   overflow: hidden;   /* the sidebar itself never scrolls */
   background: #fff;
   border-right: 1px solid #e5e7eb;
@@ -257,6 +258,7 @@
     top: 0;
     left: 0;
     height: 100vh;
+    height: 100dvh;
     width: 280px;
     transform: translateX(-100%);
     transition: transform 0.2s ease;
