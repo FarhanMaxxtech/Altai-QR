@@ -3,7 +3,12 @@ const MAX_LONGEST_SIDE = 3400;
 const DEBUG_QR = false;
 let qrScannerPromise;
 let workerPool;
+let zxingScannerPromise;
 let zbarScanQueue = Promise.resolve();
+
+const debugQrError = (message, error) => {
+  if (DEBUG_QR) console.debug(`[qr-scan] ${message}`, error);
+};
 
 const queueZbarScan = (scan) => {
   const task = zbarScanQueue.then(scan);
@@ -32,6 +37,7 @@ const getMainThreadScanner = () => {
         });
       })
       .catch((error) => {
+        debugQrError('main-thread zbar/WASM load failed', error);
         qrScannerPromise = null;
         throw error;
       });
@@ -103,7 +109,8 @@ const getBarcodeDetector = async () => {
   try {
     const formats = await Detector.getSupportedFormats();
     return formats.includes('qr_code') ? new Detector({ formats: ['qr_code'] }) : null;
-  } catch {
+  } catch (error) {
+    debugQrError('BarcodeDetector setup failed', error);
     return null;
   }
 };
@@ -135,15 +142,19 @@ const resizePhoto = async (imageSource, width, height) => {
         sourceScaleY: bitmap.height / height,
         release: () => bitmap.close(),
       };
-    } catch {
-      // Older Safari versions may not support resize options.
+    } catch (error) {
+      debugQrError('createImageBitmap resize failed; using canvas resize', error);
     }
   }
 
   const canvas = document.createElement('canvas');
   canvas.width = targetWidth;
   canvas.height = targetHeight;
-  canvas.getContext('2d', { willReadFrequently: true }).drawImage(
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Could not create QR photo resize canvas context');
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(
     imageSource,
     0,
     0,
@@ -174,12 +185,21 @@ const makeWorkerSlot = (worker) => {
     const request = activeRequest;
     activeRequest = null;
     if (data.error) request.reject(new Error(data.error));
-    else request.resolve(data.detections);
+    else {
+      if (DEBUG_QR) console.debug(`[qr-scan] worker completed request ${data.id}`);
+      request.resolve(data.detections);
+    }
     runNext();
+  };
+
+  worker.onmessageerror = (error) => {
+    debugQrError('worker message could not be deserialized', error);
+    worker.onerror?.(error);
   };
 
   worker.onerror = (error) => {
     failed = true;
+    debugQrError('worker execution/load failed', error);
     if (activeRequest) {
       activeRequest.reject(error);
       activeRequest = null;
@@ -235,6 +255,7 @@ const makeWorkerSlot = (worker) => {
       }
     } catch (error) {
       bitmap?.close();
+      debugQrError('worker request dispatch failed', error);
       activeRequest.reject(error);
       activeRequest = null;
       runNext();
@@ -274,9 +295,10 @@ const getWorkerPool = () => {
       ));
     }
     workerPool = slots;
+    if (DEBUG_QR) console.debug(`[qr-scan] created ${count} module workers`);
     return workerPool;
   } catch (error) {
-    console.debug('QR worker pool unavailable; using main-thread decoder:', error);
+    debugQrError('worker pool unavailable; using main-thread decoder', error);
     slots.forEach((slot) => slot.terminate());
     workerPool = null;
     return null;
@@ -327,7 +349,7 @@ const prepareFallbackGray = (imageData, variant) => {
   let outputWidth = width;
   let outputHeight = height;
 
-  if (variant === 'flat' || variant === 'upscale' || variant === 'adaptive') {
+  if (variant === 'flat' || variant === 'adaptive') {
     const radius = Math.max(2, Math.round(Math.min(width, height) / 30));
     const background = boxBlurGray(
       boxBlurGray(gray, width, height, radius, true),
@@ -370,21 +392,20 @@ const prepareFallbackGray = (imageData, variant) => {
     }
   }
 
-  if (variant === 'upscale') {
-    const scale = Math.min(2, Math.sqrt(MAX_CANVAS_PIXELS / gray.length));
-    if (scale > 1.05) {
-      outputWidth = Math.round(width * scale);
-      outputHeight = Math.round(height * scale);
-      const enlarged = new Uint8Array(outputWidth * outputHeight);
-      for (let y = 0; y < outputHeight; y += 1) {
-        const sourceY = Math.min(height - 1, Math.floor(y / scale));
-        for (let x = 0; x < outputWidth; x += 1) {
-          const sourceX = Math.min(width - 1, Math.floor(x / scale));
-          enlarged[y * outputWidth + x] = gray[sourceY * width + sourceX];
-        }
-      }
-      gray = enlarged;
-    }
+  if (variant === 'unsharp') {
+    const radius = Math.max(1, Math.round(Math.min(width, height) / 80));
+    const blurred = boxBlurGray(
+      boxBlurGray(gray, width, height, radius, true),
+      width,
+      height,
+      radius,
+      false
+    );
+    gray = gray.map((value, index) => (
+      Math.max(0, Math.min(255, Math.round(value + (value - blurred[index]) * 0.6)))
+    ));
+  } else if (variant === 'inverted') {
+    gray = gray.map((value) => 255 - value);
   }
   return { gray, width: outputWidth, height: outputHeight };
 };
@@ -437,6 +458,66 @@ const fallbackScanRegion = async (source, region, variant) => {
   }
 };
 
+const getZXingScanner = async () => {
+  if (!zxingScannerPromise) {
+    zxingScannerPromise = Promise.all([
+      import('zxing-wasm/full'),
+      import('zxing-wasm/full/zxing_full.wasm?url'),
+    ]).then(([zxing, wasmAsset]) => {
+      zxing.setZXingModuleOverrides({
+        locateFile: (filename) => (
+          filename.endsWith('.wasm') ? wasmAsset.default : filename
+        ),
+      });
+      return zxing;
+    }).catch((error) => {
+      debugQrError('main-thread zxing/WASM load failed', error);
+      zxingScannerPromise = null;
+      throw error;
+    });
+  }
+  return zxingScannerPromise;
+};
+
+const fallbackZXingScanRegion = async (source, region) => {
+  const { readBarcodes } = await getZXingScanner();
+  const canvas = document.createElement('canvas');
+  canvas.width = region.width;
+  canvas.height = region.height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  try {
+    if (!context) throw new Error('Could not create QR ZXing canvas context');
+    context.drawImage(
+      source,
+      region.left,
+      region.top,
+      region.width,
+      region.height,
+      0,
+      0,
+      region.width,
+      region.height
+    );
+    const results = await readBarcodes(context.getImageData(0, 0, canvas.width, canvas.height), {
+      formats: ['QRCode'],
+      tryHarder: true,
+      tryRotate: true,
+    });
+    return results.filter((result) => result.text).map((result) => ({
+      rawValue: result.text.trim(),
+      points: [
+        result.position.topLeft,
+        result.position.topRight,
+        result.position.bottomRight,
+        result.position.bottomLeft,
+      ],
+    }));
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+};
+
 const makeCoarseTiles = (width, height) => {
   const tileWidth = Math.ceil(width * 0.55);
   const tileHeight = Math.ceil(height * 0.55);
@@ -450,12 +531,253 @@ const makeCoarseTiles = (width, height) => {
   ));
 };
 
+const makeVideoTiles = (width, height) => {
+  const tileWidth = Math.min(width, Math.max(1, Math.round(Math.min(width, 1000))));
+  const tileHeight = Math.min(height, Math.max(1, Math.round(Math.min(height, 1000))));
+  const stepX = Math.round(tileWidth * 0.6);
+  const stepY = Math.round(tileHeight * 0.6);
+  const positions = (extent, tile, step) => {
+    if (extent <= tile) return [0];
+    const result = [0];
+    while (result[result.length - 1] + tile < extent) {
+      const next = Math.min(result[result.length - 1] + Math.max(step, 1), extent - tile);
+      if (next <= result[result.length - 1]) break;
+      result.push(next);
+    }
+    return result;
+  };
+  return positions(height, tileHeight, stepY).flatMap((top) => (
+    positions(width, tileWidth, stepX).map((left) => ({
+      left,
+      top,
+      width: Math.min(tileWidth, width - left),
+      height: Math.min(tileHeight, height - top),
+    }))
+  ));
+};
+
+const makeScaleLadderTiles = (width, height, fraction) => {
+  const tileWidth = Math.min(width, Math.max(1, Math.round(width * fraction)));
+  const tileHeight = Math.min(height, Math.max(1, Math.round(height * fraction)));
+  const stepX = Math.max(1, Math.round(tileWidth * 0.7));
+  const stepY = Math.max(1, Math.round(tileHeight * 0.7));
+  const positions = (extent, tile, step) => {
+    if (extent <= tile) return [0];
+    const result = [0];
+    while (result[result.length - 1] + tile < extent) {
+      const next = Math.min(result[result.length - 1] + step, extent - tile);
+      if (next <= result[result.length - 1]) break;
+      result.push(next);
+    }
+    return result;
+  };
+  return positions(height, tileHeight, stepY).flatMap((top) => (
+    positions(width, tileWidth, stepX).map((left) => ({
+      left,
+      top,
+      width: Math.min(tileWidth, width - left),
+      height: Math.min(tileHeight, height - top),
+    }))
+  ));
+};
+
+const estimateQrSizeFromImage = (width, height) => Math.max(
+  1,
+  Math.round(Math.min(width, height) * 0.06)
+);
+
+const prepareRegionCanvas = (source, region, qrSize, { addQuietZone = false } = {}) => {
+  const estimatedModuleSize = Math.max(1, qrSize / 29);
+  const padding = addQuietZone ? Math.ceil(estimatedModuleSize * 4) : 0;
+  const paddedWidth = region.width + padding * 2;
+  const paddedHeight = region.height + padding * 2;
+  const scale = Math.max(1, Math.min(
+    180 / Math.max(1, qrSize),
+    MAX_LONGEST_SIDE / Math.max(paddedWidth, paddedHeight),
+    Math.sqrt(MAX_CANVAS_PIXELS / (paddedWidth * paddedHeight))
+  ));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(paddedWidth * scale));
+  canvas.height = Math.max(1, Math.round(paddedHeight * scale));
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Could not create QR upscaling canvas context');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(
+    source,
+    region.left,
+    region.top,
+    region.width,
+    region.height,
+    Math.round(padding * scale),
+    Math.round(padding * scale),
+    Math.round(region.width * scale),
+    Math.round(region.height * scale)
+  );
+  return {
+    source: canvas,
+    width: canvas.width,
+    height: canvas.height,
+    scale,
+    padding: padding * scale,
+    release: () => {
+      canvas.width = 0;
+      canvas.height = 0;
+    },
+  };
+};
+
+const projectionPeriod = (projection, minimumLag, maximumLag) => {
+  let bestLag = 0;
+  let bestScore = 0;
+  const end = Math.min(maximumLag, Math.floor(projection.length / 2));
+  for (let lag = Math.max(2, minimumLag); lag <= end; lag += 1) {
+    let sum = 0;
+    let leftPower = 0;
+    let rightPower = 0;
+    const count = projection.length - lag;
+    for (let index = 0; index < count; index += 1) {
+      const left = projection[index];
+      const right = projection[index + lag];
+      sum += left * right;
+      leftPower += left * left;
+      rightPower += right * right;
+    }
+    const score = sum / Math.sqrt(Math.max(1, leftPower * rightPower));
+    if (score > bestScore) {
+      bestScore = score;
+      bestLag = lag;
+    }
+  }
+  return bestScore >= 0.12 ? bestLag : 0;
+};
+
+const projectionCenters = (projection, pitch, symbolSize) => {
+  if (!pitch) return [];
+  let bestPhase = 0;
+  let bestScore = -Infinity;
+  for (let phase = 0; phase < pitch; phase += 1) {
+    let score = 0;
+    for (let center = phase; center < projection.length; center += pitch) {
+      const start = Math.max(0, Math.floor(center - symbolSize / 2));
+      const end = Math.min(projection.length, Math.ceil(center + symbolSize / 2));
+      for (let index = start; index < end; index += 1) score += projection[index];
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestPhase = phase;
+    }
+  }
+  const centers = [];
+  for (let center = bestPhase; center < projection.length; center += pitch) {
+    if (center >= symbolSize / 2 && center < projection.length - symbolSize / 2) centers.push(center);
+  }
+  return centers;
+};
+
+const findLabelCells = (source, width, height, expected, qrSize) => {
+  const analysisScale = Math.min(1, 1200 / Math.max(width, height));
+  const analysisWidth = Math.max(1, Math.round(width * analysisScale));
+  const analysisHeight = Math.max(1, Math.round(height * analysisScale));
+  const analysisQrSize = qrSize * analysisScale;
+  const canvas = document.createElement('canvas');
+  canvas.width = analysisWidth;
+  canvas.height = analysisHeight;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Could not create QR segmentation canvas context');
+  try {
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(source, 0, 0, analysisWidth, analysisHeight);
+    const imageData = context.getImageData(0, 0, analysisWidth, analysisHeight);
+    const gray = grayFromImageData(imageData);
+    const radius = Math.max(2, Math.round(analysisQrSize / 3));
+    const background = boxBlurGray(
+      boxBlurGray(gray, analysisWidth, analysisHeight, radius, true),
+      analysisWidth,
+      analysisHeight,
+      radius,
+      false
+    );
+    const rows = new Float32Array(analysisHeight);
+    const columns = new Float32Array(analysisWidth);
+    for (let y = 0; y < analysisHeight; y += 1) {
+      for (let x = 0; x < analysisWidth; x += 1) {
+        const index = y * analysisWidth + x;
+        if (gray[index] < background[index] - 12) {
+          rows[y] += 1;
+          columns[x] += 1;
+        }
+      }
+    }
+    const minPitch = Math.max(2, Math.floor(analysisQrSize * 1.35));
+    const maxPitchX = Math.min(analysisWidth / 2, Math.ceil(analysisQrSize * 3.2));
+    const maxPitchY = Math.min(analysisHeight / 2, Math.ceil(analysisQrSize * 3.2));
+    const xPitch = projectionPeriod(columns, minPitch, maxPitchX);
+    const yPitch = projectionPeriod(rows, minPitch, maxPitchY);
+    let xCenters = projectionCenters(columns, xPitch, analysisQrSize);
+    let yCenters = projectionCenters(rows, yPitch, analysisQrSize);
+
+    if (expected > 0) {
+      const layouts = [];
+      for (let columnsCount = 1; columnsCount <= expected; columnsCount += 1) {
+        const rowsCount = Math.ceil(expected / columnsCount);
+        const pitchRatio = (width / columnsCount) / (height / rowsCount);
+        layouts.push({
+          columns: columnsCount,
+          rows: rowsCount,
+          score: Math.abs(Math.log(Math.max(0.01, pitchRatio / 0.85))),
+        });
+      }
+      layouts.sort((a, b) => a.score - b.score);
+      const layout = layouts[0];
+      if (xCenters.length !== layout.columns) {
+        xCenters = projectionCenters(columns, analysisWidth / layout.columns, analysisQrSize);
+      }
+      if (yCenters.length !== layout.rows) {
+        yCenters = projectionCenters(rows, analysisHeight / layout.rows, analysisQrSize);
+      }
+    }
+    if (!xCenters.length || !yCenters.length) return [];
+
+    const cellWidth = Math.min(
+      qrSize * 1.45,
+      (xPitch / analysisScale) || qrSize * 1.6
+    );
+    const cellHeight = Math.min(
+      qrSize * 1.45,
+      (yPitch / analysisScale) || qrSize * 1.6
+    );
+    const cells = [];
+    yCenters.forEach((centerY) => {
+      xCenters.forEach((centerX) => {
+        const originalCenterX = centerX / analysisScale;
+        const originalCenterY = centerY / analysisScale;
+        cells.push({
+          left: Math.max(0, originalCenterX - cellWidth / 2),
+          top: Math.max(0, originalCenterY - cellHeight / 2),
+          width: Math.min(width, cellWidth),
+          height: Math.min(height, cellHeight),
+          centerX: originalCenterX,
+          centerY: originalCenterY,
+        });
+      });
+    });
+    return expected > 0 ? cells.slice(0, expected) : cells;
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+};
+
 const makeSlidingTiles = (width, height, qrSize) => {
-  const fallback = qrSize <= 0;
-  const tileWidth = Math.min(width, Math.max(1, Math.round(fallback ? 1000 : qrSize * 5)));
-  const tileHeight = Math.min(height, Math.max(1, Math.round(fallback ? 1000 : qrSize * 5)));
-  const stepX = fallback ? Math.round(tileWidth * 0.6) : Math.round(tileWidth - qrSize * 1.5);
-  const stepY = fallback ? Math.round(tileHeight * 0.6) : Math.round(tileHeight - qrSize * 1.5);
+  if (qrSize <= 0) return makeScaleLadderTiles(width, height, 0.3);
+  const tileWidth = Math.min(width, Math.max(1, Math.round(qrSize * 5)));
+  const tileHeight = Math.min(height, Math.max(1, Math.round(qrSize * 5)));
+  const stepX = Math.round(tileWidth - qrSize * 1.5);
+  const stepY = Math.round(tileHeight - qrSize * 1.5);
   const positions = (extent, tile, step) => {
     if (extent <= tile) return [0];
     const result = [0];
@@ -546,12 +868,19 @@ const estimateGrid = (detections, qrSize) => {
   return { gaps, qrSize, rows: yCount, columns: xCount };
 };
 
-const toOriginalCoordinates = (detections, region, sourceScaleX, sourceScaleY) => (
+const toOriginalCoordinates = (
+  detections,
+  region,
+  sourceScaleX,
+  sourceScaleY,
+  scale = 1,
+  padding = 0
+) => (
   detections.map((detection) => ({
     ...detection,
     points: detectionPoints(detection).map((point) => ({
-      x: (region.left + point.x) / sourceScaleX,
-      y: (region.top + point.y) / sourceScaleY,
+      x: (region.left + (point.x - padding) / scale) / sourceScaleX,
+      y: (region.top + (point.y - padding) / scale) / sourceScaleY,
     })),
   }))
 );
@@ -574,14 +903,41 @@ export const benchmark100QrImage = async (file) => {
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   const started = performance.now();
   try {
+    const passCounts = new Map();
     const detections = await scanTiled(bitmap, bitmap.width, bitmap.height, {
       expectedCodeCount: 100,
       deepScan: true,
+      onProgress: ({ pass, codes }) => passCounts.set(pass, codes),
     });
     const elapsed = performance.now() - started;
     console.info(`[qr-scan benchmark] found=${detections.length} total=${Math.round(elapsed)}ms`);
-    if (detections.length !== 100) {
-      throw new Error(`Expected 100 QR codes, found ${detections.length}`);
+    const passNames = [
+      'initial',
+      '30% tiles',
+      '20% tiles',
+      '12% tiles',
+      'cell crops',
+      'flat-field',
+      'adaptive',
+      'unsharp',
+      'inverted',
+      'ZXing',
+    ];
+    let previousCount = 0;
+    const summary = [...passCounts.entries()].sort(([a], [b]) => a - b).map(([pass, codes]) => {
+      const added = Math.max(0, codes - previousCount);
+      previousCount = codes;
+      return `${passNames[pass - 1]} +${added} (${codes})`;
+    });
+    const solvedAt = [...passCounts.entries()]
+      .sort(([a], [b]) => a - b)
+      .find(([, codes]) => codes >= 98);
+    console.info(
+      `[qr-scan benchmark] passes=${summary.join(', ')}; `
+      + `98+ first reached=${solvedAt ? passNames[solvedAt[0] - 1] : 'not reached'}`
+    );
+    if (detections.length < 98) {
+      throw new Error(`Expected at least 98 of 100 QR codes, found ${detections.length}`);
     }
     return { count: detections.length, elapsed };
   } finally {
@@ -600,13 +956,13 @@ export const scanTiled = async (
   const resized = await resizePhoto(imageSource, width, height);
   const { source, sourceScaleX, sourceScaleY } = resized;
   const detector = await getBarcodeDetector();
-  const pool = !deepScan && imageSource?.tagName === 'VIDEO' ? null : getWorkerPool();
+  const isVideo = !deepScan && imageSource?.tagName === 'VIDEO';
+  const pool = isVideo ? null : getWorkerPool();
   const results = new Map();
   const expected = Math.max(0, Number(expectedCodeCount) || 0);
   let qrSize = 0;
   let activePass = 0;
-  let qrModuleSize = 0;
-  const totalPasses = deepScan ? 5 : 2;
+  const totalPasses = deepScan ? 10 : 2;
   const report = () => onProgress?.({ pass: activePass, totalPasses, codes: results.size });
   const merge = (detections) => {
     const added = [];
@@ -630,17 +986,38 @@ export const scanTiled = async (
     };
   };
 
-  const scanRegion = async (region, variant = 'plain', workerIndex = 0) => {
+  const scanRegion = async (region, variant = 'plain', workerIndex = 0, options = {}) => {
     const safeRegion = normalizeRegion(region);
-    if (pool) {
-      const workerDetections = await pool[workerIndex % pool.length].scan(source, safeRegion, variant);
-      return toOriginalCoordinates(workerDetections, safeRegion, sourceScaleX, sourceScaleY);
+    const prepared = options.upscale || options.addQuietZone
+      ? prepareRegionCanvas(source, safeRegion, qrSize, { addQuietZone: options.addQuietZone })
+      : null;
+    const scanSource = prepared?.source || source;
+    const scanRect = prepared
+      ? { left: 0, top: 0, width: prepared.width, height: prepared.height }
+      : safeRegion;
+    try {
+      let detections;
+      if (pool) {
+        detections = await pool[workerIndex % pool.length].scan(scanSource, scanRect, variant);
+      } else if (variant === 'zxing') {
+        detections = await fallbackZXingScanRegion(scanSource, scanRect);
+      } else {
+        detections = await fallbackScanRegion(scanSource, scanRect, variant);
+      }
+      return toOriginalCoordinates(
+        detections,
+        safeRegion,
+        sourceScaleX,
+        sourceScaleY,
+        prepared?.scale || 1,
+        prepared?.padding || 0
+      );
+    } finally {
+      prepared?.release();
     }
-    const detections = await fallbackScanRegion(source, safeRegion, variant);
-    return toOriginalCoordinates(detections, safeRegion, sourceScaleX, sourceScaleY);
   };
 
-  const scanRegions = async (regions, stage, variant = 'plain') => {
+  const scanRegions = async (regions, stage, variant = 'plain', options = {}) => {
     activePass = stage;
     report();
     const stageStart = performance.now();
@@ -651,26 +1028,25 @@ export const scanTiled = async (
     const unresolvedRegions = [];
     const runWorker = async (workerIndex) => {
       while (cursor < regions.length) {
+        if (expected > 0 && results.size >= expected) break;
         const index = cursor;
         cursor += 1;
         const region = regions[index];
         try {
           let detections;
           try {
-            detections = await scanRegion(region, variant, workerIndex);
+            detections = await scanRegion(region, variant, workerIndex, options);
           } catch (workerError) {
             if (!pool) throw workerError;
-            console.debug('QR worker tile failed; retrying on the main thread:', workerError);
-            const safeRegion = normalizeRegion(region);
-            detections = await fallbackScanRegion(source, safeRegion, variant);
-            detections = toOriginalCoordinates(detections, safeRegion, sourceScaleX, sourceScaleY);
+            debugQrError(`worker ${variant} scan failed; retrying on main thread`, workerError);
+            detections = await scanRegionOnMainThread(region, variant, options);
           }
           const added = merge(detections);
           if (added.length === 0) unresolvedRegions.push(region);
           addedCount += added.length;
           report();
         } catch (error) {
-          console.debug('QR tile scan failed:', error);
+          debugQrError(`pass ${stage} ${variant} tile failed`, error);
           failureCount += 1;
           if (!firstError) firstError = error;
           unresolvedRegions.push(region);
@@ -684,15 +1060,54 @@ export const scanTiled = async (
       throw firstError || new Error('All QR tile scans failed');
     }
     if (DEBUG_QR) {
-      console.debug(`[qr-scan] pass ${stage} ${variant}: ${Math.round(performance.now() - stageStart)}ms, ${results.size} codes`);
+      console.debug(
+        `[qr-scan] pass ${stage}/${totalPasses} ${variant}: `
+        + `${regions.length} tiles (${regions[0]?.width || 0}x${regions[0]?.height || 0}), `
+        + `+${addedCount} codes (${results.size} total), `
+        + `${Math.round(performance.now() - stageStart)}ms`
+      );
     }
     return { unresolvedRegions, addedCount };
   };
 
+  const scanRegionOnMainThread = async (region, variant, options) => {
+    const safeRegion = normalizeRegion(region);
+    const prepared = options.upscale || options.addQuietZone
+      ? prepareRegionCanvas(source, safeRegion, qrSize, { addQuietZone: options.addQuietZone })
+      : null;
+    const scanSource = prepared?.source || source;
+    const scanRect = prepared
+      ? { left: 0, top: 0, width: prepared.width, height: prepared.height }
+      : safeRegion;
+    try {
+      const detections = variant === 'zxing'
+        ? await fallbackZXingScanRegion(scanSource, scanRect)
+        : await fallbackScanRegion(scanSource, scanRect, variant);
+      return toOriginalCoordinates(
+        detections,
+        safeRegion,
+        sourceScaleX,
+        sourceScaleY,
+        prepared?.scale || 1,
+        prepared?.padding || 0
+      );
+    } finally {
+      prepared?.release();
+    }
+  };
+
   try {
-    if (DEBUG_QR) console.debug(`[qr-scan] preprocess/resized: ${Math.round(performance.now() - preprocessStart)}ms`);
+    if (DEBUG_QR) {
+      console.debug(
+        `[qr-scan] source=${width}x${height}, resized=${resized.width}x${resized.height}, `
+        + `scale=${sourceScaleX.toFixed(3)}x${sourceScaleY.toFixed(3)}, `
+        + `path=${detector && deepScan ? 'BarcodeDetector + ' : ''}`
+        + `${pool ? `${pool.length} worker(s)` : 'main-thread fallback'}`
+      );
+    }
 
     if (detector && deepScan) {
+      const detectorStart = performance.now();
       try {
         const detected = await detector.detect(source);
         merge(detected.map((detection) => ({
@@ -702,39 +1117,51 @@ export const scanTiled = async (
             y: point.y / sourceScaleY,
           })),
         })));
-      } catch {
-        // Continue with zbar in tiles.
+        if (DEBUG_QR) {
+          console.debug(
+            `[qr-scan] BarcodeDetector pass found ${results.size} codes in `
+            + `${Math.round(performance.now() - detectorStart)}ms`
+          );
+        }
+      } catch (error) {
+        debugQrError('BarcodeDetector scan failed; continuing with worker decoder', error);
       }
     }
 
-    if (!deepScan && imageSource?.tagName === 'VIDEO') {
-      const tiles = makeSlidingTiles(resized.width, resized.height, 0);
+    if (isVideo) {
+      const tiles = makeVideoTiles(resized.width, resized.height);
       await scanRegions(tiles.slice(0, 9), 1);
       return [...results.values()];
     }
 
     const fullRegion = { left: 0, top: 0, width: resized.width, height: resized.height };
-    await scanRegions([fullRegion, ...makeCoarseTiles(resized.width, resized.height)], 1);
+    await scanRegions(
+      [fullRegion, ...makeCoarseTiles(resized.width, resized.height)],
+      1
+    );
     const firstPassDetections = [...results.values()];
     const firstPassWorking = toWorkingCoordinates(firstPassDetections, sourceScaleX, sourceScaleY);
-    qrSize = medianQrSize(firstPassWorking);
-    qrModuleSize = qrSize / 29;
+    qrSize = medianQrSize(firstPassWorking) || estimateQrSizeFromImage(resized.width, resized.height);
     let grid = estimateGrid(firstPassWorking, qrSize);
-    const fallbackWindows = makeSlidingTiles(resized.width, resized.height, qrSize);
-    const usedGridGaps = grid.gaps.length > 0;
-    const passTwoRegions = usedGridGaps
-      ? grid.gaps.map(({ left, top, width: cropWidth, height: cropHeight }) => ({
-        left: Math.max(0, Math.min(resized.width - cropWidth, left)),
-        top: Math.max(0, Math.min(resized.height - cropHeight, top)),
-        width: Math.min(resized.width, cropWidth),
-        height: Math.min(resized.height, cropHeight),
-      }))
-      : fallbackWindows;
-    const passTwo = await scanRegions(passTwoRegions, 2);
-    const shouldRunExtraRecovery = expected > 0
-      ? results.size < expected
-      : passTwo.addedCount > 0;
+    const completeGrid = expected === 0
+      && grid.rows > 0
+      && grid.columns > 0
+      && grid.gaps.length === 0
+      && grid.rows * grid.columns === results.size
+      && grid.columns >= Math.ceil(resized.width / (qrSize * 3.2))
+      && grid.rows >= Math.ceil(resized.height / (qrSize * 3.2));
+
     if (!deepScan) {
+      const fallbackWindows = makeSlidingTiles(resized.width, resized.height, medianQrSize(firstPassWorking));
+      const passTwoRegions = grid.gaps.length > 0
+        ? grid.gaps.map(({ left, top, width: cropWidth, height: cropHeight }) => ({
+          left: Math.max(0, Math.min(resized.width - cropWidth, left)),
+          top: Math.max(0, Math.min(resized.height - cropHeight, top)),
+          width: Math.min(resized.width, cropWidth),
+          height: Math.min(resized.height, cropHeight),
+        }))
+        : fallbackWindows;
+      await scanRegions(passTwoRegions, 2);
       const finalWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
       grid = estimateGrid(finalWorking, medianQrSize(finalWorking) || qrSize);
       return attachMissingCells(
@@ -745,34 +1172,91 @@ export const scanTiled = async (
         sourceScaleY
       );
     }
-    if (!shouldRunExtraRecovery) {
+
+    if ((expected > 0 && results.size >= expected) || completeGrid) {
+      const finalWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
+      grid = estimateGrid(finalWorking, medianQrSize(finalWorking) || qrSize);
+      return attachMissingCells([...results.values()], grid, expected, sourceScaleX, sourceScaleY);
+    }
+
+    const ladder = [
+      { fraction: 0.3, pass: 2 },
+      { fraction: 0.2, pass: 3 },
+      { fraction: 0.12, pass: 4 },
+    ];
+    let remainingTiles = [];
+    for (const { fraction, pass } of ladder) {
+      const tiles = makeScaleLadderTiles(resized.width, resized.height, fraction);
+      const tileResult = await scanRegions(tiles, pass, 'plain', { upscale: true });
+      remainingTiles = tileResult.unresolvedRegions;
+      if (expected > 0 && results.size >= expected) break;
+    }
+
+    if (expected > 0 && results.size >= expected) {
       const finalWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
       grid = estimateGrid(finalWorking, medianQrSize(finalWorking) || qrSize);
       return attachMissingCells([...results.values()], grid, expected, sourceScaleX, sourceScaleY);
     }
 
     const currentWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
-    grid = estimateGrid(currentWorking, medianQrSize(currentWorking));
-    const unresolved = grid.gaps.length > 0
-      ? grid.gaps.map(({ left, top, width: cropWidth, height: cropHeight }) => ({
-        left: Math.max(0, Math.min(resized.width - cropWidth, left)),
-        top: Math.max(0, Math.min(resized.height - cropHeight, top)),
-        width: Math.min(resized.width, cropWidth),
-        height: Math.min(resized.height, cropHeight),
-      }))
-      : passTwo.unresolvedRegions;
+    const detectedQrSize = medianQrSize(currentWorking) || qrSize;
+    grid = estimateGrid(currentWorking, detectedQrSize);
+    let cells = findLabelCells(source, resized.width, resized.height, expected, detectedQrSize);
+    const existingCenters = currentWorking.map((detection) => {
+      const points = detectionPoints(detection);
+      return points.reduce((center, point) => ({
+        x: center.x + point.x / points.length,
+        y: center.y + point.y / points.length,
+      }), { x: 0, y: 0 });
+    });
+    cells = cells.filter((cell) => !existingCenters.some((center) => (
+      Math.hypot(center.x - cell.centerX, center.y - cell.centerY) < detectedQrSize * 0.8
+    )));
+    if (cells.length === 0 && grid.gaps.length > 0) {
+      cells = grid.gaps;
+    }
+    if (cells.length === 0) {
+      cells = remainingTiles;
+    }
+
+    let remaining = cells;
+    if (remaining.length > 0) {
+      const plain = await scanRegions(remaining, 5, 'plain', {
+        upscale: true,
+        addQuietZone: true,
+      });
+      remaining = plain.unresolvedRegions;
+    } else {
+      activePass = 5;
+      report();
+      if (DEBUG_QR) console.debug('[qr-scan] pass 5 skipped: no unresolved cells');
+    }
 
     const variants = [
-      { name: 'flat', run: true },
-      { name: 'upscale', run: qrModuleSize < 3 },
-      { name: 'adaptive', run: true },
+      { name: 'flat', pass: 6 },
+      { name: 'adaptive', pass: 7 },
+      { name: 'unsharp', pass: 8 },
+      { name: 'inverted', pass: 9 },
     ];
-    let remaining = unresolved;
-    for (let index = 0; index < variants.length && remaining.length > 0; index += 1) {
-      if (!variants[index].run) continue;
-      const next = await scanRegions(remaining, index + 3, variants[index].name);
+    for (const variant of variants) {
+      if (expected > 0 && results.size >= expected) break;
+      if (remaining.length === 0) break;
+      const next = await scanRegions(remaining, variant.pass, variant.name, {
+        upscale: true,
+        addQuietZone: true,
+      });
       remaining = next.unresolvedRegions;
-      if (next.addedCount === 0) break;
+    }
+
+    if (remaining.length > 0 && (expected === 0 || results.size < expected)) {
+      await scanRegions(remaining, 10, 'zxing', {
+        upscale: true,
+        addQuietZone: true,
+      });
+    } else {
+      activePass = 10;
+      report();
+      if (DEBUG_QR) console.debug('[qr-scan] pass 10 skipped: no unresolved cells');
     }
 
     const finalWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);

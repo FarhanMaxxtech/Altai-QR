@@ -120,6 +120,7 @@ export default function AssignQrToProduct() {
   const cameraBatchTimerRef = useRef(null);
   const cameraBatchRequestRef = useRef(null);
   const flushCameraBatchRef = useRef(null);
+  const isPhotoScanningRef = useRef(false);
   const recentFailuresRef = useRef(new Map());
   const scannedListRef = useRef(null);
   const [cameraToast, setCameraToast] = useState('');
@@ -139,9 +140,23 @@ export default function AssignQrToProduct() {
     }
   }, [isPhotoScanning, scanCart]);
 
+  const scheduleCameraBatch = (delay = 150) => {
+    if (cameraBatchTimerRef.current !== null) {
+      window.clearTimeout(cameraBatchTimerRef.current);
+    }
+    cameraBatchTimerRef.current = window.setTimeout(() => {
+      cameraBatchTimerRef.current = null;
+      flushCameraBatchRef.current?.();
+    }, delay);
+  };
+
   const handlePhotoScanningChange = (isScanning) => {
+    isPhotoScanningRef.current = isScanning;
     if (isScanning) pendingPhotoSortRef.current = true;
     setIsPhotoScanning(isScanning);
+    if (!isScanning && cameraPendingValuesRef.current.size > 0) {
+      scheduleCameraBatch(0);
+    }
   };
 
   useEffect(() => {
@@ -240,7 +255,7 @@ export default function AssignQrToProduct() {
       const now = Date.now();
       const stalePending = scanCartRef.current.some((row) => (
         row.scanState === 'checking'
-        && now - (row.checkingSince || now) > 10000
+        && now - (row.checkingSince || now) > (row.scanSource === 'snap' ? 30000 : 10000)
         && cameraPendingValuesRef.current.has(row.scanValue)
       ));
       if (stalePending && !cameraBatchRequestRef.current) {
@@ -251,7 +266,8 @@ export default function AssignQrToProduct() {
         flushCameraBatchRef.current?.();
       }
       const timedOutRows = scanCartRef.current.filter((row) => {
-        if (row.scanState !== 'checking' || now - (row.checkingSince || now) <= 10000) return false;
+        const staleThreshold = row.scanSource === 'snap' ? 30000 : 10000;
+        if (row.scanState !== 'checking' || now - (row.checkingSince || now) <= staleThreshold) return false;
         const value = row.scanValue;
         const pending = cameraPendingValuesRef.current.has(value);
         const inFlight = cameraBatchRequestRef.current?.rowKeys.get(value) === row.scanKey;
@@ -488,103 +504,169 @@ export default function AssignQrToProduct() {
 
   const flushCameraBatch = async () => {
     if (cameraBatchRequestRef.current || cameraPendingValuesRef.current.size === 0) return;
+    const hasPendingSnap = [...cameraPendingValuesRef.current.entries()].some(([value, scanKey]) => (
+      scanCartRef.current.some((row) => (
+        row.scanKey === scanKey && row.scanValue === value && row.scanSource === 'snap'
+      ))
+    ));
+    if (hasPendingSnap && isPhotoScanningRef.current) return;
+
     const sessionId = scanSessionRef.current;
-    const pending = [...cameraPendingValuesRef.current.entries()].slice(0, 100);
-    pending.forEach(([value]) => cameraPendingValuesRef.current.delete(value));
-    const values = pending.map(([value]) => value);
-    const rowKeys = new Map(pending);
-    const controller = new AbortController();
-    const request = { controller, rowKeys };
-    cameraBatchRequestRef.current = request;
-    let timedOut = false;
-    const timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, 8000);
-    try {
-      const results = await apiFetchScanLookupBatch(
-        '/api/qrcode/scan-lookup-batch',
-        values,
-        {},
-        (value) => `/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`,
-        controller.signal
-      );
-      if (sessionId !== scanSessionRef.current) return;
+    const coordinator = {
+      requests: new Set(),
+      rowKeys: new Map(),
+      controller: {
+        abort() {
+          coordinator.requests.forEach((request) => request.controller?.abort());
+        },
+      },
+    };
+    cameraBatchRequestRef.current = coordinator;
 
-      const successfulRows = new Map();
-      const failures = [];
-      const receivedValues = new Set();
-      let successCount = 0;
-      results.forEach((result) => {
-        receivedValues.add(result.value);
-        const scanKey = rowKeys.get(result.value);
-        if (result.ok) {
-          successfulRows.set(scanKey, {
-            ...result.data,
-            scanKey,
-            scanValue: result.value,
-            scanState: 'ok',
-            checkingSince: undefined,
-          });
-          successCount++;
-        } else {
-          const message = result.message || 'Could not recognize this code.';
-          failures.push({ value: result.label_id || result.value, message });
-          recordSnapFailure(result.value, message);
+    const processChunk = async (pending) => {
+      const values = pending.map(([value]) => value);
+      const rowKeys = new Map(pending);
+      const request = { controller: null, rowKeys };
+      coordinator.requests.add(request);
+      rowKeys.forEach((scanKey, value) => coordinator.rowKeys.set(value, scanKey));
+
+      try {
+        let results;
+        let requestError = null;
+        let timedOut = false;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          if (sessionId !== scanSessionRef.current) return;
+          const controller = new AbortController();
+          request.controller = controller;
+          let attemptTimedOut = false;
+          let timeoutId;
+          try {
+            const lookup = apiFetchScanLookupBatch(
+              '/api/qrcode/scan-lookup-batch',
+              values,
+              {},
+              (value) => `/api/qrcode/scan-lookup?serial_number=${encodeURIComponent(value)}`,
+              controller.signal
+            );
+            timeoutId = window.setTimeout(() => {
+              attemptTimedOut = true;
+              controller.abort();
+            }, 15000 + values.length * 100);
+            results = await lookup;
+            if (results.some((result) => (
+              !result.ok && result.message === 'Could not reach server.'
+            ))) {
+              throw new Error('Could not reach server.');
+            }
+            requestError = null;
+            timedOut = false;
+            break;
+          } catch (error) {
+            if (timeoutId !== undefined) {
+              window.clearTimeout(timeoutId);
+              timeoutId = undefined;
+            }
+            requestError = error;
+            timedOut = attemptTimedOut;
+            const retryable = attemptTimedOut
+              || error?.message === 'Could not reach server.'
+              || error?.name === 'TypeError'
+              || error?.name === 'NetworkError';
+            if (attempt === 0 && retryable && sessionId === scanSessionRef.current) {
+              await new Promise((resolve) => window.setTimeout(resolve, 1000));
+            } else {
+              break;
+            }
+          } finally {
+            if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+          }
         }
-      });
-      values.filter((value) => !receivedValues.has(value))
-        .forEach((value) => {
-          const message = 'Could not recognize this code.';
-          failures.push({ value, message });
-          recordSnapFailure(value, message);
+        if (sessionId !== scanSessionRef.current) return;
+
+        if (requestError) {
+          const message = timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.';
+          const failedRows = scanCartRef.current.filter((row) => (
+            rowKeys.get(row.scanValue) === row.scanKey && row.scanState === 'checking'
+          ));
+          const failedKeys = new Set(failedRows.map((row) => row.scanKey));
+          commitCart(scanCartRef.current.filter((row) => !failedKeys.has(row.scanKey)));
+          values.forEach((value) => recordSnapFailure(value, message));
+          showCameraFailures(values.map((value) => ({ value, message })), timedOut);
+          if (!timedOut) console.error(requestError);
+          return;
+        }
+
+        const successfulRows = new Map();
+        const failures = [];
+        const receivedValues = new Set();
+        let successCount = 0;
+        results.forEach((result) => {
+          receivedValues.add(result.value);
+          const scanKey = rowKeys.get(result.value);
+          if (result.ok) {
+            successfulRows.set(scanKey, {
+              ...result.data,
+              scanKey,
+              scanValue: result.value,
+              scanState: 'ok',
+              checkingSince: undefined,
+            });
+            successCount++;
+          } else {
+            const message = result.message || 'Could not recognize this code.';
+            failures.push({ value: result.label_id || result.value, message });
+            recordSnapFailure(result.value, message);
+          }
         });
+        values.filter((value) => !receivedValues.has(value))
+          .forEach((value) => {
+            const message = 'Could not recognize this code.';
+            failures.push({ value, message });
+            recordSnapFailure(value, message);
+          });
 
-      const resolvedCart = scanCartRef.current.flatMap((row) => {
-        if (!rowKeys.has(row.scanValue)) return [row];
-        const success = successfulRows.get(row.scanKey);
-        return success ? [success] : [];
-      });
-      commitCart(resolvedCart);
-      if (successCount > 0) {
-        setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
-        setTimeout(() => setScanSuccessMessage(''), 2500);
-      }
-      recordSnapFailures(failures);
-      showCameraFailures(failures);
-    } catch (err) {
-      if (sessionId !== scanSessionRef.current) return;
-      const message = timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.';
-      commitCart(scanCartRef.current.filter((row) => !rowKeys.has(row.scanValue)));
-      values.forEach((value) => recordSnapFailure(value, message));
-      showCameraFailures(values.map((value) => ({ value, message })), timedOut);
-      if (!timedOut) console.error(err);
-    } finally {
-      window.clearTimeout(timeoutId);
-      const unresolvedKeys = new Set(
-        scanCartRef.current
-          .filter((row) => rowKeys.get(row.scanValue) === row.scanKey && row.scanState === 'checking')
-          .map((row) => row.scanKey)
-      );
-      if (unresolvedKeys.size > 0) {
-        const unresolvedRows = scanCartRef.current.filter((row) => unresolvedKeys.has(row.scanKey));
-        unresolvedRows.forEach((row) => recentFailuresRef.current.delete(row.scanValue));
-        commitCart(scanCartRef.current.filter((row) => !unresolvedKeys.has(row.scanKey)));
-        unresolvedRows.forEach((row) => recordSnapFailure(
-          row.scanValue,
-          timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.'
-        ));
-        showCameraFailures(unresolvedRows.map((row) => ({
-          value: row.scanValue,
-          message: timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.',
-        })));
-      }
-      if (cameraBatchRequestRef.current === request) {
-        cameraBatchRequestRef.current = null;
-        if (cameraPendingValuesRef.current.size > 0) {
-          if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
-          cameraBatchTimerRef.current = window.setTimeout(flushCameraBatch, 0);
+        const resolvedCart = scanCartRef.current.flatMap((row) => {
+          if (!rowKeys.has(row.scanValue)) return [row];
+          const success = successfulRows.get(row.scanKey);
+          return success ? [success] : [];
+        });
+        commitCart(resolvedCart);
+        if (successCount > 0) {
+          setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
+          setTimeout(() => setScanSuccessMessage(''), 2500);
         }
+        recordSnapFailures(failures);
+        showCameraFailures(failures);
+      } finally {
+        coordinator.requests.delete(request);
+        rowKeys.forEach((scanKey, value) => {
+          if (coordinator.rowKeys.get(value) === scanKey) coordinator.rowKeys.delete(value);
+        });
+      }
+    };
+
+    const takeChunk = () => {
+      const pending = [...cameraPendingValuesRef.current.entries()].slice(0, 25);
+      pending.forEach(([value]) => cameraPendingValuesRef.current.delete(value));
+      return pending;
+    };
+    const runWorker = async () => {
+      while (sessionId === scanSessionRef.current) {
+        const pending = takeChunk();
+        if (pending.length === 0) break;
+        await processChunk(pending);
+      }
+    };
+
+    try {
+      await Promise.all([
+        runWorker().catch((error) => console.error('QR lookup chunk processing failed:', error)),
+        runWorker().catch((error) => console.error('QR lookup chunk processing failed:', error)),
+      ]);
+    } finally {
+      if (cameraBatchRequestRef.current === coordinator) {
+        cameraBatchRequestRef.current = null;
+        if (cameraPendingValuesRef.current.size > 0) scheduleCameraBatch(0);
       }
       maybeBuildSnapReport();
     }
@@ -636,6 +718,7 @@ export default function AssignQrToProduct() {
           label_id: value,
           scanState: 'checking',
           checkingSince: now,
+          scanSource: metadata?.source === 'snap' ? 'snap' : 'camera',
         })),
       ];
       const rescanValues = new Set(pendingValues.keys());
@@ -652,11 +735,7 @@ export default function AssignQrToProduct() {
       pendingValues.forEach((scanKey, value) => cameraPendingValuesRef.current.set(value, scanKey));
       commitCart(nextCart);
       if (sortMode === 'newest' && !pendingPhotoSortRef.current) setScanCartPage(1);
-      if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
-      cameraBatchTimerRef.current = window.setTimeout(() => {
-        cameraBatchTimerRef.current = null;
-        flushCameraBatch();
-      }, 150);
+      scheduleCameraBatch();
     }
     if (duplicates.length > 0) {
       recordSnapFailures(duplicates);

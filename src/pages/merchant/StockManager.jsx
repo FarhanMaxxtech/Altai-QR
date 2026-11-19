@@ -180,9 +180,29 @@ export default function StockManager() {
   const cameraBatchTimerRef = useRef(null);
   const cameraBatchRequestRef = useRef(null);
   const flushCameraBatchRef = useRef(null);
+  const isPhotoScanningRef = useRef(false);
+  const cameraResultQueueRef = useRef(Promise.resolve());
   const cameraDialogRef = useRef(false);
   const recentFailuresRef = useRef(new Map());
   const scanCartSectionRef = useRef(null);
+
+  const scheduleCameraBatch = (delay = 150) => {
+    if (cameraBatchTimerRef.current !== null) {
+      window.clearTimeout(cameraBatchTimerRef.current);
+    }
+    cameraBatchTimerRef.current = window.setTimeout(() => {
+      cameraBatchTimerRef.current = null;
+      flushCameraBatchRef.current?.();
+    }, delay);
+  };
+
+  const handlePhotoScanningChange = (isScanning) => {
+    isPhotoScanningRef.current = isScanning;
+    setIsPhotoScanning(isScanning);
+    if (!isScanning && cameraPendingValuesRef.current.size > 0) {
+      scheduleCameraBatch(0);
+    }
+  };
 
   const [remark, setRemark] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -379,7 +399,7 @@ export default function StockManager() {
       const now = Date.now();
       const stalePending = scanCartRef.current.some((row) => (
         row.scanState === 'checking'
-        && now - (row.checkingSince || now) > 10000
+        && now - (row.checkingSince || now) > (row.scanSource === 'snap' ? 30000 : 10000)
         && cameraPendingValuesRef.current.has(row.scanValue)
       ));
       if (stalePending && !cameraBatchRequestRef.current) {
@@ -390,7 +410,8 @@ export default function StockManager() {
         flushCameraBatchRef.current?.();
       }
       const timedOutRows = scanCartRef.current.filter((row) => {
-        if (row.scanState !== 'checking' || now - (row.checkingSince || now) <= 10000) return false;
+        const staleThreshold = row.scanSource === 'snap' ? 30000 : 10000;
+        if (row.scanState !== 'checking' || now - (row.checkingSince || now) <= staleThreshold) return false;
         const value = row.scanValue;
         const pending = cameraPendingValuesRef.current.has(value);
         const inFlight = cameraBatchRequestRef.current?.rowKeys.get(value) === row.scanKey;
@@ -821,177 +842,251 @@ const handleRejectDetail = async () => {
 
   const flushCameraBatch = async () => {
     if (cameraBatchRequestRef.current || cameraPendingValuesRef.current.size === 0) return;
+    const hasPendingSnap = [...cameraPendingValuesRef.current.entries()].some(([value, scanKey]) => (
+      scanCartRef.current.some((row) => (
+        row.scanKey === scanKey && row.scanValue === value && row.scanSource === 'snap'
+      ))
+    ));
+    if (hasPendingSnap && isPhotoScanningRef.current) return;
+
     const sessionId = scanSessionRef.current;
-    const pending = [...cameraPendingValuesRef.current.entries()].slice(0, 100);
     const storeIdOverride = cameraPendingStoreRef.current;
-    pending.forEach(([value]) => cameraPendingValuesRef.current.delete(value));
-    if (cameraPendingValuesRef.current.size === 0) cameraPendingStoreRef.current = null;
-    const values = pending.map(([value]) => value);
-    const rowKeys = new Map(pending);
-    const controller = new AbortController();
-    const request = { controller, rowKeys };
-    cameraBatchRequestRef.current = request;
-    let timedOut = false;
-    let timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, 8000);
+    const coordinator = {
+      requests: new Set(),
+      rowKeys: new Map(),
+      controller: {
+        abort() {
+          coordinator.requests.forEach((request) => request.controller?.abort());
+        },
+      },
+    };
+    cameraBatchRequestRef.current = coordinator;
+
+    const processChunk = async (pending) => {
+      const values = pending.map(([value]) => value);
+      const rowKeys = new Map(pending);
+      const request = { controller: null, rowKeys };
+      coordinator.requests.add(request);
+      rowKeys.forEach((scanKey, value) => coordinator.rowKeys.set(value, scanKey));
+
+      try {
+        let results;
+        let requestError = null;
+        let timedOut = false;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          if (sessionId !== scanSessionRef.current) return;
+          const currentFromStore = storeIdOverride || (
+            SOURCE_STORE_TYPES.includes(selectedTypeKey)
+              ? sourceStore
+              : (isTransfer ? fromStore : '')
+          );
+          const controller = new AbortController();
+          request.controller = controller;
+          let attemptTimedOut = false;
+          let timeoutId;
+          try {
+            const lookup = apiFetchScanLookupBatch(
+              '/api/transactions/scan-lookup-batch',
+              values,
+              {
+                transaction_type: selectedType.txType,
+                from_store_id: currentFromStore,
+              },
+              (value) => {
+                const params = new URLSearchParams({
+                  serial_number: value,
+                  transaction_type: selectedType.txType,
+                });
+                if (currentFromStore) params.set('from_store_id', currentFromStore);
+                return `/api/transactions/scan-lookup?${params.toString()}`;
+              },
+              controller.signal
+            );
+            timeoutId = window.setTimeout(() => {
+              attemptTimedOut = true;
+              controller.abort();
+            }, 15000 + values.length * 100);
+            results = await lookup;
+            if (results.some((result) => (
+              !result.ok && result.message === 'Could not reach server.'
+            ))) {
+              throw new Error('Could not reach server.');
+            }
+            requestError = null;
+            timedOut = false;
+            break;
+          } catch (error) {
+            if (timeoutId !== undefined) {
+              window.clearTimeout(timeoutId);
+              timeoutId = undefined;
+            }
+            requestError = error;
+            timedOut = attemptTimedOut;
+            const retryable = attemptTimedOut
+              || error?.message === 'Could not reach server.'
+              || error?.name === 'TypeError'
+              || error?.name === 'NetworkError';
+            if (attempt === 0 && retryable && sessionId === scanSessionRef.current) {
+              await new Promise((resolve) => window.setTimeout(resolve, 1000));
+            } else {
+              break;
+            }
+          } finally {
+            if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+          }
+        }
+        if (sessionId !== scanSessionRef.current) return;
+
+        if (requestError) {
+          const message = timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.';
+          const failedRows = scanCartRef.current.filter((row) => (
+            rowKeys.get(row.scanValue) === row.scanKey && row.scanState === 'checking'
+          ));
+          const failedKeys = new Set(failedRows.map((row) => row.scanKey));
+          commitCart(scanCartRef.current.filter((row) => !failedKeys.has(row.scanKey)));
+          values.forEach((value) => recordSnapFailure(value, message));
+          showCameraFailures(values.map((value) => ({ value, message })), timedOut);
+          if (!timedOut) console.error(requestError);
+          return;
+        }
+
+        const previous = cameraResultQueueRef.current;
+        let releaseResultLock;
+        cameraResultQueueRef.current = new Promise((resolve) => {
+          releaseResultLock = resolve;
+        });
+        await previous;
+        try {
+          if (sessionId !== scanSessionRef.current) return;
+          const successfulRows = new Map();
+          const failures = [];
+          const wrongStoreResults = [];
+          const receivedValues = new Set();
+          let successCount = 0;
+          results.forEach((result) => {
+            receivedValues.add(result.value);
+            const scanKey = rowKeys.get(result.value);
+            if (result.ok) {
+              successfulRows.set(scanKey, {
+                ...result.data,
+                scanKey,
+                scanValue: result.value,
+                scanState: 'ok',
+                checkingSince: undefined,
+              });
+              successCount++;
+            } else if (result.wrong_store && result.current_store_id) {
+              wrongStoreResults.push({ ...result, value: result.value });
+              recordSnapFailure(result.value, result.message || 'belongs to another store');
+            } else {
+              const message = result.message || 'Could not recognize this code.';
+              failures.push({ value: result.label_id || result.value, message });
+              recordSnapFailure(result.value, message);
+            }
+          });
+          values.filter((value) => !receivedValues.has(value))
+            .forEach((value) => {
+              const message = 'Could not recognize this code.';
+              failures.push({ value, message });
+              recordSnapFailure(value, message);
+            });
+
+          const resolvedCart = scanCartRef.current.flatMap((row) => {
+            if (!rowKeys.has(row.scanValue)) return [row];
+            const success = successfulRows.get(row.scanKey);
+            return success ? [success] : [];
+          });
+          commitCart(resolvedCart);
+          if (successCount > 0) {
+            setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
+            setTimeout(() => setScanSuccessMessage(''), 2500);
+          }
+          recordSnapFailures(failures);
+          showCameraFailures(failures);
+
+          if (wrongStoreResults.length === 0) return;
+
+          const storeGroups = new Map();
+          wrongStoreResults.forEach((item) => {
+            const group = storeGroups.get(item.current_store_id) || [];
+            group.push(item);
+            storeGroups.set(item.current_store_id, group);
+          });
+          const groupedText = [...storeGroups.entries()]
+            .map(([storeId, items]) => {
+              const storeName = items[0].current_store_name || stores.find((store) => store.store_id === storeId)?.location || 'another store';
+              return `${items.length} code${items.length === 1 ? '' : 's'} belong${items.length === 1 ? 's' : ''} to "${storeName}": ${items.map((item) => item.value).join(', ')}`;
+            })
+            .join('\n');
+
+          cameraDialogRef.current = true;
+          setIsCameraDialogOpen(true);
+          const targetStoreIds = [...storeGroups.keys()];
+          const canSwitchTogether = targetStoreIds.length === 1;
+          const readyCount = scanCartRef.current.filter((item) => item.scanState === 'ok' || !item.scanState).length;
+          const message = canSwitchTogether
+            ? `${groupedText}\n\n${readyCount > 0 ? `Your current batch has ${readyCount} unit(s). Switching stores will clear that batch. ` : ''}Switch to this store and add these codes?`
+            : `${groupedText}\n\nThese codes belong to different stores. Scan codes from one store at a time.`;
+          const confirmed = await confirm(message, {
+            title: 'Different store',
+            confirmLabel: canSwitchTogether ? (readyCount > 0 ? 'Switch & clear batch' : 'Switch & add') : 'OK',
+            hideCancel: !canSwitchTogether,
+            cancelLabel: 'Keep current store',
+            danger: readyCount > 0 && canSwitchTogether,
+          });
+          cameraDialogRef.current = false;
+          setIsCameraDialogOpen(false);
+
+          if (sessionId !== scanSessionRef.current || !confirmed || !canSwitchTogether) {
+            wrongStoreResults.forEach((item) => recentFailuresRef.current.set(item.value, Date.now()));
+            return;
+          }
+
+          const targetStoreId = targetStoreIds[0];
+          resetScanSession();
+          commitCart([]);
+          setPage(1);
+          if (isTransfer) {
+            setFromStore(targetStoreId);
+          } else {
+            setSourceStore(targetStoreId);
+          }
+          wrongStoreResults.forEach((item) => recentFailuresRef.current.delete(item.value));
+          scanCameraBatch(wrongStoreResults.map((item) => item.value), targetStoreId);
+        } finally {
+          releaseResultLock();
+        }
+      } finally {
+        coordinator.requests.delete(request);
+        rowKeys.forEach((scanKey, value) => {
+          if (coordinator.rowKeys.get(value) === scanKey) coordinator.rowKeys.delete(value);
+        });
+      }
+    };
+
+    const takeChunk = () => {
+      const pending = [...cameraPendingValuesRef.current.entries()].slice(0, 25);
+      pending.forEach(([value]) => cameraPendingValuesRef.current.delete(value));
+      if (cameraPendingValuesRef.current.size === 0) cameraPendingStoreRef.current = null;
+      return pending;
+    };
+    const runWorker = async () => {
+      while (sessionId === scanSessionRef.current) {
+        const pending = takeChunk();
+        if (pending.length === 0) break;
+        await processChunk(pending);
+      }
+    };
 
     try {
-      const currentFromStore = storeIdOverride || (
-        SOURCE_STORE_TYPES.includes(selectedTypeKey)
-          ? sourceStore
-          : (isTransfer ? fromStore : '')
-      );
-      const results = await apiFetchScanLookupBatch(
-        '/api/transactions/scan-lookup-batch',
-        values,
-        {
-          transaction_type: selectedType.txType,
-          from_store_id: currentFromStore,
-        },
-        (value) => {
-          const params = new URLSearchParams({
-            serial_number: value,
-            transaction_type: selectedType.txType,
-          });
-          if (currentFromStore) params.set('from_store_id', currentFromStore);
-          return `/api/transactions/scan-lookup?${params.toString()}`;
-        },
-        controller.signal
-      );
-      window.clearTimeout(timeoutId);
-      timeoutId = null;
-      if (sessionId !== scanSessionRef.current) return;
-
-      const successfulRows = new Map();
-      const failures = [];
-      const wrongStoreResults = [];
-      const receivedValues = new Set();
-      let successCount = 0;
-      results.forEach((result) => {
-        receivedValues.add(result.value);
-        const scanKey = rowKeys.get(result.value);
-        if (result.ok) {
-          successfulRows.set(scanKey, {
-            ...result.data,
-            scanKey,
-            scanValue: result.value,
-            scanState: 'ok',
-            checkingSince: undefined,
-          });
-          successCount++;
-        } else if (result.wrong_store && result.current_store_id) {
-          wrongStoreResults.push({ ...result, value: result.value });
-          recordSnapFailure(result.value, result.message || 'belongs to another store');
-        } else {
-          const message = result.message || 'Could not recognize this code.';
-          failures.push({ value: result.label_id || result.value, message });
-          recordSnapFailure(result.value, message);
-        }
-      });
-      values.filter((value) => !receivedValues.has(value))
-        .forEach((value) => {
-          const message = 'Could not recognize this code.';
-          failures.push({ value, message });
-          recordSnapFailure(value, message);
-        });
-
-      const resolvedCart = scanCartRef.current.flatMap((row) => {
-        if (!rowKeys.has(row.scanValue)) return [row];
-        const success = successfulRows.get(row.scanKey);
-        return success ? [success] : [];
-      });
-      commitCart(resolvedCart);
-      if (successCount > 0) {
-        setScanSuccessMessage(`✓ ${successCount} code${successCount === 1 ? '' : 's'} added.`);
-        setTimeout(() => setScanSuccessMessage(''), 2500);
-      }
-      recordSnapFailures(failures);
-      showCameraFailures(failures);
-
-      if (wrongStoreResults.length === 0) return;
-
-      const storeGroups = new Map();
-      wrongStoreResults.forEach((item) => {
-        const group = storeGroups.get(item.current_store_id) || [];
-        group.push(item);
-        storeGroups.set(item.current_store_id, group);
-      });
-      const groupedText = [...storeGroups.entries()]
-        .map(([storeId, items]) => {
-          const storeName = items[0].current_store_name || stores.find((store) => store.store_id === storeId)?.location || 'another store';
-          return `${items.length} code${items.length === 1 ? '' : 's'} belong${items.length === 1 ? 's' : ''} to "${storeName}": ${items.map((item) => item.value).join(', ')}`;
-        })
-        .join('\n');
-
-      cameraDialogRef.current = true;
-      setIsCameraDialogOpen(true);
-      const targetStoreIds = [...storeGroups.keys()];
-      const canSwitchTogether = targetStoreIds.length === 1;
-      const readyCount = scanCartRef.current.filter((item) => item.scanState === 'ok' || !item.scanState).length;
-      const message = canSwitchTogether
-        ? `${groupedText}\n\n${readyCount > 0 ? `Your current batch has ${readyCount} unit(s). Switching stores will clear that batch. ` : ''}Switch to this store and add these codes?`
-        : `${groupedText}\n\nThese codes belong to different stores. Scan codes from one store at a time.`;
-      const confirmed = await confirm(message, {
-        title: 'Different store',
-        confirmLabel: canSwitchTogether ? (readyCount > 0 ? 'Switch & clear batch' : 'Switch & add') : 'OK',
-        hideCancel: !canSwitchTogether,
-        cancelLabel: 'Keep current store',
-        danger: readyCount > 0 && canSwitchTogether,
-      });
-      cameraDialogRef.current = false;
-      setIsCameraDialogOpen(false);
-
-      if (sessionId !== scanSessionRef.current || !confirmed || !canSwitchTogether) {
-        wrongStoreResults.forEach((item) => recentFailuresRef.current.set(item.value, Date.now()));
-        return;
-      }
-
-      const targetStoreId = targetStoreIds[0];
-      resetScanSession();
-      commitCart([]);
-      setPage(1);
-      if (isTransfer) {
-        setFromStore(targetStoreId);
-      } else {
-        setSourceStore(targetStoreId);
-      }
-      wrongStoreResults.forEach((item) => recentFailuresRef.current.delete(item.value));
-      scanCameraBatch(wrongStoreResults.map((item) => item.value), targetStoreId);
-    } catch (err) {
-      if (sessionId !== scanSessionRef.current) return;
-      const message = timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.';
-      commitCart(scanCartRef.current.filter((row) => !rowKeys.has(row.scanValue)));
-      values.forEach((value) => recordSnapFailure(value, message));
-      showCameraFailures(values.map((value) => ({ value, message })), timedOut);
-      if (!timedOut) console.error(err);
+      await Promise.all([
+        runWorker().catch((error) => console.error('QR lookup chunk processing failed:', error)),
+        runWorker().catch((error) => console.error('QR lookup chunk processing failed:', error)),
+      ]);
     } finally {
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
-      const unresolvedKeys = new Set(
-        scanCartRef.current
-          .filter((row) => rowKeys.get(row.scanValue) === row.scanKey && row.scanState === 'checking')
-          .map((row) => row.scanKey)
-      );
-      if (unresolvedKeys.size > 0) {
-        const unresolvedRows = scanCartRef.current.filter((row) => unresolvedKeys.has(row.scanKey));
-        unresolvedRows.forEach((row) => recentFailuresRef.current.delete(row.scanValue));
-        commitCart(scanCartRef.current.filter((row) => !unresolvedKeys.has(row.scanKey)));
-        unresolvedRows.forEach((row) => recordSnapFailure(
-          row.scanValue,
-          timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.'
-        ));
-        showCameraFailures(unresolvedRows.map((row) => ({
-          value: row.scanValue,
-          message: timedOut ? 'Lookup timed out, scan again' : 'Could not reach server.',
-        })), timedOut);
-      }
-      if (cameraBatchRequestRef.current === request) {
+      if (cameraBatchRequestRef.current === coordinator) {
         cameraBatchRequestRef.current = null;
-        if (cameraPendingValuesRef.current.size > 0) {
-          if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
-          cameraBatchTimerRef.current = window.setTimeout(flushCameraBatch, 0);
-        }
+        if (cameraPendingValuesRef.current.size > 0) scheduleCameraBatch(0);
       }
       maybeBuildSnapReport();
     }
@@ -1042,6 +1137,7 @@ const handleRejectDetail = async () => {
           label_id: value,
           scanState: 'checking',
           checkingSince: now,
+          scanSource: metadata?.source === 'snap' ? 'snap' : 'camera',
         })),
       ];
       const rescanValues = new Set(pendingValues.keys());
@@ -1056,11 +1152,7 @@ const handleRejectDetail = async () => {
       if (storeIdOverride) cameraPendingStoreRef.current = storeIdOverride;
       commitCart(nextCart);
       setPage(1);
-      if (cameraBatchTimerRef.current !== null) window.clearTimeout(cameraBatchTimerRef.current);
-      cameraBatchTimerRef.current = window.setTimeout(() => {
-        cameraBatchTimerRef.current = null;
-        flushCameraBatch();
-      }, 150);
+      scheduleCameraBatch();
     }
     if (duplicates.length > 0) {
       recordSnapFailures(duplicates);
@@ -1478,7 +1570,7 @@ const handleRejectDetail = async () => {
                 </button>
                 <SnapAndScanButton
                   onDetected={handleSnapDetected}
-                  onScanningChange={setIsPhotoScanning}
+                  onScanningChange={handlePhotoScanningChange}
                   onSnapStart={handleSnapStart}
                   onSnapComplete={handleSnapComplete}
                   lastExpectedCount={lastSnapExpectedCount}
@@ -1498,7 +1590,7 @@ const handleRejectDetail = async () => {
               </button>
               <SnapAndScanButton
                 onDetected={handleSnapDetected}
-                onScanningChange={setIsPhotoScanning}
+                onScanningChange={handlePhotoScanningChange}
                 onSnapStart={handleSnapStart}
                 onSnapComplete={handleSnapComplete}
                 lastExpectedCount={lastSnapExpectedCount}

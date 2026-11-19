@@ -3,17 +3,29 @@ import wasmUrl from '@undecaf/zbar-wasm/dist/zbar.wasm?url';
 
 const DEBUG_QR = false;
 let scannerPromise;
+let zxingPromise;
+
+const debugError = (message, error) => {
+  if (DEBUG_QR) console.debug(`[qr-worker] ${message}`, error);
+};
 
 const getScanner = () => {
   if (!scannerPromise) {
     zbar.setModuleArgs({
       locateFile: (filename) => (filename === 'zbar.wasm' ? wasmUrl : filename),
     });
-    scannerPromise = zbar.getDefaultScanner().then((scanner) => {
-      scanner.setConfig(zbar.ZBarSymbolType.ZBAR_NONE, zbar.ZBarConfigType.ZBAR_CFG_ENABLE, 0);
-      scanner.setConfig(zbar.ZBarSymbolType.ZBAR_QRCODE, zbar.ZBarConfigType.ZBAR_CFG_ENABLE, 1);
-      return scanner;
-    });
+    scannerPromise = zbar.getDefaultScanner()
+      .then((scanner) => {
+        scanner.setConfig(zbar.ZBarSymbolType.ZBAR_NONE, zbar.ZBarConfigType.ZBAR_CFG_ENABLE, 0);
+        scanner.setConfig(zbar.ZBarSymbolType.ZBAR_QRCODE, zbar.ZBarConfigType.ZBAR_CFG_ENABLE, 1);
+        if (DEBUG_QR) console.debug('[qr-worker] zbar/WASM loaded');
+        return scanner;
+      })
+      .catch((error) => {
+        debugError('zbar/WASM load failed', error);
+        scannerPromise = null;
+        throw error;
+      });
   }
   return scannerPromise;
 };
@@ -103,36 +115,27 @@ const adaptiveContrast = (luminance) => {
   return stretch(luminance, minimum, maximum);
 };
 
-const upscale = (luminance, width, height) => {
-  const scale = Math.min(2, Math.sqrt(8_000_000 / luminance.length));
-  if (scale <= 1.05) return { luminance, width, height };
-  const scaledWidth = Math.round(width * scale);
-  const scaledHeight = Math.round(height * scale);
-  const resized = new Uint8Array(scaledWidth * scaledHeight);
-  for (let y = 0; y < scaledHeight; y += 1) {
-    const sourceY = Math.min(height - 1, Math.floor(y / scale));
-    for (let x = 0; x < scaledWidth; x += 1) {
-      const sourceX = Math.min(width - 1, Math.floor(x / scale));
-      resized[y * scaledWidth + x] = luminance[sourceY * width + sourceX];
-    }
-  }
-  return { luminance: resized, width: scaledWidth, height: scaledHeight };
-};
-
 const scanPixels = async (rgba, width, height, variant) => {
   const stageStart = performance.now();
   const originalWidth = width;
   const originalHeight = height;
   let luminance = grayscale(rgba);
-  if (variant === 'flat' || variant === 'upscale' || variant === 'adaptive') {
+  if (variant === 'flat' || variant === 'adaptive') {
     luminance = normalizeFlatField(luminance, width, height);
   }
   if (variant === 'adaptive') luminance = adaptiveContrast(luminance);
-  if (variant === 'upscale') {
-    const enlarged = upscale(luminance, width, height);
-    luminance = enlarged.luminance;
-    width = enlarged.width;
-    height = enlarged.height;
+  if (variant === 'unsharp') {
+    const radius = Math.max(1, Math.round(Math.min(width, height) / 80));
+    const blurred = boxBlur(boxBlur(luminance, width, height, radius, true), width, height, radius, false);
+    for (let index = 0; index < luminance.length; index += 1) {
+      luminance[index] = Math.max(0, Math.min(255, Math.round(
+        luminance[index] + (luminance[index] - blurred[index]) * 0.6
+      )));
+    }
+  } else if (variant === 'inverted') {
+    for (let index = 0; index < luminance.length; index += 1) {
+      luminance[index] = 255 - luminance[index];
+    }
   }
   const scanner = await getScanner();
   const decodeStart = performance.now();
@@ -147,6 +150,47 @@ const scanPixels = async (rgba, width, height, variant) => {
       y: point.y * originalHeight / height,
     })),
   })).filter((symbol) => symbol.rawValue);
+};
+
+const getZXing = async () => {
+  if (!zxingPromise) {
+    zxingPromise = Promise.all([
+      import('zxing-wasm/full'),
+      import('zxing-wasm/full/zxing_full.wasm?url'),
+    ]).then(([zxing, wasmAsset]) => {
+      zxing.setZXingModuleOverrides({
+        locateFile: (filename) => (
+          filename.endsWith('.wasm') ? wasmAsset.default : filename
+        ),
+      });
+      if (DEBUG_QR) console.debug('[qr-worker] zxing/WASM loaded');
+      return zxing;
+    }).catch((error) => {
+      debugError('zxing/WASM load failed', error);
+      zxingPromise = null;
+      throw error;
+    });
+  }
+  return zxingPromise;
+};
+
+const scanZXing = async (rgba, width, height) => {
+  const { readBarcodes } = await getZXing();
+  const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
+  const results = await readBarcodes(imageData, {
+    formats: ['QRCode'],
+    tryHarder: true,
+    tryRotate: true,
+  });
+  return results.filter((result) => result.text).map((result) => ({
+    rawValue: result.text.trim(),
+    points: [
+      result.position.topLeft,
+      result.position.topRight,
+      result.position.bottomRight,
+      result.position.bottomLeft,
+    ],
+  }));
 };
 
 self.onmessage = async ({ data }) => {
@@ -168,14 +212,14 @@ self.onmessage = async ({ data }) => {
       imageWidth = canvas.width;
       imageHeight = canvas.height;
     }
-    const detections = await scanPixels(
-      rgba instanceof Uint8ClampedArray ? rgba : new Uint8ClampedArray(rgba),
-      imageWidth,
-      imageHeight,
-      variant
-    );
+    if (DEBUG_QR) console.debug(`[qr-worker] request ${id} ${variant} ${imageWidth}x${imageHeight}`);
+    const pixelsData = rgba instanceof Uint8ClampedArray ? rgba : new Uint8ClampedArray(rgba);
+    const detections = variant === 'zxing'
+      ? await scanZXing(pixelsData, imageWidth, imageHeight)
+      : await scanPixels(pixelsData, imageWidth, imageHeight, variant);
     self.postMessage({ id, detections });
   } catch (error) {
+    debugError(`${variant} scan failed`, error);
     self.postMessage({ id, error: error.message || 'QR worker scan failed' });
   } finally {
     bitmap?.close();

@@ -129,6 +129,7 @@ export default function SnapAndScanButton({
     const expected = expectedRef.current;
     let missingCellHint = 0;
     let failed = false;
+    let smallestLongSide = Infinity;
     setIsScanningPhoto(true);
     onScanningChangeRef.current?.(true);
     setScanProgress('');
@@ -138,6 +139,7 @@ export default function SnapAndScanButton({
         let bitmap;
         try {
           bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+          smallestLongSide = Math.min(smallestLongSide, Math.max(bitmap.width, bitmap.height));
           const detections = await scanTiled(bitmap, bitmap.width, bitmap.height, {
             expectedCodeCount: expected,
             deepScan: true,
@@ -171,7 +173,14 @@ export default function SnapAndScanButton({
           kind: 'error',
           message: failed
             ? 'Could not read QR codes from this photo. Try another image.'
-            : 'No QR codes found. Try a closer, well-lit photo.',
+            : smallestLongSide < 1500
+              ? 'Photo resolution is low. Take the photo closer or use a higher-resolution image.'
+              : 'No QR codes found. Try a closer, well-lit photo.',
+        }, 6000);
+      } else if (expected > 0 && values.length < expected && smallestLongSide < 1500) {
+        showToast({
+          kind: 'error',
+          message: `Found ${values.length} of ${expected}. A higher-resolution photo may find the rest.`,
         }, 6000);
       }
     } finally {
