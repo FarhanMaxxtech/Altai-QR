@@ -971,6 +971,62 @@
   cursor: not-allowed;
 }
 
+.aq-bundle-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #dce8d6;
+  border-radius: 10px;
+  background: #f7fbf4;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.aq-bundle-checkbox input {
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
+  accent-color: #2f8f1e;
+}
+
+.aq-bundle-result-panel {
+  max-width: 560px;
+}
+
+.aq-bundle-result-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.aq-bundle-result-body canvas {
+  max-width: 100%;
+  height: auto !important;
+}
+
+.aq-bundle-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 16px;
+}
+
+.aq-bundle-label {
+  color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.aq-bundle-error {
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 /* --- Responsive --- */
 
 @media (max-width: 960px) {
@@ -984,6 +1040,14 @@
 }
 
 @media (max-width: 640px) {
+  .aq-bundle-result-panel .aq-modal-footer {
+    flex-wrap: wrap;
+  }
+
+  .aq-bundle-result-panel .aq-modal-footer > button {
+    flex: 1 1 100%;
+  }
+
   .aq-scan-row {
   flex-direction: row;    /* was: column, via the combined selector */
   flex-wrap: nowrap;
@@ -1470,6 +1534,12 @@
   font-size: 13px;
 }
 
+.aq-snap-report-edge-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .aq-snap-report-group {
   display: flex;
   flex-direction: column;
@@ -1513,10 +1583,23 @@
   color: #991b1b;
 }
 
+.aq-snap-report-chip.is-active {
+  outline: 3px solid rgba(47, 143, 30, 0.3);
+  outline-offset: 2px;
+}
+
 .aq-snap-report-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.aq-snap-report-safety {
+  flex: 1 1 100%;
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .aq-snap-report-actions button {

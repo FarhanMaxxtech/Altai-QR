@@ -22,6 +22,7 @@ const DISPLAY_ACTIONS = [...ACTIONS, 'delete'];
 const MODULE_CATEGORIES = [
   { label: 'Core', modules: ['Dashboard', 'Product InfoCenter', 'Product Balance'] },
   { label: 'Operations', modules: ['Store Management', 'Stock Adjustment'] },
+  { label: 'Distribution', modules: ['Agent / Distributor'] },
   { label: 'Reporting', modules: ['Transaction Ledger'] },
   { label: 'Administration', modules: ['User Management'] },
 ];

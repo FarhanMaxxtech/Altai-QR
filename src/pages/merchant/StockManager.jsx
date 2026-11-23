@@ -1,5 +1,5 @@
 // src/pages/merchant/StockManager.jsx
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { ScanBarcode, Camera, X, Trash2, Info, Search } from 'lucide-react';
 import { apiFetch, apiFetchScanLookupBatch } from '../../utils/api';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormat';
@@ -7,6 +7,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useConfirm } from '../../context/ConfirmContext';
 import MultiQrScanner from '../../components/MultiQrScanner';
 import SnapAndScanButton from '../../components/SnapAndScanButton';
+import SnapPhotoPreview from '../../components/SnapPhotoPreview';
 
 import '../../styles/StockManager.css';
 
@@ -20,10 +21,10 @@ function normalizeSerialSearch(value) {
     .replace(/\d+/g, (digits) => digits.replace(/^0+(?=\d)/, ''));
 }
 
-function findSequenceGaps(values, maxMissing) {
+function findSerialGaps(serials, { maxGaps = 10 } = {}) {
   const groups = new Map();
-  values.forEach((value) => {
-    const match = String(value).match(/^(.*?)(\d+)$/);
+  serials.forEach((serial) => {
+    const match = String(serial).match(/^(.*?)(\d+)$/);
     if (!match) return;
     const [, prefix, digits] = match;
     const key = `${prefix}\u0000${digits.length}`;
@@ -32,28 +33,36 @@ function findSequenceGaps(values, maxMissing) {
     groups.set(key, group);
   });
 
-  const sequences = [...groups.values()].map(({ prefix, width, numbers }) => ({
-    prefix,
-    width,
-    sorted: [...numbers].sort((a, b) => a - b),
-  }));
-  let totalGaps = 0;
-  sequences.forEach(({ sorted }) => {
-    for (let index = 1; index < sorted.length; index += 1) {
-      totalGaps += Math.max(0, sorted[index] - sorted[index - 1] - 1);
+  const missingSerials = [];
+  let ignoredGapCount = 0;
+  const serialGroups = [];
+  groups.forEach(({ prefix, width, numbers }) => {
+    if (numbers.size < 2) return;
+    const sorted = [...numbers].sort((a, b) => a - b);
+    const gaps = [];
+    for (let number = sorted[0] + 1; number < sorted[sorted.length - 1]; number += 1) {
+      if (!numbers.has(number)) gaps.push(`${prefix}${String(number).padStart(width, '0')}`);
     }
+    serialGroups.push({
+      prefix,
+      width,
+      minimum: sorted[0],
+      maximum: sorted[sorted.length - 1],
+      presentCount: numbers.size,
+      totalCount: sorted[sorted.length - 1] - sorted[0] + 1,
+    });
+    if (gaps.length > maxGaps) {
+      ignoredGapCount += gaps.length;
+      return;
+    }
+    missingSerials.push(...gaps);
   });
-  if (totalGaps > 30 || totalGaps > maxMissing) return [];
+  return { missingSerials, ignoredGapCount, groups: serialGroups };
+}
 
-  const gaps = [];
-  sequences.forEach(({ prefix, width, sorted }) => {
-    for (let index = 1; index < sorted.length; index += 1) {
-      for (let number = sorted[index - 1] + 1; number < sorted[index]; number += 1) {
-        gaps.push(`${prefix}${String(number).padStart(width, '0')}`);
-      }
-    }
-  });
-  return gaps;
+function releaseSnapPhotoUrls(photos) {
+  const urls = new Set(photos.flatMap((photo) => [photo.url, photo.thumbnailUrl]).filter(Boolean));
+  urls.forEach((url) => URL.revokeObjectURL(url));
 }
 
 
@@ -135,6 +144,8 @@ export default function StockManager() {
   const [scanCart, setScanCart] = useState([]);
   const [scanInput, setScanInput] = useState('');
   const [snapReport, setSnapReport] = useState(null);
+  const [snapPhotos, setSnapPhotos] = useState([]);
+  const [activeSnapMarkerId, setActiveSnapMarkerId] = useState(null);
   const [lastSnapExpectedCount, setLastSnapExpectedCount] = useState(0);
   const [scanSearchTerm, setScanSearchTerm] = useState('');
   const [debouncedScanSearchTerm, setDebouncedScanSearchTerm] = useState('');
@@ -142,6 +153,14 @@ export default function StockManager() {
   const commitCart = (next) => {
     scanCartRef.current = next;
     setScanCart(next);
+  };
+  const expandLookupResult = (lookupResult) => {
+    if (lookupResult?.kind !== 'bundle') return [lookupResult];
+    return (lookupResult.items || []).map((item) => ({
+      ...item,
+      bundle_id: lookupResult.bundle_id,
+      bundle_code: lookupResult.bundle_code,
+    }));
   };
   const scanQueueRef = useRef([]);
   const isProcessingQueueRef = useRef(false);
@@ -155,10 +174,22 @@ export default function StockManager() {
   const scanInputRef = useRef(null);
   const snapValuesRef = useRef(new Set());
   const snapFailuresRef = useRef(new Map());
+  const snapRepairValuesRef = useRef(new Set());
+  const snapRepairPendingRef = useRef(false);
   const snapExpectedRef = useRef(0);
   const snapCompleteRef = useRef(false);
-  const snapMissingCellHintRef = useRef(0);
+  const snapScanStoppedEarlyRef = useRef(false);
   const snapReportTimerRef = useRef(null);
+  const snapPhotosRef = useRef([]);
+
+  useEffect(() => () => releaseSnapPhotoUrls(snapPhotosRef.current), []);
+
+  const clearSnapPhotos = useCallback(() => {
+    releaseSnapPhotoUrls(snapPhotosRef.current);
+    snapPhotosRef.current = [];
+    setSnapPhotos([]);
+    setActiveSnapMarkerId(null);
+  }, []);
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
@@ -275,6 +306,7 @@ export default function StockManager() {
     if (!snapReport?.allAdded) return undefined;
     snapReportTimerRef.current = window.setTimeout(() => {
       setSnapReport(null);
+      clearSnapPhotos();
       snapReportTimerRef.current = null;
     }, 4000);
     return () => {
@@ -283,22 +315,42 @@ export default function StockManager() {
         snapReportTimerRef.current = null;
       }
     };
-  }, [snapReport]);
+  }, [snapReport, clearSnapPhotos]);
 
-  const recordSnapFailure = (value, reason) => {
-    if (snapValuesRef.current.has(value)) snapFailuresRef.current.set(value, reason);
+  const recordSnapFailure = (value, reason, serial = null) => {
+    if (snapValuesRef.current.has(value) || snapRepairValuesRef.current.has(value)) {
+      snapFailuresRef.current.set(value, { reason, serial });
+    }
   };
 
   const recordSnapFailures = (failures) => {
-    failures.forEach(({ value, message }) => recordSnapFailure(value, message));
+    failures.forEach(({ value, message, serial }) => {
+      if (snapValuesRef.current.has(value) || snapRepairValuesRef.current.has(value)) {
+        snapFailuresRef.current.set(value, { reason: message, serial: serial || null });
+      }
+    });
+  };
+
+  const finishSnapRepairIfReady = () => {
+    if (
+      !snapRepairPendingRef.current
+      || scanQueueRef.current.length > 0
+      || scanCartRef.current.some((row) => row.scanState === 'checking')
+    ) return;
+    snapRepairPendingRef.current = false;
+    snapCompleteRef.current = true;
+    maybeBuildSnapReport();
   };
 
   const handleSnapStart = ({ expected }) => {
+    clearSnapPhotos();
     snapValuesRef.current = new Set();
     snapFailuresRef.current.clear();
+    snapRepairValuesRef.current.clear();
+    snapRepairPendingRef.current = false;
     snapExpectedRef.current = expected;
     snapCompleteRef.current = false;
-    snapMissingCellHintRef.current = 0;
+    snapScanStoppedEarlyRef.current = false;
     setSnapReport(null);
     if (snapReportTimerRef.current !== null) {
       window.clearTimeout(snapReportTimerRef.current);
@@ -314,7 +366,10 @@ export default function StockManager() {
         values.forEach((value) => {
           snapFailuresRef.current.set(
             value,
-            'Select an adjustment type and store before scanning.'
+            {
+              reason: 'Select an adjustment type and store before scanning.',
+              serial: null,
+            }
           );
         });
         return;
@@ -332,55 +387,205 @@ export default function StockManager() {
 
     const values = [...snapValuesRef.current];
     const expected = snapExpectedRef.current;
-    const addedValues = new Set(
-      scanCartRef.current
-        .filter((row) => row.scanState === 'ok')
-        .map((row) => row.scanValue || row.label_id)
-        .filter((value) => snapValuesRef.current.has(value))
-    );
+    const addedRows = scanCartRef.current.filter((row) => (
+      row.scanState === 'ok' && snapValuesRef.current.has(row.scanValue)
+    ));
+    const repairedRows = scanCartRef.current.filter((row) => (
+      row.scanState !== 'checking'
+      && snapRepairValuesRef.current.has(row.label_id || row.scanValue)
+    ));
+    const addedRowsAll = [...new Set([...addedRows, ...repairedRows])];
+    const successfulValues = new Set(addedRowsAll.flatMap((row) => [row.scanValue, row.label_id]));
     const failures = [...snapFailuresRef.current.entries()]
-      .filter(([serial]) => !addedValues.has(serial))
-      .map(([serial, reason]) => ({ serial, reason }));
-    const notDetected = Math.max(0, expected - values.length);
-    const showMissingHints = expected === 0 || values.length < expected;
-    const sequenceGaps = showMissingHints
-      ? findSequenceGaps(values, Math.max(0, expected - addedValues.size) + 5)
-      : [];
+      .filter(([value]) => !successfulValues.has(value))
+      .map(([value, failure]) => ({ value, ...failure }));
+    const failureByValue = new Map(failures.map((failure) => [failure.value, failure]));
+    const rejectedNumbers = new Map();
+    let nextRejectedNumber = 0;
+    const photoValues = new Set(snapPhotosRef.current.flatMap((photo) => (
+      (photo.detections || [])
+        .map((detection) => String(detection.rawValue || detection.raw_value || detection.value || ''))
+        .filter(Boolean)
+    )));
+    failures.filter((failure) => photoValues.has(failure.value)).forEach((failure) => {
+      rejectedNumbers.set(failure.value, ++nextRejectedNumber);
+    });
+    const notDetected = Math.max(0, expected - values.length - repairedRows.length);
+    const validatedHoleCount = snapPhotosRef.current.reduce(
+      (count, photo) => count + (photo.validatedHoleCount ?? photo.holes?.length ?? 0),
+      0
+    );
+    const availableHoleCount = snapPhotosRef.current.reduce(
+      (count, photo) => count + (photo.holes?.length || 0),
+      0
+    );
+    const canMarkMissing = expected > 0 && notDetected > 0 && availableHoleCount >= 1;
+    // TODO remove after verifying orange marker placement.
+    console.log('[snap-orange]', {
+      expected,
+      notDetected,
+      validatedHoleCount,
+      holes: snapPhotosRef.current.map((photo) => photo.holes?.length || 0),
+      basis: snapPhotosRef.current.map((photo) => ({
+        a: photo.lattice?.a || null,
+        b: photo.lattice?.b || null,
+      })),
+      spacing: snapPhotosRef.current.map((photo) => photo.lattice?.spacing ?? null),
+    });
+    const photoMarkers = snapPhotosRef.current.flatMap((photo, photoIndex) => {
+      const codeMarkers = (photo.detections || []).flatMap((detection, detectionIndex) => {
+        const value = String(detection.rawValue || detection.raw_value || detection.value || '');
+        const points = detection.points || [];
+        if (!value || points.length === 0) return [];
+        const xValues = points.map((point) => point.x);
+        const yValues = points.map((point) => point.y);
+        const center = points.reduce((sum, point) => ({
+          x: sum.x + point.x / points.length,
+          y: sum.y + point.y / points.length,
+        }), { x: 0, y: 0 });
+        const added = scanCartRef.current.some((row) => (
+          row.scanState === 'ok' && row.scanValue === value
+        ));
+        const failure = failureByValue.get(value);
+        let number;
+        if (!added) {
+          if (!rejectedNumbers.has(value)) {
+            rejectedNumbers.set(value, ++nextRejectedNumber);
+          }
+          number = rejectedNumbers.get(value);
+        }
+        return [{
+          id: added ? `added:${photoIndex}:${detectionIndex}:${value}` : `rejected:${value}`,
+          kind: added ? 'added' : 'rejected',
+          value,
+          serial: failure?.serial || null,
+          number,
+          points,
+          x: center.x,
+          y: center.y,
+          size: Math.max(
+            Math.max(...xValues) - Math.min(...xValues),
+            Math.max(...yValues) - Math.min(...yValues)
+          ),
+          photoIndex,
+          label: added
+            ? `Added code${failure?.serial ? ` ${failure.serial}` : ''}`
+            : `Rejected code ${number}${failure?.serial ? `: ${failure.serial}` : ''}`,
+        }];
+      });
+      const codeSizes = codeMarkers
+        .map((marker) => marker.size)
+        .filter((size) => Number.isFinite(size) && size > 0)
+        .sort((left, right) => left - right);
+      const middle = Math.floor(codeSizes.length / 2);
+      const medianCodeSize = codeSizes.length === 0
+        ? 0
+        : codeSizes.length % 2 === 0
+          ? (codeSizes[middle - 1] + codeSizes[middle]) / 2
+          : codeSizes[middle];
+      const photoHoles = photo.holes || [];
+      const hasGridCoordinates = photoHoles.every((hole) => (
+        Number.isFinite(hole.row) && Number.isFinite(hole.column)
+      ));
+      const orderedPhotoHoles = hasGridCoordinates
+        ? [...photoHoles].sort((left, right) => (
+          (left.row - right.row) || (left.column - right.column)
+        ))
+        : [...photoHoles];
+      const missingMarkers = canMarkMissing
+        ? orderedPhotoHoles.slice(0, notDetected).map((hole, holeIndex) => ({
+            id: `missing:${photoIndex}:${holeIndex}`,
+            kind: 'missing',
+            x: hole.x,
+            y: hole.y,
+            size: medianCodeSize || hole.size,
+            photoIndex,
+            label: 'Undetected QR code slot',
+          }))
+        : [];
+      return [...codeMarkers, ...missingMarkers];
+    });
+    const presentSerials = [...new Set([
+      ...addedRowsAll.map((row) => row.label_id).filter(Boolean),
+      ...failures.map((failure) => failure.serial).filter(Boolean),
+    ])];
+    const serialGaps = findSerialGaps(presentSerials);
+    const sequenceGaps = serialGaps.missingSerials;
+    const serialGroups = serialGaps.groups;
+    const serialRange = serialGroups.map(({ prefix, width, minimum, maximum }) => (
+      `${prefix}${String(minimum).padStart(width, '0')} to ${prefix}${String(maximum).padStart(width, '0')}`
+    )).join(' · ');
+    const sequenceCount = serialGroups.reduce((count, group) => count + group.presentCount, 0);
+    const sequenceTotal = serialGroups.reduce((count, group) => count + group.totalCount, 0);
+    const hasDifferentPrefixes = new Set(serialGroups.map((group) => group.prefix)).size > 1;
+    const showIgnoredGapNote = serialGaps.ignoredGapCount > 0
+      && !(sequenceGaps.length === 0 && hasDifferentPrefixes);
     const allAdded = values.length > 0
-      && addedValues.size === values.length
+      && addedRowsAll.length >= values.length
       && failures.length === 0
       && sequenceGaps.length === 0
+      && serialGaps.ignoredGapCount === 0
       && notDetected === 0;
     const failureGroups = [...new Map(
       failures.map(({ reason }) => [reason, { reason, serials: [] }])
     ).values()];
     failureGroups.forEach((group) => {
-      group.serials = failures
+      group.items = failures
         .filter((failure) => failure.reason === group.reason)
-        .map((failure) => failure.serial);
+        .map((failure) => ({
+          failure,
+          marker: photoMarkers.find((marker) => (
+            marker.kind === 'rejected' && marker.value === failure.value
+          )),
+        }))
+        .filter(({ failure, marker }) => failure.serial || marker)
+        .map((failure) => ({
+          id: `rejected:${failure.failure.value}`,
+          serial: failure.failure.serial || null,
+          markerId: failure.marker?.id,
+          number: failure.marker?.number,
+        }));
+      group.serials = group.items.map((item) => item.serial);
     });
 
     snapCompleteRef.current = false;
     setSnapReport({
       read: values.length,
-      added: addedValues.size,
+      added: addedRowsAll.length,
       expected,
       notDetected,
+      notAdded: failures.length,
       failures,
       failureGroups,
       sequenceGaps,
-      retrySerials: [...new Set([...sequenceGaps, ...failures.map(({ serial }) => serial)])],
-      missingCellHint: snapMissingCellHintRef.current,
+      photoMarkers,
+      retrySerials: sequenceGaps,
+      serialRange,
+      sequenceCount,
+      sequenceTotal,
+      ignoredGapCount: serialGaps.ignoredGapCount,
+      showIgnoredGapNote,
+      scanStoppedEarly: snapScanStoppedEarlyRef.current,
       allAdded,
     });
   };
 
-  const handleSnapComplete = ({ values, expected, missingCells }) => {
+  const handleSnapComplete = ({ values, expected, scanStoppedEarly, photos = [] }) => {
     snapValuesRef.current = new Set(values);
     snapExpectedRef.current = expected || 0;
-    snapMissingCellHintRef.current = missingCells?.count || 0;
+    snapScanStoppedEarlyRef.current = Boolean(scanStoppedEarly);
+    snapPhotosRef.current = photos;
+    setSnapPhotos(photos);
     snapCompleteRef.current = true;
     maybeBuildSnapReport();
+  };
+
+  const addMissingSnapSerials = () => {
+    const serials = snapReport?.retrySerials || [];
+    if (serials.length === 0) return;
+    snapRepairValuesRef.current = new Set(serials);
+    snapRepairPendingRef.current = true;
+    enqueueScanBatch(serials);
   };
 
   const focusScanInput = (serial) => {
@@ -655,7 +860,7 @@ const handleRejectDetail = async () => {
             notify(`"${value}": ${retry.result.message || 'Could not recognize this code.'}`, { title: 'Scan issue', danger: true });
             return;
           }
-          commitCart([retry.result]); // start fresh — old batch is discarded
+          commitCart(expandLookupResult(retry.result)); // start fresh — old batch is discarded
           setPage(1);
           return;
         }
@@ -680,7 +885,7 @@ const handleRejectDetail = async () => {
           notify(`"${value}": ${retry.result.message || 'Could not recognize this code.'}`, { title: 'Scan issue', danger: true });
           return;
         }
-        commitCart([...scanCartRef.current, retry.result]);
+        commitCart([...scanCartRef.current, ...expandLookupResult(retry.result)]);
         setPage(1);
         return;
       }
@@ -690,11 +895,13 @@ const handleRejectDetail = async () => {
     }
 
 
-    commitCart([...scanCartRef.current, result]);
+    commitCart([...scanCartRef.current, ...expandLookupResult(result)]);
     setPage(1);
 
     if (navigator.vibrate) navigator.vibrate(80);
-    setScanSuccessMessage(`✓ ${result.label_id} added.`);
+    setScanSuccessMessage(result.kind === 'bundle'
+      ? `✓ Bundle ${result.bundle_code} added with ${result.items?.length || 0} units.`
+      : `✓ ${result.label_id} added.`);
     setTimeout(() => setScanSuccessMessage(''), 2000);
     } catch (err) {
       if (sessionId !== scanSessionRef.current) return;
@@ -728,6 +935,7 @@ const handleRejectDetail = async () => {
       }
     }
     isProcessingQueueRef.current = false;
+    finishSnapRepairIfReady();
   };
 
     const handleScanSubmit = (e) => {
@@ -794,18 +1002,36 @@ const handleRejectDetail = async () => {
         current = [...scanCartRef.current];
         results.forEach((result) => {
           if (!result.ok) {
-            failures.push({ value: result.label_id || result.value, message: result.message || 'could not be recognized' });
+            const value = result.label_id || result.value;
+            const message = result.message || 'could not be recognized';
+            failures.push({ value, message });
+            if (snapRepairValuesRef.current.has(value)) {
+              recordSnapFailure(value, message, result.label_id || null);
+            }
             return;
           }
-          if (current.some((item) => item.qr_batch === result.data.qr_batch || item.label_id === result.data.label_id)) return;
-          current = [...current, result.data];
-          successCount++;
+          const expanded = result.kind === 'bundle'
+            ? (result.items || []).map((item) => ({
+                ...item,
+                bundle_id: result.bundle_id,
+                bundle_code: result.bundle_code,
+              }))
+            : [result.data];
+          for (const item of expanded) {
+            if (current.some((row) => row.qr_batch === item.qr_batch || row.label_id === item.label_id)) continue;
+            current = [...current, item];
+            successCount++;
+          }
         });
         commitCart(current);
         setPage(1);
       } catch (err) {
         if (sessionId !== scanSessionRef.current) return;
-        candidates.forEach((value) => failures.push({ value, message: 'could not reach server' }));
+        candidates.forEach((value) => {
+          const message = 'could not reach server';
+          failures.push({ value, message });
+          if (snapRepairValuesRef.current.has(value)) recordSnapFailure(value, message, value);
+        });
         console.error(err);
       }
     }
@@ -977,11 +1203,15 @@ const handleRejectDetail = async () => {
               successCount++;
             } else if (result.wrong_store && result.current_store_id) {
               wrongStoreResults.push({ ...result, value: result.value });
-              recordSnapFailure(result.value, result.message || 'belongs to another store');
+              recordSnapFailure(
+                result.value,
+                result.message || 'belongs to another store',
+                result.label_id || null
+              );
             } else {
               const message = result.message || 'Could not recognize this code.';
               failures.push({ value: result.label_id || result.value, message });
-              recordSnapFailure(result.value, message);
+              recordSnapFailure(result.value, message, result.label_id || null);
             }
           });
           values.filter((value) => !receivedValues.has(value))
@@ -1088,6 +1318,7 @@ const handleRejectDetail = async () => {
         cameraBatchRequestRef.current = null;
         if (cameraPendingValuesRef.current.size > 0) scheduleCameraBatch(0);
       }
+      finishSnapRepairIfReady();
       maybeBuildSnapReport();
     }
   };
@@ -1206,8 +1437,20 @@ const handleRejectDetail = async () => {
   }
 };
 
-  const removeFromCart = (qrBatch) => {
-    const next = scanCartRef.current.filter((item) => item.qr_batch !== qrBatch);
+  const removeFromCart = async (qrBatch) => {
+    const target = scanCartRef.current.find((item) => item.qr_batch === qrBatch);
+    if (target?.bundle_id) {
+      const confirmed = await confirm(`Remove bundle ${target.bundle_code || ''}? This removes all of its items from the batch.`, {
+        title: 'Remove bundle',
+        confirmLabel: 'Remove bundle',
+        cancelLabel: 'Cancel',
+        danger: true,
+      });
+      if (!confirmed) return;
+    }
+    const next = target?.bundle_id
+      ? scanCartRef.current.filter((item) => item.bundle_id !== target.bundle_id)
+      : scanCartRef.current.filter((item) => item.qr_batch !== qrBatch);
     commitCart(next);
     const totalPages = Math.max(1, Math.ceil(next.length / PAGE_SIZE));
     setPage((p) => Math.min(p, totalPages));
@@ -1221,7 +1464,10 @@ const handleRejectDetail = async () => {
     snapCompleteRef.current = false;
     snapValuesRef.current.clear();
     snapFailuresRef.current.clear();
+    snapRepairValuesRef.current.clear();
+    snapRepairPendingRef.current = false;
     setSnapReport(null);
+    clearSnapPhotos();
   };
 
   const toggleCamera = () => {
@@ -1332,7 +1578,19 @@ const handleRejectDetail = async () => {
       setIsReviewOpen(true);
     };
 
-    const removeReviewRow = (qrBatch) => {
+    const removeReviewRow = async (qrBatch) => {
+      const target = reviewRows.find((item) => item.qr_batch === qrBatch);
+      if (target?.bundle_id) {
+        const confirmed = await confirm(`Remove bundle ${target.bundle_code || ''}? This removes all of its items from the review.`, {
+          title: 'Remove bundle',
+          confirmLabel: 'Remove bundle',
+          cancelLabel: 'Cancel',
+          danger: true,
+        });
+        if (!confirmed) return;
+        setReviewRows((prev) => prev.filter((r) => r.bundle_id !== target.bundle_id));
+        return;
+      }
       setReviewRows((prev) => prev.filter((r) => r.qr_batch !== qrBatch));
     };
 
@@ -1371,7 +1629,7 @@ const handleRejectDetail = async () => {
 
         try {
           const results = await Promise.all(
-            Object.values(groups).map((qrIds) =>
+            Object.entries(groups).map(([variantId, qrIds]) =>
               apiFetch('/api/transactions/scan-move', {
                 method: 'POST',
                 body: JSON.stringify({
@@ -1380,6 +1638,7 @@ const handleRejectDetail = async () => {
                   from_store_id,
                   to_store_id,
                   reference_doc: !isTransfer ? (referenceDoc || null) : null,
+                  bundle_ids: [...new Set(reviewRows.filter((item) => item.variant_id === variantId && item.bundle_id).map((item) => item.bundle_id))],
                 }),
               }).then(async (res) => ({ res, result: await res.json() }))
             )
@@ -1698,7 +1957,10 @@ const handleRejectDetail = async () => {
               <button
                 type="button"
                 className="sa-snap-report-dismiss"
-                onClick={() => setSnapReport(null)}
+                onClick={() => {
+                  setSnapReport(null);
+                  clearSnapPhotos();
+                }}
                 aria-label="Dismiss snap result"
               >
                 <X size={16} />
@@ -1711,25 +1973,33 @@ const handleRejectDetail = async () => {
             )}
             <div className="sa-snap-report-counts">
               <span>
-                Photo read <strong>{snapReport.read}</strong>
-                {snapReport.expected > 0 && ` (expected ${snapReport.expected})`}
+                Read <strong>{snapReport.read}</strong>
+                {snapReport.expected > 0 && <> of <strong>{snapReport.expected}</strong></>}
+                {' '}· Added <strong>{snapReport.added}</strong>
+                {' '}· Not added <strong>{snapReport.notAdded}</strong>
               </span>
-              <span>Added to list <strong>{snapReport.added}</strong></span>
-              <span>Failed lookup <strong>{snapReport.failures.length}</strong></span>
               {snapReport.notDetected > 0 && (
                 <span>Not detected <strong>{snapReport.notDetected}</strong></span>
               )}
             </div>
-            {snapReport.notDetected > 0 && (
+            <SnapPhotoPreview
+              photos={snapPhotos}
+              markers={snapReport.photoMarkers}
+              activeMarkerId={activeSnapMarkerId}
+              onHighlightMarker={setActiveSnapMarkerId}
+            />
+            {snapReport.serialRange && (
               <p className="sa-snap-report-note">
-                {snapReport.notDetected} expected code{snapReport.notDetected === 1 ? '' : 's'} not detected.
+                Serial range: {snapReport.serialRange} · {snapReport.sequenceCount} of {snapReport.sequenceTotal} in sequence
               </p>
             )}
-            {snapReport.missingCellHint > 0
-              && (snapReport.expected === 0 || snapReport.read < snapReport.expected) && (
-              <p className="sa-snap-report-hint">
-                Photo may be missing ~{snapReport.missingCellHint} code{snapReport.missingCellHint === 1 ? '' : 's'}.
+            {snapReport.showIgnoredGapNote && (
+              <p className="sa-snap-report-note">
+                Serials are not continuous ({snapReport.ignoredGapCount} gaps); check manually
               </p>
+            )}
+            {snapReport.scanStoppedEarly && (
+              <p className="sa-snap-report-hint">Scan stopped early</p>
             )}
             {snapReport.sequenceGaps.length > 0 && (
               <div className="sa-snap-report-group">
@@ -1748,32 +2018,45 @@ const handleRejectDetail = async () => {
                 </div>
               </div>
             )}
-            {snapReport.failureGroups.map(({ reason, serials }) => (
+            {snapReport.failureGroups.map(({ reason, items }) => (
               <div className="sa-snap-report-group" key={reason}>
                 <strong>{reason}</strong>
                 <div className="sa-snap-report-chips">
-                  {serials.map((serial) => (
+                  {items.map((item) => (
                     <button
-                      key={serial}
+                      key={item.id}
                       type="button"
-                      className="sa-snap-report-chip sa-snap-report-chip-failed"
-                      onClick={() => focusScanInput(serial)}
+                      className={`sa-snap-report-chip sa-snap-report-chip-failed${item.markerId && item.markerId === activeSnapMarkerId ? ' is-active' : ''}`}
+                      onClick={() => {
+                        if (item.markerId) setActiveSnapMarkerId(item.markerId);
+                        if (item.serial) focusScanInput(item.serial);
+                      }}
+                      aria-pressed={Boolean(item.markerId && item.markerId === activeSnapMarkerId)}
                     >
-                      {serial}
+                      {item.number ? `#${item.number} ` : ''}{item.serial || 'Code'}
                     </button>
                   ))}
                 </div>
               </div>
             ))}
+            <p className="sa-snap-report-note sa-snap-report-edge-note">
+              Edge limitation: codes beyond the serial range may be missed.
+            </p>
             <div className="sa-snap-report-actions">
-              <button
-                type="button"
-                className="sa-snap-report-add"
-                onClick={() => enqueueScanBatch(snapReport.retrySerials)}
-                disabled={snapReport.retrySerials.length === 0}
-              >
-                Add missing ({snapReport.retrySerials.length})
-              </button>
+              {snapReport.retrySerials.length > 0 && (
+                <>
+                  <p className="sa-snap-report-safety">
+                    Adds these serials from the sequence. Only tap if the labels on your sheet are in this order.
+                  </p>
+                  <button
+                    type="button"
+                    className="sa-snap-report-add"
+                    onClick={addMissingSnapSerials}
+                  >
+                    Add missing ({snapReport.retrySerials.length})
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="sa-snap-report-manual"
@@ -1883,7 +2166,10 @@ const handleRejectDetail = async () => {
                       return (
                         <tr key={item.scanKey || item.qr_batch} className={item.scanState === 'checking' ? 'sa-scan-row-checking' : ''}>
                           <td className="sa-col-no">{String(rowNumber).padStart(2, '0')}</td>
-                          <td className="sa-serial-cell">{item.label_id}</td>
+                          <td className="sa-serial-cell">
+                            {item.label_id}
+                            {item.bundle_code && <span className="sa-bundle-chip">{item.bundle_code}</span>}
+                          </td>
                           <td className="sa-sku-cell">{item.scanState === 'checking' ? 'Checking…' : item.sku}</td>
                           <td>{item.product_name}</td>
                           <td className={`sa-col-qty ${sign.className}`}>{sign.text}</td>
@@ -2059,7 +2345,10 @@ const handleRejectDetail = async () => {
                             {pagedReviewRows.map((item, i) => (
                               <tr key={item.qr_batch}>
                                 <td>{(reviewPage - 1) * REVIEW_PAGE_SIZE + i + 1}</td>
-                                <td className="sa-serial-cell">{item.label_id}</td>
+                                <td className="sa-serial-cell">
+                                  {item.label_id}
+                                  {item.bundle_code && <span className="sa-bundle-chip">{item.bundle_code}</span>}
+                                </td>
                                 <td>{selectedType?.label}</td>
                                 <td>{reviewFromStoreName || '—'}</td>
                                 <td>{reviewToStoreName || '—'}</td>

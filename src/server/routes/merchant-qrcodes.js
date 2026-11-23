@@ -1,6 +1,7 @@
 import express from 'express';
 import pool from '../db.js';
 import { assertStoreInScope } from '../middleware/storeScope.js';
+import { resolveBundleCode, getBundleMembership } from '../utils/bundleGuard.js';
 
 const router = express.Router();
 
@@ -66,6 +67,15 @@ function normalizeScanValues(values) {
 // GET this merchant's batches that still have unassigned codes
 router.get('/batches/available', async (req, res) => {
   try {
+    const resolvedBundle = await resolveBundleCode(pool, req.user.merchant_id, value);
+    if (resolvedBundle) {
+      return res.status(409).json({
+        message: 'This is a bundle QR, not a unit label. Scan the individual unit labels.',
+        bundle_id: resolvedBundle.bundle.bundle_id,
+        bundle_code: resolvedBundle.bundle.bundle_code,
+      });
+    }
+
     const result = await pool.query(
     `SELECT b.batch_id, b.company_name, b.quantity, b.serial_start, b.serial_end,
             COUNT(qc.qr_id) FILTER (WHERE qc.variant_id IS NULL) AS unassigned_count
@@ -134,6 +144,22 @@ router.get('/scan-lookup', async (req, res) => {
     }
 
     const code = result.rows[0];
+    const membership = await getBundleMembership(pool, [code.qr_batch]);
+    const bundle = membership.get(code.qr_batch);
+    if (bundle) {
+      if (bundle.bundle_status === 'assigned') {
+        return res.status(409).json({
+          message: `This code belongs to bundle ${bundle.bundle_code} which is assigned to agent/distributor ${bundle.agent_name || 'an agent'}. Unassign it first.`,
+          bundle_id: bundle.bundle_id,
+          bundle_code: bundle.bundle_code,
+        });
+      }
+      return res.status(409).json({
+        message: `This code is part of bundle ${bundle.bundle_code}. Remove the bundle first to reassign it.`,
+        bundle_id: bundle.bundle_id,
+        bundle_code: bundle.bundle_code,
+      });
+    }
 
     const failure = getAssignmentScanFailure(req, code);
     if (failure) return res.status(failure.status).json(failure.body);
@@ -179,20 +205,58 @@ router.post('/scan-lookup-batch', async (req, res) => {
     );
 
     const resultsByValue = new Map(result.rows.map((row) => [row.value, row]));
-    const results = values.map((value) => {
+    const membership = await getBundleMembership(pool, result.rows.map((row) => row.qr_batch).filter(Boolean));
+    const results = [];
+    for (const value of values) {
+      const resolvedBundle = await resolveBundleCode(pool, req.user.merchant_id, value);
+      if (resolvedBundle) {
+        results.push({
+          value,
+          ok: false,
+          message: 'This is a bundle QR, not a unit label. Scan the individual unit labels.',
+          bundle_id: resolvedBundle.bundle.bundle_id,
+          bundle_code: resolvedBundle.bundle.bundle_code,
+        });
+        continue;
+      }
       const code = resultsByValue.get(value);
       if (!code?.label_id && !code?.qr_id) {
-        return { value, ok: false, message: 'Code not found.' };
+        results.push({ value, ok: false, message: 'Code not found.' });
+        continue;
+      }
+      const bundle = membership.get(code.qr_batch);
+      if (bundle) {
+        if (bundle.bundle_status === 'assigned') {
+          results.push({
+            value,
+            ok: false,
+            message: `This code belongs to bundle ${bundle.bundle_code} which is assigned to agent/distributor ${bundle.agent_name || 'an agent'}. Unassign it first.`,
+            bundle_id: bundle.bundle_id,
+            bundle_code: bundle.bundle_code,
+          });
+        } else {
+          results.push({
+            value,
+            ok: false,
+            message: `This code is part of bundle ${bundle.bundle_code}. Remove the bundle first to reassign it.`,
+            bundle_id: bundle.bundle_id,
+            bundle_code: bundle.bundle_code,
+          });
+        }
+        continue;
       }
 
       const failure = getAssignmentScanFailure(req, code);
-      if (failure) return { value, ok: false, ...failure.body };
+      if (failure) {
+        results.push({ value, ok: false, ...failure.body });
+        continue;
+      }
 
       const data = { ...code };
       delete data.value;
       delete data.created_at;
-      return { value, ok: true, data };
-    });
+      results.push({ value, ok: true, data });
+    }
 
     res.json({ results });
   } catch (err) {
@@ -243,6 +307,19 @@ router.post('/assign-scan', async (req, res) => {
     if (codesCheck.rows.length !== qr_ids.length) {
       await client.query('ROLLBACK');
       return res.status(409).json({ message: 'One or more scanned codes are invalid or already have a pending assignment.' });
+    }
+    const membership = await getBundleMembership(client, qr_ids);
+    if (membership.size > 0) {
+      const row = [...membership.values()][0];
+      await client.query('ROLLBACK');
+      if (row.bundle_status === 'assigned') {
+        return res.status(409).json({
+          message: `This code belongs to bundle ${row.bundle_code} which is assigned to agent/distributor ${row.agent_name || 'an agent'}. Unassign it first.`,
+        });
+      }
+      return res.status(409).json({
+        message: `This code is part of bundle ${row.bundle_code}. Remove the bundle first to reassign it.`,
+      });
     }
 
     const inStockCodes = codesCheck.rows.filter((r) => r.status === 'in_stock');
@@ -369,6 +446,29 @@ router.post('/pending-approvals/:variantId/approve', async (req, res) => {
     }
 
     const hasSubset = Array.isArray(qr_ids) && qr_ids.length > 0;
+    const pendingCodes = await client.query(
+      `SELECT qc.qr_batch
+       FROM qr_codes qc
+       JOIN variants v ON v.variant_id = qc.pending_variant_id
+       JOIN products p ON p.product_id = v.product_id
+       WHERE qc.pending_variant_id = $1 AND p.merchant_id = $2
+       ${hasSubset ? 'AND qc.qr_batch = ANY($3::uuid[])' : ''}
+       FOR UPDATE OF qc`,
+      hasSubset ? [req.params.variantId, req.user.merchant_id, qr_ids] : [req.params.variantId, req.user.merchant_id]
+    );
+    const pendingMembership = await getBundleMembership(client, pendingCodes.rows.map((row) => row.qr_batch));
+    if (pendingMembership.size > 0) {
+      const row = [...pendingMembership.values()][0];
+      await client.query('ROLLBACK');
+      if (row.bundle_status === 'assigned') {
+        return res.status(409).json({
+          message: `This code belongs to bundle ${row.bundle_code} which is assigned to agent/distributor ${row.agent_name || 'an agent'}. Unassign it first.`,
+        });
+      }
+      return res.status(409).json({
+        message: `This code is part of bundle ${row.bundle_code}. Remove the bundle first to reassign it.`,
+      });
+    }
     const result = await client.query(
       `UPDATE qr_codes
       SET variant_id = pending_variant_id,

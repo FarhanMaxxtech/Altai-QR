@@ -1,6 +1,7 @@
 import express from 'express';
 import pool from '../db.js';
 import { assertStoreInScope } from '../middleware/storeScope.js';
+import { resolveBundleCode, getBundleMembership } from '../utils/bundleGuard.js';
 
 async function hasEditPermission(req) {
   if (req.user.role === 'admin' || req.user.role === 'super_admin') return true;
@@ -261,6 +262,45 @@ router.get('/scan-lookup', async (req, res) => {
   }
 
   try {
+    const resolvedBundle = await resolveBundleCode(pool, req.user.merchant_id, value);
+    if (resolvedBundle) {
+      const { bundle, members } = resolvedBundle;
+      if (bundle.status === 'assigned') {
+        return res.status(409).json({
+          message: `This code belongs to bundle ${bundle.bundle_code} which is assigned to agent/distributor ${bundle.agent_name || 'an agent'}. Unassign it first.`,
+          bundle_id: bundle.bundle_id,
+          bundle_code: bundle.bundle_code,
+        });
+      }
+      if (bundle.status !== 'active') {
+        return res.status(409).json({ message: 'This bundle is voided and cannot be used for stock actions.' });
+      }
+      const failures = members
+        .map((member) => getTransactionScanFailure(member, transaction_type, from_store_id))
+        .filter(Boolean);
+      if (failures.length) {
+        const wrongStore = failures.find((failure) => failure.body.wrong_store);
+        if (wrongStore) {
+          return res.status(409).json({
+            ...wrongStore.body,
+            message: `All bundle items must pass the stock action. ${wrongStore.body.message}`,
+          });
+        }
+        return res.status(409).json({
+          ok: false,
+          message: 'All bundle items must pass the same stock action.',
+          failing_label_ids: failures.map((failure) => failure.body.label_id),
+          reasons: failures.map((failure) => failure.body.message),
+        });
+      }
+      return res.json({
+        kind: 'bundle',
+        bundle_id: bundle.bundle_id,
+        bundle_code: bundle.bundle_code,
+        items: members,
+      });
+    }
+
     const result = await pool.query(
       `
       SELECT
@@ -294,6 +334,22 @@ router.get('/scan-lookup', async (req, res) => {
     }
 
     const code = result.rows[0];
+    const membership = await getBundleMembership(pool, [code.qr_batch]);
+    const bundle = membership.get(code.qr_batch);
+    if (bundle) {
+      if (bundle.bundle_status === 'assigned') {
+        return res.status(409).json({
+          message: `This code belongs to bundle ${bundle.bundle_code} which is assigned to agent/distributor ${bundle.agent_name || 'an agent'}. Unassign it first.`,
+          bundle_id: bundle.bundle_id,
+          bundle_code: bundle.bundle_code,
+        });
+      }
+      return res.status(409).json({
+        message: `This code is part of bundle ${bundle.bundle_code}. Scan the bundle QR instead.`,
+        bundle_id: bundle.bundle_id,
+        bundle_code: bundle.bundle_code,
+      });
+    }
 
     const failure = getTransactionScanFailure(code, transaction_type, from_store_id);
     if (failure) return res.status(failure.status).json(failure.body);
@@ -344,18 +400,98 @@ router.post('/scan-lookup-batch', async (req, res) => {
     );
 
     const resultsByValue = new Map(result.rows.map((row) => [row.value, row]));
-    const results = values.map((value) => {
+    const membership = await getBundleMembership(pool, result.rows.map((row) => row.qr_batch).filter(Boolean));
+    const results = [];
+    for (const value of values) {
+      const resolvedBundle = await resolveBundleCode(pool, req.user.merchant_id, value);
+      if (resolvedBundle) {
+        const { bundle, members } = resolvedBundle;
+        if (bundle.status === 'assigned') {
+          results.push({
+            value,
+            ok: false,
+            message: `This code belongs to bundle ${bundle.bundle_code} which is assigned to agent/distributor ${bundle.agent_name || 'an agent'}. Unassign it first.`,
+            bundle_id: bundle.bundle_id,
+            bundle_code: bundle.bundle_code,
+          });
+          continue;
+        }
+        if (bundle.status !== 'active') {
+          results.push({ value, ok: false, message: 'This bundle is voided and cannot be used for stock actions.' });
+          continue;
+        }
+        const failures = members
+          .map((member) => getTransactionScanFailure(member, transaction_type, from_store_id))
+          .filter(Boolean);
+        if (failures.length) {
+          const wrongStore = failures.find((failure) => failure.body.wrong_store);
+          if (wrongStore) {
+            results.push({
+              value,
+              ok: false,
+              ...wrongStore.body,
+              message: `All bundle items must pass the stock action. ${wrongStore.body.message}`,
+            });
+            continue;
+          }
+          results.push({
+            value,
+            ok: false,
+            message: 'All bundle items must pass the same stock action.',
+            failing_label_ids: failures.map((failure) => failure.body.label_id),
+            reasons: failures.map((failure) => failure.body.message),
+          });
+          continue;
+        }
+        results.push({
+          value,
+          ok: true,
+          kind: 'bundle',
+          bundle_id: bundle.bundle_id,
+          bundle_code: bundle.bundle_code,
+          items: members,
+        });
+        continue;
+      }
+
       const code = resultsByValue.get(value);
-      if (!code?.label_id && !code?.qr_id) return { value, ok: false, message: 'Code not found.' };
+      if (!code?.label_id && !code?.qr_id) {
+        results.push({ value, ok: false, message: 'Code not found.' });
+        continue;
+      }
+      const bundle = membership.get(code.qr_batch);
+      if (bundle) {
+        if (bundle.bundle_status === 'assigned') {
+          results.push({
+            value,
+            ok: false,
+            message: `This code belongs to bundle ${bundle.bundle_code} which is assigned to agent/distributor ${bundle.agent_name || 'an agent'}. Unassign it first.`,
+            bundle_id: bundle.bundle_id,
+            bundle_code: bundle.bundle_code,
+          });
+        } else {
+          results.push({
+            value,
+            ok: false,
+            message: `This code is part of bundle ${bundle.bundle_code}. Scan the bundle QR instead.`,
+            bundle_id: bundle.bundle_id,
+            bundle_code: bundle.bundle_code,
+          });
+        }
+        continue;
+      }
 
       const failure = getTransactionScanFailure(code, transaction_type, from_store_id);
-      if (failure) return { value, ok: false, ...failure.body };
+      if (failure) {
+        results.push({ value, ok: false, ...failure.body });
+        continue;
+      }
 
       const data = { ...code };
       delete data.value;
       delete data.created_at;
-      return { value, ok: true, data };
-    });
+      results.push({ value, ok: true, data });
+    }
 
     res.json({ results });
   } catch (err) {
@@ -413,7 +549,7 @@ const STORES_TO = ['RECEIVE', 'TRANSFER'];                              // needs
 const REMOVAL_STATUS = { CHECKOUT: 'checked_out', DAMAGE: 'damaged', CYCLE_COUNT: 'cycle_adjusted' };
 
 router.post('/scan-move', async (req, res) => {
-  const { qr_ids, transaction_type, from_store_id, to_store_id, reference_doc } = req.body;
+  const { qr_ids, transaction_type, from_store_id, to_store_id, reference_doc, bundle_ids } = req.body;
 
   if (!Array.isArray(qr_ids) || qr_ids.length === 0) {
     return res.status(400).json({ message: 'qr_ids must be a non-empty array.' });
@@ -448,6 +584,54 @@ router.post('/scan-move', async (req, res) => {
     if (codesResult.rows.length !== qr_ids.length) {
       await client.query('ROLLBACK');
       return res.status(403).json({ message: 'One or more scanned codes do not belong to you or were not found.' });
+    }
+
+    const membership = await getBundleMembership(client, qr_ids);
+    if (membership.size > 0) {
+      if (!Array.isArray(bundle_ids) || bundle_ids.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ message: 'Bundled codes must be submitted together with their bundle QR.' });
+      }
+      const bundleIds = new Set(bundle_ids);
+      const submittedIds = new Set(qr_ids);
+      for (const membershipRow of new Set(membership.values().map((row) => JSON.stringify(row.bundle_id)))) {
+        const bundleId = JSON.parse(membershipRow);
+        const bundleRow = [...membership.values()].find((row) => row.bundle_id === bundleId);
+        if (!bundleRow || bundleRow.bundle_status !== 'active') {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            message: `This code belongs to bundle ${bundleRow?.bundle_code || bundleId} which is assigned to agent/distributor ${bundleRow?.agent_name || 'an agent'}. Unassign it first.`,
+          });
+        }
+        if (!bundleIds.has(bundleId)) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ message: `Bundle ${bundleRow.bundle_code} must be submitted by scanning the bundle QR.` });
+        }
+        const membersResult = await client.query(
+          `SELECT qbi.qr_batch
+           FROM qr_bundle_items qbi
+           JOIN qr_bundles b ON b.bundle_id = qbi.bundle_id
+           WHERE qbi.bundle_id = $1 AND b.merchant_id = $2`,
+          [bundleId, req.user.merchant_id]
+        );
+        if (membersResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ message: 'Bundled codes could not be resolved.' });
+        }
+        const missing = membersResult.rows.some((row) => !submittedIds.has(row.qr_batch));
+        if (missing) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ message: `All items in bundle ${bundleRow.bundle_code} must be submitted together.`, bundle_id: bundleId, bundle_code: bundleRow.bundle_code });
+        }
+      }
+      const allowedBundleIds = new Set();
+      for (const row of membership.values()) allowedBundleIds.add(row.bundle_id);
+      for (const id of bundleIds) {
+        if (!allowedBundleIds.has(id)) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ message: 'One or more bundle ids do not belong to this transaction.' });
+        }
+      }
     }
 
     const variantIds = new Set(codesResult.rows.map((r) => r.variant_id));

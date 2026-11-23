@@ -1542,6 +1542,12 @@
   font-size: 13px;
 }
 
+.sa-snap-report-edge-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sa-snap-report-group {
   display: flex;
   flex-direction: column;
@@ -1585,10 +1591,23 @@
   color: #991b1b;
 }
 
+.sa-snap-report-chip.is-active {
+  outline: 3px solid rgba(47, 143, 30, 0.3);
+  outline-offset: 2px;
+}
+
 .sa-snap-report-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.sa-snap-report-safety {
+  flex: 1 1 100%;
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .sa-snap-report-actions button {
@@ -1736,4 +1755,16 @@
 
 .sa-page-view-only {
   grid-template-columns: 1fr;
+}
+
+.sa-bundle-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #edf7e8;
+  color: #267417;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
 }

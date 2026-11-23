@@ -115,9 +115,9 @@ const getBarcodeDetector = async () => {
   }
 };
 
-const resizePhoto = async (imageSource, width, height) => {
+const resizePhoto = async (imageSource, width, height, maxScale = 1) => {
   const scale = Math.min(
-    1,
+    maxScale,
     MAX_LONGEST_SIDE / Math.max(width, height),
     Math.sqrt(MAX_CANVAS_PIXELS / (width * height))
   );
@@ -211,50 +211,36 @@ const makeWorkerSlot = (worker) => {
     if (activeRequest || queue.length === 0) return;
     const request = queue.shift();
     activeRequest = { ...request, id: ++nextId };
-    let bitmap;
     try {
-      if (typeof OffscreenCanvas === 'function' && typeof createImageBitmap === 'function') {
-        bitmap = await createImageBitmap(
-          request.source,
-          request.region.left,
-          request.region.top,
-          request.region.width,
-          request.region.height
-        );
-        worker.postMessage({
-          id: activeRequest.id,
-          bitmap,
-          variant: request.variant,
-        }, [bitmap]);
-      } else {
-        const canvas = document.createElement('canvas');
-        canvas.width = request.region.width;
-        canvas.height = request.region.height;
-        const context = canvas.getContext('2d', { willReadFrequently: true });
-        context.drawImage(
-          request.source,
-          request.region.left,
-          request.region.top,
-          request.region.width,
-          request.region.height,
-          0,
-          0,
-          request.region.width,
-          request.region.height
-        );
-        const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-        canvas.width = 0;
-        canvas.height = 0;
-        worker.postMessage({
-          id: activeRequest.id,
-          pixels: pixels.data.buffer,
-          width: request.region.width,
-          height: request.region.height,
-          variant: request.variant,
-        }, [pixels.data.buffer]);
-      }
+      const canvas = document.createElement('canvas');
+      canvas.width = request.region.width;
+      canvas.height = request.region.height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Could not create QR worker input canvas context');
+      context.drawImage(
+        request.source,
+        request.region.left,
+        request.region.top,
+        request.region.width,
+        request.region.height,
+        0,
+        0,
+        request.region.width,
+        request.region.height
+      );
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      canvas.width = 0;
+      canvas.height = 0;
+      const pixels = request.variant === 'zxing' ? imageData.data : grayFromImageData(imageData);
+      worker.postMessage({
+        id: activeRequest.id,
+        pixels: pixels.buffer,
+        pixelFormat: request.variant === 'zxing' ? 'rgba' : 'gray',
+        width: request.region.width,
+        height: request.region.height,
+        variant: request.variant,
+      }, [pixels.buffer]);
     } catch (error) {
-      bitmap?.close();
       debugQrError('worker request dispatch failed', error);
       activeRequest.reject(error);
       activeRequest = null;
@@ -288,7 +274,8 @@ const getWorkerPool = () => {
   }
   const slots = [];
   try {
-    const count = Math.max(2, Math.min(4, Number(navigator.hardwareConcurrency) || 2));
+    const hardwareConcurrency = Number(navigator.hardwareConcurrency) || 2;
+    const count = Math.max(1, Math.min(3, hardwareConcurrency - 1));
     for (let index = 0; index < count; index += 1) {
       slots.push(makeWorkerSlot(
         new Worker(new URL('./qrScanWorker.js', import.meta.url), { type: 'module' })
@@ -586,13 +573,18 @@ const estimateQrSizeFromImage = (width, height) => Math.max(
   Math.round(Math.min(width, height) * 0.06)
 );
 
-const prepareRegionCanvas = (source, region, qrSize, { addQuietZone = false } = {}) => {
+const prepareRegionCanvas = (
+  source,
+  region,
+  qrSize,
+  { addQuietZone = false, scale: requestedScale } = {}
+) => {
   const estimatedModuleSize = Math.max(1, qrSize / 29);
   const padding = addQuietZone ? Math.ceil(estimatedModuleSize * 4) : 0;
   const paddedWidth = region.width + padding * 2;
   const paddedHeight = region.height + padding * 2;
   const scale = Math.max(1, Math.min(
-    180 / Math.max(1, qrSize),
+    requestedScale || 180 / Math.max(1, qrSize),
     MAX_LONGEST_SIDE / Math.max(paddedWidth, paddedHeight),
     Math.sqrt(MAX_CANVAS_PIXELS / (paddedWidth * paddedHeight))
   ));
@@ -677,6 +669,31 @@ const projectionCenters = (projection, pitch, symbolSize) => {
   return centers;
 };
 
+const projectionGridCenters = (projection, pitch, count, symbolSize) => {
+  const resolvedPitch = pitch || projection.length / count;
+  let bestPhase = 0;
+  let bestScore = -Infinity;
+  for (let phase = 0; phase < Math.ceil(resolvedPitch); phase += 1) {
+    let score = 0;
+    let valid = true;
+    for (let index = 0; index < count; index += 1) {
+      const center = phase + index * resolvedPitch;
+      if (center < symbolSize / 2 || center >= projection.length - symbolSize / 2) {
+        valid = false;
+        break;
+      }
+      const start = Math.max(0, Math.floor(center - symbolSize / 2));
+      const end = Math.min(projection.length, Math.ceil(center + symbolSize / 2));
+      for (let position = start; position < end; position += 1) score += projection[position];
+    }
+    if (valid && score > bestScore) {
+      bestScore = score;
+      bestPhase = phase;
+    }
+  }
+  return Array.from({ length: count }, (_, index) => bestPhase + index * resolvedPitch);
+};
+
 const findLabelCells = (source, width, height, expected, qrSize) => {
   const analysisScale = Math.min(1, 1200 / Math.max(width, height));
   const analysisWidth = Math.max(1, Math.round(width * analysisScale));
@@ -721,24 +738,29 @@ const findLabelCells = (source, width, height, expected, qrSize) => {
     let yCenters = projectionCenters(rows, yPitch, analysisQrSize);
 
     if (expected > 0) {
-      const layouts = [];
+      let bestScore = Infinity;
+      let layout;
       for (let columnsCount = 1; columnsCount <= expected; columnsCount += 1) {
         const rowsCount = Math.ceil(expected / columnsCount);
         const pitchRatio = (width / columnsCount) / (height / rowsCount);
-        layouts.push({
-          columns: columnsCount,
-          rows: rowsCount,
-          score: Math.abs(Math.log(Math.max(0.01, pitchRatio / 0.85))),
-        });
+        const score = Math.abs(Math.log(Math.max(0.01, pitchRatio / 0.85)));
+        if (score < bestScore) {
+          bestScore = score;
+          layout = { columns: columnsCount, rows: rowsCount };
+        }
       }
-      layouts.sort((a, b) => a.score - b.score);
-      const layout = layouts[0];
-      if (xCenters.length !== layout.columns) {
-        xCenters = projectionCenters(columns, analysisWidth / layout.columns, analysisQrSize);
-      }
-      if (yCenters.length !== layout.rows) {
-        yCenters = projectionCenters(rows, analysisHeight / layout.rows, analysisQrSize);
-      }
+      xCenters = projectionGridCenters(
+        columns,
+        xPitch || analysisWidth / layout.columns,
+        layout.columns,
+        analysisQrSize
+      );
+      yCenters = projectionGridCenters(
+        rows,
+        yPitch || analysisHeight / layout.rows,
+        layout.rows,
+        analysisQrSize
+      );
     }
     if (!xCenters.length || !yCenters.length) return [];
 
@@ -751,8 +773,8 @@ const findLabelCells = (source, width, height, expected, qrSize) => {
       (yPitch / analysisScale) || qrSize * 1.6
     );
     const cells = [];
-    yCenters.forEach((centerY) => {
-      xCenters.forEach((centerX) => {
+    yCenters.forEach((centerY, rowIndex) => {
+      xCenters.forEach((centerX, columnIndex) => {
         const originalCenterX = centerX / analysisScale;
         const originalCenterY = centerY / analysisScale;
         cells.push({
@@ -762,6 +784,9 @@ const findLabelCells = (source, width, height, expected, qrSize) => {
           height: Math.min(height, cellHeight),
           centerX: originalCenterX,
           centerY: originalCenterY,
+          row: rowIndex + 1,
+          column: columnIndex + 1,
+          qrSize,
         });
       });
     });
@@ -862,10 +887,261 @@ const estimateGrid = (detections, qrSize) => {
         height: side,
         centerX,
         centerY,
+        row: row + 1,
+        column: column + 1,
+        qrSize,
       });
     }
   }
   return { gaps, qrSize, rows: yCount, columns: xCount };
+};
+
+const findLatticeHoles = (
+  detections,
+  qrSize,
+  expected = 0,
+  imageWidth = Infinity,
+  imageHeight = Infinity
+) => {
+  const emptyResult = (spacing = 0, a = null, b = null) => ({
+    holes: [],
+    expectedHoles: [],
+    spacing,
+    a,
+    b,
+  });
+  if (detections.length < 4 || qrSize <= 0) return emptyResult();
+  const centers = detections.map((detection) => {
+    const points = detectionPoints(detection);
+    if (points.length === 0) return null;
+    return points.reduce((center, point) => ({
+      x: center.x + point.x / points.length,
+      y: center.y + point.y / points.length,
+    }), { x: 0, y: 0 });
+  }).filter(Boolean);
+  if (centers.length < 4) return emptyResult();
+
+  const nearest = centers.map((center, index) => {
+    let distance = Infinity;
+    centers.forEach((other, otherIndex) => {
+      if (index !== otherIndex) distance = Math.min(
+        distance,
+        Math.hypot(center.x - other.x, center.y - other.y)
+      );
+    });
+    return distance;
+  });
+  const spacing = median(nearest.filter(Number.isFinite));
+  if (!spacing) return emptyResult();
+
+  const binCount = 18;
+  const bins = Array.from({ length: binCount }, () => []);
+  centers.forEach((center, index) => {
+    centers.forEach((other, otherIndex) => {
+      if (otherIndex <= index) return;
+      let dx = other.x - center.x;
+      let dy = other.y - center.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance > spacing * 1.5) return;
+      if (dx < 0 || (dx === 0 && dy < 0)) {
+        dx = -dx;
+        dy = -dy;
+      }
+      const angle = (Math.atan2(dy, dx) + Math.PI) % Math.PI;
+      bins[Math.floor(angle / Math.PI * binCount) % binCount].push({ dx, dy, angle });
+    });
+  });
+  if (bins[0].length && bins[binCount - 1].length) {
+    bins[0].push(...bins[binCount - 1]);
+    bins[binCount - 1] = [];
+  }
+  const angleGroups = bins.map((values, index) => ({ index, values }))
+    .filter((group) => group.values.length > 0)
+    .sort((left, right) => right.values.length - left.values.length);
+
+  let a = null;
+  let b = null;
+  let origin = centers[0];
+  if (angleGroups.length >= 2) {
+    const first = angleGroups[0];
+    const second = angleGroups.slice(1).find(({ index }) => {
+      const difference = Math.abs(index - first.index);
+      return Math.min(difference, binCount - difference) > 2;
+    });
+    if (second) {
+      const basis = [first, second].map(({ values }) => {
+        const doubleAngleX = values.reduce((sum, { angle }) => sum + Math.cos(angle * 2), 0);
+        const doubleAngleY = values.reduce((sum, { angle }) => sum + Math.sin(angle * 2), 0);
+        let reference = Math.atan2(doubleAngleY, doubleAngleX) / 2;
+        if (reference < 0) reference += Math.PI;
+        const aligned = values.map(({ dx, dy }) => {
+          const dot = dx * Math.cos(reference) + dy * Math.sin(reference);
+          return dot < 0 ? { x: -dx, y: -dy } : { x: dx, y: dy };
+        });
+        return {
+          x: median(aligned.map((vector) => vector.x)),
+          y: median(aligned.map((vector) => vector.y)),
+        };
+      });
+      [a, b] = basis;
+      if (Math.abs(a.x) < Math.abs(b.x)) [a, b] = [b, a];
+      if (a.x < 0 || (a.x === 0 && a.y < 0)) a = { x: -a.x, y: -a.y };
+      if (b.y < 0 || (b.y === 0 && b.x < 0)) b = { x: -b.x, y: -b.y };
+    }
+  }
+
+  let axisAligned = false;
+  const getAxisAlignedBasis = () => {
+    const xLines = clusterCoordinates(centers.map(({ x }) => x), qrSize * 0.55);
+    const yLines = clusterCoordinates(centers.map(({ y }) => y), qrSize * 0.55);
+    const pitch = (lines) => median(lines.slice(1)
+      .map((line, index) => line - lines[index])
+      .filter((distance) => distance >= qrSize * 0.7 && distance <= qrSize * 3.2));
+    const xPitch = pitch(xLines);
+    const yPitch = pitch(yLines);
+    if (!xPitch || !yPitch) return null;
+    return {
+      a: { x: xPitch, y: 0 },
+      b: { x: 0, y: yPitch },
+      origin: { x: xLines[0], y: yLines[0] },
+    };
+  };
+  if (!a || !b || Math.abs(a.x * b.y - b.x * a.y) < spacing * spacing * 0.1) {
+    const fallback = getAxisAlignedBasis();
+    if (!fallback) return emptyResult(spacing, a, b);
+    ({ a, b, origin } = fallback);
+    axisAligned = true;
+  }
+
+  const fitCenters = () => {
+    const determinant = a.x * b.y - b.x * a.y;
+    if (Math.abs(determinant) < spacing * spacing * 0.1) return [];
+    return centers.flatMap((center) => {
+      const dx = center.x - origin.x;
+      const dy = center.y - origin.y;
+      const i = axisAligned ? Math.round(dx / a.x) : Math.round((dx * b.y - b.x * dy) / determinant);
+      const j = axisAligned ? Math.round(dy / b.y) : Math.round((a.x * dy - dx * a.y) / determinant);
+      const projectedX = origin.x + i * a.x + j * b.x;
+      const projectedY = origin.y + i * a.y + j * b.y;
+      return Math.hypot(center.x - projectedX, center.y - projectedY) <= spacing * 0.4
+        ? [{ i, j }]
+        : [];
+    });
+  };
+  let lattice = fitCenters();
+  if (lattice.length < 4 && !axisAligned) {
+    const fallback = getAxisAlignedBasis();
+    if (fallback) {
+      ({ a, b, origin } = fallback);
+      axisAligned = true;
+      lattice = fitCenters();
+    }
+  }
+  if (lattice.length < 4) return emptyResult(spacing, a, b);
+
+  const occupied = new Set(lattice.map(({ i, j }) => `${i}:${j}`));
+  const minI = Math.min(...lattice.map(({ i }) => i));
+  const maxI = Math.max(...lattice.map(({ i }) => i));
+  const minJ = Math.min(...lattice.map(({ j }) => j));
+  const maxJ = Math.max(...lattice.map(({ j }) => j));
+  const observedColumns = maxI - minI + 1;
+  const observedRows = maxJ - minJ + 1;
+  const minX = Math.min(...centers.map(({ x }) => x));
+  const maxX = Math.max(...centers.map(({ x }) => x));
+  const minY = Math.min(...centers.map(({ y }) => y));
+  const maxY = Math.max(...centers.map(({ y }) => y));
+  const boundsExtension = spacing * 0.5;
+  const makeHole = (centerX, centerY, row, column) => {
+    const side = qrSize * 2.5;
+    return {
+      left: centerX - side / 2,
+      top: centerY - side / 2,
+      width: side,
+      height: side,
+      centerX,
+      centerY,
+      row,
+      column,
+      qrSize,
+    };
+  };
+  const holes = [];
+  for (let j = minJ; j <= maxJ; j += 1) {
+    for (let i = minI; i <= maxI; i += 1) {
+      if (occupied.has(`${i}:${j}`)) continue;
+      const hasLeft = lattice.some((cell) => cell.j === j && cell.i < i);
+      const hasRight = lattice.some((cell) => cell.j === j && cell.i > i);
+      const hasAbove = lattice.some((cell) => cell.i === i && cell.j < j);
+      const hasBelow = lattice.some((cell) => cell.i === i && cell.j > j);
+      if (!((hasLeft && hasRight) || (hasAbove && hasBelow))) continue;
+      const centerX = origin.x + i * a.x + j * b.x;
+      const centerY = origin.y + i * a.y + j * b.y;
+      if (
+        centerX < minX - boundsExtension || centerX > maxX + boundsExtension
+        || centerY < minY - boundsExtension || centerY > maxY + boundsExtension
+      ) continue;
+      const nearestCodeDistance = centers.reduce(
+        (distance, center) => Math.min(distance, Math.hypot(center.x - centerX, center.y - centerY)),
+        Infinity
+      );
+      if (nearestCodeDistance > spacing * 1.3) continue;
+      holes.push(makeHole(centerX, centerY, j - minJ + 1, i - minI + 1));
+    }
+  }
+  holes.sort((left, right) => (left.row - right.row) || (left.column - right.column));
+
+  let expectedRows = observedRows;
+  let expectedColumns = observedColumns;
+  let expectedHoles = [];
+  if (expected > 0) {
+    let bestScore = Infinity;
+    for (let columns = 1; columns <= expected; columns += 1) {
+      const rows = Math.ceil(expected / columns);
+      const extraCells = columns * rows - expected;
+      const score = Math.abs(columns - observedColumns)
+        + Math.abs(rows - observedRows)
+        + extraCells * 2;
+      if (score < bestScore) {
+        bestScore = score;
+        expectedColumns = columns;
+        expectedRows = rows;
+      }
+    }
+
+    if (Number.isFinite(bestScore)) {
+      const startI = minI - Math.floor((expectedColumns - observedColumns) / 2);
+      const startJ = minJ - Math.floor((expectedRows - observedRows) / 2);
+      for (let index = 0; index < expected; index += 1) {
+        const rowIndex = Math.floor(index / expectedColumns);
+        const columnIndex = index % expectedColumns;
+        const i = startI + columnIndex;
+        const j = startJ + rowIndex;
+        const centerX = origin.x + i * a.x + j * b.x;
+        const centerY = origin.y + i * a.y + j * b.y;
+        if (
+          centerX < 0 || centerX > imageWidth
+          || centerY < 0 || centerY > imageHeight
+        ) continue;
+        const nearestCodeDistance = centers.reduce(
+          (distance, center) => Math.min(distance, Math.hypot(center.x - centerX, center.y - centerY)),
+          Infinity
+        );
+        if (nearestCodeDistance > qrSize * 0.7) {
+          expectedHoles.push(makeHole(centerX, centerY, rowIndex + 1, columnIndex + 1));
+        }
+      }
+    }
+  }
+
+  return {
+    holes,
+    expectedHoles,
+    spacing,
+    a,
+    b,
+    rows: expectedRows,
+    columns: expectedColumns,
+  };
 };
 
 const toOriginalCoordinates = (
@@ -916,12 +1192,7 @@ export const benchmark100QrImage = async (file) => {
       '30% tiles',
       '20% tiles',
       '12% tiles',
-      'cell crops',
-      'flat-field',
-      'adaptive',
-      'unsharp',
-      'inverted',
-      'ZXing',
+      'cell and grid-hole recovery',
     ];
     let previousCount = 0;
     const summary = [...passCounts.entries()].sort(([a], [b]) => a - b).map(([pass, codes]) => {
@@ -949,21 +1220,55 @@ export const scanTiled = async (
   imageSource,
   width,
   height,
-  { expectedCodeCount = 0, onProgress, deepScan = false } = {}
+  {
+    expectedCodeCount = 0,
+    onProgress,
+    onDetections,
+    deepScan = false,
+  } = {}
 ) => {
   const totalStart = performance.now();
   const preprocessStart = performance.now();
   const resized = await resizePhoto(imageSource, width, height);
-  const { source, sourceScaleX, sourceScaleY } = resized;
+  let source = resized.source;
+  let sourceScaleX = resized.sourceScaleX;
+  let sourceScaleY = resized.sourceScaleY;
+  let workingWidth = resized.width;
+  let workingHeight = resized.height;
+  let adaptiveRelease;
   const detector = await getBarcodeDetector();
   const isVideo = !deepScan && imageSource?.tagName === 'VIDEO';
   const pool = isVideo ? null : getWorkerPool();
   const results = new Map();
+  const unstreamedDetections = [];
   const expected = Math.max(0, Number(expectedCodeCount) || 0);
+  const deadline = deepScan ? totalStart + 15000 : Infinity;
+  const isOutOfTime = () => performance.now() >= deadline;
   let qrSize = 0;
   let activePass = 0;
-  const totalPasses = deepScan ? 10 : 2;
-  const report = () => onProgress?.({ pass: activePass, totalPasses, codes: results.size });
+  let activeStage = '';
+  let scanStoppedEarly = false;
+  let lastProgressAt = 0;
+  const totalPasses = deepScan ? 5 : 2;
+  const report = (force = false) => {
+    const now = performance.now();
+    if (!force && now - lastProgressAt < 100) return;
+    lastProgressAt = now;
+    onProgress?.({
+      pass: activePass,
+      totalPasses,
+      codes: results.size,
+      stage: activeStage,
+    });
+  };
+  const emitDetections = (stage) => {
+    if (unstreamedDetections.length === 0) return;
+    onDetections?.(unstreamedDetections.splice(0), {
+      pass: activePass,
+      stage,
+      codes: results.size,
+    });
+  };
   const merge = (detections) => {
     const added = [];
     detections.forEach((detection) => {
@@ -972,24 +1277,28 @@ export const scanTiled = async (
       const normalized = { ...detection, rawValue };
       results.set(rawValue, normalized);
       added.push(normalized);
+      unstreamedDetections.push(normalized);
     });
     return added;
   };
   const normalizeRegion = (region) => {
-    const left = Math.max(0, Math.min(resized.width - 1, Math.floor(region.left)));
-    const top = Math.max(0, Math.min(resized.height - 1, Math.floor(region.top)));
+    const left = Math.max(0, Math.min(workingWidth - 1, Math.floor(region.left)));
+    const top = Math.max(0, Math.min(workingHeight - 1, Math.floor(region.top)));
     return {
       left,
       top,
-      width: Math.max(1, Math.min(resized.width - left, Math.ceil(region.width))),
-      height: Math.max(1, Math.min(resized.height - top, Math.ceil(region.height))),
+      width: Math.max(1, Math.min(workingWidth - left, Math.ceil(region.width))),
+      height: Math.max(1, Math.min(workingHeight - top, Math.ceil(region.height))),
     };
   };
 
   const scanRegion = async (region, variant = 'plain', workerIndex = 0, options = {}) => {
     const safeRegion = normalizeRegion(region);
     const prepared = options.upscale || options.addQuietZone
-      ? prepareRegionCanvas(source, safeRegion, qrSize, { addQuietZone: options.addQuietZone })
+      ? prepareRegionCanvas(source, safeRegion, qrSize, {
+        addQuietZone: options.addQuietZone,
+        scale: options.scale,
+      })
       : null;
     const scanSource = prepared?.source || source;
     const scanRect = prepared
@@ -1017,9 +1326,10 @@ export const scanTiled = async (
     }
   };
 
-  const scanRegions = async (regions, stage, variant = 'plain', options = {}) => {
+  const scanRegions = async (regions, stage, variant = 'plain', options = {}, stageName = '') => {
     activePass = stage;
-    report();
+    activeStage = stageName;
+    report(true);
     const stageStart = performance.now();
     let cursor = 0;
     let addedCount = 0;
@@ -1028,6 +1338,10 @@ export const scanTiled = async (
     const unresolvedRegions = [];
     const runWorker = async (workerIndex) => {
       while (cursor < regions.length) {
+        if (isOutOfTime()) {
+          scanStoppedEarly = true;
+          break;
+        }
         if (expected > 0 && results.size >= expected) break;
         const index = cursor;
         cursor += 1;
@@ -1051,11 +1365,13 @@ export const scanTiled = async (
           if (!firstError) firstError = error;
           unresolvedRegions.push(region);
         }
-        await yieldToUI();
+        if (!pool) await yieldToUI();
       }
     };
     const count = pool ? pool.length : 1;
     await Promise.all(Array.from({ length: Math.min(count, regions.length) }, (_, index) => runWorker(index)));
+    report(true);
+    emitDetections(stageName);
     if (failureCount === regions.length && regions.length > 0) {
       throw firstError || new Error('All QR tile scans failed');
     }
@@ -1073,7 +1389,10 @@ export const scanTiled = async (
   const scanRegionOnMainThread = async (region, variant, options) => {
     const safeRegion = normalizeRegion(region);
     const prepared = options.upscale || options.addQuietZone
-      ? prepareRegionCanvas(source, safeRegion, qrSize, { addQuietZone: options.addQuietZone })
+      ? prepareRegionCanvas(source, safeRegion, qrSize, {
+        addQuietZone: options.addQuietZone,
+        scale: options.scale,
+      })
       : null;
     const scanSource = prepared?.source || source;
     const scanRect = prepared
@@ -1088,6 +1407,60 @@ export const scanTiled = async (
         safeRegion,
         sourceScaleX,
         sourceScaleY,
+        prepared?.scale || 1,
+        prepared?.padding || 0
+      );
+    } finally {
+      prepared?.release();
+    }
+  };
+
+  const scanOriginalRegion = async (region, variant, workerIndex, options = {}) => {
+    const originalRegion = {
+      left: Math.min(width - 1, Math.max(0, Math.floor(region.left / sourceScaleX))),
+      top: Math.min(height - 1, Math.max(0, Math.floor(region.top / sourceScaleY))),
+      width: 0,
+      height: 0,
+    };
+    originalRegion.width = Math.max(1, Math.min(
+      width - originalRegion.left,
+      Math.ceil(region.width / sourceScaleX)
+    ));
+    originalRegion.height = Math.max(1, Math.min(
+      height - originalRegion.top,
+      Math.ceil(region.height / sourceScaleY)
+    ));
+    const originalQrSize = qrSize / Math.min(sourceScaleX, sourceScaleY);
+    const prepared = options.upscale || options.addQuietZone
+      ? prepareRegionCanvas(imageSource, originalRegion, originalQrSize, {
+        addQuietZone: options.addQuietZone,
+        scale: options.scale,
+      })
+      : null;
+    const scanSource = prepared?.source || imageSource;
+    const scanRect = prepared
+      ? { left: 0, top: 0, width: prepared.width, height: prepared.height }
+      : originalRegion;
+    try {
+      let detections;
+      try {
+        detections = pool
+          ? await pool[workerIndex % pool.length].scan(scanSource, scanRect, variant)
+          : variant === 'zxing'
+            ? await fallbackZXingScanRegion(scanSource, scanRect)
+            : await fallbackScanRegion(scanSource, scanRect, variant);
+      } catch (workerError) {
+        if (!pool) throw workerError;
+        debugQrError(`worker ${variant} full-resolution hole scan failed; retrying on main thread`, workerError);
+        detections = variant === 'zxing'
+          ? await fallbackZXingScanRegion(scanSource, scanRect)
+          : await fallbackScanRegion(scanSource, scanRect, variant);
+      }
+      return toOriginalCoordinates(
+        detections,
+        originalRegion,
+        1,
+        1,
         prepared?.scale || 1,
         prepared?.padding || 0
       );
@@ -1128,80 +1501,130 @@ export const scanTiled = async (
       }
     }
 
+    if (deepScan && expected > 0 && results.size >= expected) {
+      activePass = 1;
+      activeStage = 'BarcodeDetector';
+      report(true);
+      emitDetections('BarcodeDetector');
+      const output = attachMissingCells([...results.values()], { gaps: [] }, expected, sourceScaleX, sourceScaleY, 0);
+      output.scanStoppedEarly = false;
+      return output;
+    }
+
     if (isVideo) {
-      const tiles = makeVideoTiles(resized.width, resized.height);
-      await scanRegions(tiles.slice(0, 9), 1);
+      const tiles = makeVideoTiles(workingWidth, workingHeight);
+      await scanRegions(tiles.slice(0, 9), 1, 'plain', {}, 'Live video');
       return [...results.values()];
     }
 
-    const fullRegion = { left: 0, top: 0, width: resized.width, height: resized.height };
+    const fullRegion = { left: 0, top: 0, width: workingWidth, height: workingHeight };
     await scanRegions(
-      [fullRegion, ...makeCoarseTiles(resized.width, resized.height)],
-      1
+      [fullRegion, ...makeCoarseTiles(workingWidth, workingHeight)],
+      1,
+      'plain',
+      {},
+      'Initial pass'
     );
     const firstPassDetections = [...results.values()];
-    const firstPassWorking = toWorkingCoordinates(firstPassDetections, sourceScaleX, sourceScaleY);
+    let firstPassWorking = toWorkingCoordinates(firstPassDetections, sourceScaleX, sourceScaleY);
     qrSize = medianQrSize(firstPassWorking) || estimateQrSizeFromImage(resized.width, resized.height);
+    if (deepScan && qrSize > 200) {
+      const downscale = Math.min(1, 160 / qrSize);
+      const adaptive = await resizePhoto(source, workingWidth, workingHeight, downscale);
+      source = adaptive.source;
+      sourceScaleX *= adaptive.sourceScaleX;
+      sourceScaleY *= adaptive.sourceScaleY;
+      workingWidth = adaptive.width;
+      workingHeight = adaptive.height;
+      adaptiveRelease = adaptive.release;
+      firstPassWorking = toWorkingCoordinates(firstPassDetections, sourceScaleX, sourceScaleY);
+      qrSize = medianQrSize(firstPassWorking);
+      if (DEBUG_QR) {
+        console.debug(
+          `[qr-scan] adaptive work image=${workingWidth}x${workingHeight}, `
+          + `estimated QR=${Math.round(qrSize)}px, `
+          + `scale=${sourceScaleX.toFixed(3)}x${sourceScaleY.toFixed(3)}`
+        );
+      }
+    }
     let grid = estimateGrid(firstPassWorking, qrSize);
     const completeGrid = expected === 0
       && grid.rows > 0
       && grid.columns > 0
       && grid.gaps.length === 0
       && grid.rows * grid.columns === results.size
-      && grid.columns >= Math.ceil(resized.width / (qrSize * 3.2))
-      && grid.rows >= Math.ceil(resized.height / (qrSize * 3.2));
+      && grid.columns >= Math.ceil(workingWidth / (qrSize * 3.2))
+      && grid.rows >= Math.ceil(workingHeight / (qrSize * 3.2));
 
     if (!deepScan) {
-      const fallbackWindows = makeSlidingTiles(resized.width, resized.height, medianQrSize(firstPassWorking));
+      const fallbackWindows = makeSlidingTiles(workingWidth, workingHeight, medianQrSize(firstPassWorking));
       const passTwoRegions = grid.gaps.length > 0
         ? grid.gaps.map(({ left, top, width: cropWidth, height: cropHeight }) => ({
-          left: Math.max(0, Math.min(resized.width - cropWidth, left)),
-          top: Math.max(0, Math.min(resized.height - cropHeight, top)),
-          width: Math.min(resized.width, cropWidth),
-          height: Math.min(resized.height, cropHeight),
+          left: Math.max(0, Math.min(workingWidth - cropWidth, left)),
+          top: Math.max(0, Math.min(workingHeight - cropHeight, top)),
+          width: Math.min(workingWidth, cropWidth),
+          height: Math.min(workingHeight, cropHeight),
         }))
         : fallbackWindows;
-      await scanRegions(passTwoRegions, 2);
+      await scanRegions(passTwoRegions, 2, 'plain', {}, 'Fallback tiles');
       const finalWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
       grid = estimateGrid(finalWorking, medianQrSize(finalWorking) || qrSize);
-      return attachMissingCells(
+      const output = attachMissingCells(
         [...results.values()],
         grid,
         expected,
         sourceScaleX,
         sourceScaleY
       );
+      return output;
     }
 
-    if ((expected > 0 && results.size >= expected) || completeGrid) {
+    const finalize = (unresolvedHoles, holePositions = []) => {
       const finalWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
       grid = estimateGrid(finalWorking, medianQrSize(finalWorking) || qrSize);
-      return attachMissingCells([...results.values()], grid, expected, sourceScaleX, sourceScaleY);
-    }
+      const output = attachMissingCells(
+        [...results.values()],
+        grid,
+        expected,
+        sourceScaleX,
+        sourceScaleY,
+        unresolvedHoles,
+        holePositions
+      );
+      output.scanStoppedEarly = scanStoppedEarly;
+      return output;
+    };
+
+    if ((expected > 0 && results.size >= expected) || completeGrid) return finalize();
 
     const ladder = [
-      { fraction: 0.3, pass: 2 },
-      { fraction: 0.2, pass: 3 },
-      { fraction: 0.12, pass: 4 },
+      { fraction: 0.3, pass: 2, stage: '30% tiles' },
+      { fraction: 0.2, pass: 3, stage: '20% tiles' },
+      { fraction: 0.12, pass: 4, stage: '12% tiles' },
     ];
-    let remainingTiles = [];
-    for (const { fraction, pass } of ladder) {
-      const tiles = makeScaleLadderTiles(resized.width, resized.height, fraction);
-      const tileResult = await scanRegions(tiles, pass, 'plain', { upscale: true });
-      remainingTiles = tileResult.unresolvedRegions;
-      if (expected > 0 && results.size >= expected) break;
+    for (const { fraction, pass, stage } of ladder) {
+      if (isOutOfTime()) {
+        scanStoppedEarly = true;
+        break;
+      }
+      const tiles = makeScaleLadderTiles(workingWidth, workingHeight, fraction);
+      const tileResult = await scanRegions(tiles, pass, 'plain', { upscale: true }, stage);
+      if (expected > 0 && results.size >= expected) return finalize();
+      if (tileResult.addedCount === 0) break;
     }
 
-    if (expected > 0 && results.size >= expected) {
-      const finalWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
-      grid = estimateGrid(finalWorking, medianQrSize(finalWorking) || qrSize);
-      return attachMissingCells([...results.values()], grid, expected, sourceScaleX, sourceScaleY);
-    }
-
+    if (isOutOfTime()) scanStoppedEarly = true;
     const currentWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
     const detectedQrSize = medianQrSize(currentWorking) || qrSize;
     grid = estimateGrid(currentWorking, detectedQrSize);
-    let cells = findLabelCells(source, resized.width, resized.height, expected, detectedQrSize);
+    const gridCells = findLabelCells(
+      source,
+      workingWidth,
+      workingHeight,
+      expected,
+      detectedQrSize
+    );
+    let cells = gridCells;
     const existingCenters = currentWorking.map((detection) => {
       const points = detectionPoints(detection);
       return points.reduce((center, point) => ({
@@ -1212,72 +1635,207 @@ export const scanTiled = async (
     cells = cells.filter((cell) => !existingCenters.some((center) => (
       Math.hypot(center.x - cell.centerX, center.y - cell.centerY) < detectedQrSize * 0.8
     )));
-    if (cells.length === 0 && grid.gaps.length > 0) {
-      cells = grid.gaps;
-    }
-    if (cells.length === 0) {
-      cells = remainingTiles;
-    }
+    if (cells.length === 0 && grid.gaps.length > 0) cells = grid.gaps;
 
-    let remaining = cells;
-    if (remaining.length > 0) {
-      const plain = await scanRegions(remaining, 5, 'plain', {
+    if (cells.length > 0 && !isOutOfTime() && !(expected > 0 && results.size >= expected)) {
+      let cellResult = await scanRegions(cells, 5, 'plain', {
         upscale: true,
         addQuietZone: true,
-      });
-      remaining = plain.unresolvedRegions;
-    } else {
-      activePass = 5;
-      report();
-      if (DEBUG_QR) console.debug('[qr-scan] pass 5 skipped: no unresolved cells');
+      }, 'Cell recovery');
+      let unresolvedCells = cellResult.unresolvedRegions;
+      for (const variant of ['zxing', 'inverted']) {
+        if (
+          unresolvedCells.length === 0
+          || isOutOfTime()
+          || (expected > 0 && results.size >= expected)
+        ) break;
+        cellResult = await scanRegions(
+          unresolvedCells,
+          5,
+          variant,
+          { upscale: true, addQuietZone: true },
+          `Cell recovery ${variant}`
+        );
+        unresolvedCells = cellResult.unresolvedRegions;
+      }
     }
+    if (isOutOfTime()) scanStoppedEarly = true;
+    if (expected > 0 && results.size >= expected) return finalize(0);
 
+    const afterCells = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
+    const afterCellQrSize = medianQrSize(afterCells) || detectedQrSize;
+    const lattice = findLatticeHoles(
+      afterCells,
+      afterCellQrSize,
+      expected,
+      workingWidth,
+      workingHeight
+    );
+    const validatedHoles = lattice.holes;
+    const missingAfterCells = Math.max(0, expected - results.size);
+    let holes = expected > 0 && validatedHoles.length < missingAfterCells
+      ? lattice.expectedHoles
+      : validatedHoles;
+    if (holes.length === 0 && cells.length > 0) holes = cells;
+    if (holes.length === 0 && grid.gaps.length > 0) holes = grid.gaps;
+    const holeDeadline = Math.min(deadline, performance.now() + 4000);
+    const holeStart = performance.now();
+    let holeCursor = 0;
+    const unresolvedHolePositions = isOutOfTime() ? [...holes] : [];
+    if (isOutOfTime() && holes.length > 0) scanStoppedEarly = true;
     const variants = [
-      { name: 'flat', pass: 6 },
-      { name: 'adaptive', pass: 7 },
-      { name: 'unsharp', pass: 8 },
-      { name: 'inverted', pass: 9 },
+      { name: 'plain', options: { addQuietZone: true } },
+      { name: 'plain', options: { upscale: true, scale: 2, addQuietZone: true } },
+      { name: 'zxing', options: { upscale: true, addQuietZone: true } },
+      { name: 'inverted', options: { upscale: true, addQuietZone: true } },
+      { name: 'flat', options: { upscale: true, addQuietZone: true } },
+      { name: 'unsharp', options: { upscale: true, addQuietZone: true } },
     ];
-    for (const variant of variants) {
-      if (expected > 0 && results.size >= expected) break;
-      if (remaining.length === 0) break;
-      const next = await scanRegions(remaining, variant.pass, variant.name, {
-        upscale: true,
-        addQuietZone: true,
-      });
-      remaining = next.unresolvedRegions;
+    const scanHoleWorker = async (workerIndex) => {
+      while (holeCursor < holes.length) {
+        if (performance.now() >= holeDeadline || (expected > 0 && results.size >= expected)) return;
+        const hole = holes[holeCursor];
+        holeCursor += 1;
+        let found = false;
+        for (const variant of variants) {
+          if (performance.now() >= holeDeadline || isOutOfTime()) {
+            scanStoppedEarly = true;
+            break;
+          }
+          try {
+            let detections;
+            try {
+              detections = await scanOriginalRegion(hole, variant.name, workerIndex, variant.options);
+            } catch (workerError) {
+              debugQrError(`full-resolution ${variant.name} hole scan failed`, workerError);
+              throw workerError;
+            }
+            const added = merge(detections);
+            const decodedAtHole = detections.some((detection) => {
+              const points = detectionPoints(detection);
+              if (points.length === 0) return false;
+              const center = points.reduce((sum, point) => ({
+                x: sum.x + point.x / points.length * sourceScaleX,
+                y: sum.y + point.y / points.length * sourceScaleY,
+              }), { x: 0, y: 0 });
+              return Math.hypot(center.x - hole.centerX, center.y - hole.centerY)
+                <= afterCellQrSize * 0.7;
+            });
+            if (added.length > 0 || decodedAtHole) {
+              found = true;
+              break;
+            }
+          } catch (error) {
+            debugQrError(`hole rescan ${variant.name} failed`, error);
+          }
+        }
+        if (!found) unresolvedHolePositions.push(hole);
+      }
+    };
+    if (holes.length > 0 && !isOutOfTime() && !(expected > 0 && results.size >= expected)) {
+      activePass = 5;
+      activeStage = 'Grid-hole recovery';
+      report(true);
+      await Promise.all(Array.from(
+        { length: Math.min(pool ? pool.length : 1, holes.length) },
+        (_, index) => scanHoleWorker(index)
+      ));
+      if (scanStoppedEarly) unresolvedHolePositions.push(...holes.slice(holeCursor));
+      emitDetections('Grid-hole recovery');
+    } else if (holes.length > 0 && !scanStoppedEarly && !(expected > 0 && results.size >= expected)) {
+      unresolvedHolePositions.push(...holes);
     }
+    if (performance.now() >= deadline) scanStoppedEarly = true;
 
-    if (remaining.length > 0 && (expected === 0 || results.size < expected)) {
-      await scanRegions(remaining, 10, 'zxing', {
-        upscale: true,
-        addQuietZone: true,
-      });
-    } else {
-      activePass = 10;
-      report();
-      if (DEBUG_QR) console.debug('[qr-scan] pass 10 skipped: no unresolved cells');
-    }
-
+    const recoveryHoleSet = new Set(holes);
+    const orderedUnresolvedHoles = unresolvedHolePositions
+      .filter((hole) => recoveryHoleSet.has(hole))
+      .sort((left, right) => (left.row - right.row) || (left.column - right.column));
     const finalWorking = toWorkingCoordinates([...results.values()], sourceScaleX, sourceScaleY);
-    grid = estimateGrid(finalWorking, medianQrSize(finalWorking) || qrSize);
-    const output = attachMissingCells([...results.values()], grid, expected, sourceScaleX, sourceScaleY);
+    const finalLattice = findLatticeHoles(
+      finalWorking,
+      afterCellQrSize,
+      expected,
+      workingWidth,
+      workingHeight
+    );
+    const notDetected = Math.max(0, expected - results.size);
+    const candidateHoles = expected > 0
+      ? [
+        ...finalLattice.holes,
+        ...finalLattice.expectedHoles,
+        ...orderedUnresolvedHoles,
+        ...validatedHoles,
+      ]
+      : orderedUnresolvedHoles;
+    const uniqueHoleCandidates = [];
+    candidateHoles.forEach((hole) => {
+      if (!uniqueHoleCandidates.some((candidate) => (
+        Math.hypot(candidate.centerX - hole.centerX, candidate.centerY - hole.centerY)
+          < afterCellQrSize * 0.7
+      ))) uniqueHoleCandidates.push(hole);
+    });
+    uniqueHoleCandidates.sort(
+      (left, right) => (left.row - right.row) || (left.column - right.column)
+    );
+    const reportableHoles = expected > 0
+      ? uniqueHoleCandidates.slice(0, notDetected)
+      : uniqueHoleCandidates;
+    const output = finalize(
+      validatedHoles.length > 0 ? reportableHoles.length : undefined,
+      reportableHoles
+    );
+    output.missingCells.lattice = {
+      a: finalLattice.a || lattice.a,
+      b: finalLattice.b || lattice.b,
+      spacing: finalLattice.spacing || lattice.spacing,
+    };
+    output.missingCells.validatedHoleCount = finalLattice.holes.length;
+    if (DEBUG_QR) {
+      console.debug(
+        `[qr-scan] pass 5/5 grid-hole recovery: ${holes.length} holes, `
+        + `+${results.size - afterCells.length} codes, `
+        + `${Math.round(performance.now() - holeStart)}ms`
+      );
+    }
     if (DEBUG_QR) {
       console.debug(`[qr-scan] decode total=${Math.round(performance.now() - totalStart)}ms, preprocessing=${Math.round(performance.now() - preprocessStart)}ms`);
     }
     return output;
   } finally {
+    adaptiveRelease?.();
     resized.release();
   }
 };
 
-const attachMissingCells = (detections, grid, expected, sourceScaleX = 1, sourceScaleY = 1) => {
-  const positions = grid.gaps.map(({ centerX, centerY }) => ({
-    x: centerX / sourceScaleX,
-    y: centerY / sourceScaleY,
-  }));
-  const count = positions.length || (expected > detections.length ? expected - detections.length : 0);
-  detections.missingCells = { count, positions };
+const attachMissingCells = (
+  detections,
+  grid,
+  expected,
+  sourceScaleX = 1,
+  sourceScaleY = 1,
+  unresolvedHoleCount,
+  holePositions
+) => {
+  const positions = holePositions
+    ? holePositions.map(({ centerX, centerY, qrSize, row, column }, index) => ({
+      x: centerX / sourceScaleX,
+      y: centerY / sourceScaleY,
+      size: qrSize ? qrSize / Math.min(sourceScaleX, sourceScaleY) : 0,
+      row: row || index + 1,
+      column: column || 1,
+    }))
+    : grid.gaps.map(({ centerX, centerY, qrSize, row, column }, index) => ({
+      x: centerX / sourceScaleX,
+      y: centerY / sourceScaleY,
+      size: qrSize ? qrSize / Math.min(sourceScaleX, sourceScaleY) : 0,
+      row: row || index + 1,
+      column: column || 1,
+    }));
+  const count = unresolvedHoleCount ?? (
+    positions.length || (expected > detections.length ? expected - detections.length : 0)
+  );
+  detections.missingCells = { count, holeCount: unresolvedHoleCount ?? count, positions };
   detections.found = detections.length;
   if (expected > 0) {
     detections.expected = expected;

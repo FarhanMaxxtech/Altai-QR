@@ -16,6 +16,8 @@ import productGroupsRouter from './routes/product-groups.js';
 import stockBalanceRouter from './routes/stock-balance.js';
 import merchantRouter from './routes/merchant.js';
 import variantsRouter from './routes/variants.js';
+import agentsRouter from './routes/agents.js';
+import bundlesRouter from './routes/qr-bundles.js';
 import { loadStoreScope } from './middleware/storeScope.js';
 
 dotenv.config();
@@ -41,6 +43,8 @@ app.use('/api/product-groups', requireAuth, productGroupsRouter);
 app.use('/api/stock-balance', requireAuth, loadStoreScope, stockBalanceRouter);
 app.use('/api/merchant', requireAuth, merchantRouter);
 app.use('/api/variants', requireAuth, variantsRouter);
+app.use('/api/agents', requireAuth, agentsRouter);
+app.use('/api/bundles', requireAuth, loadStoreScope, bundlesRouter);
 
 // Protected — Super Admin only
 app.use('/api/superadmin', requireAuth, requireSuperAdmin, superadminRouter);

@@ -115,11 +115,9 @@ const adaptiveContrast = (luminance) => {
   return stretch(luminance, minimum, maximum);
 };
 
-const scanPixels = async (rgba, width, height, variant) => {
+const scanPixels = async (sourceGray, width, height, variant) => {
   const stageStart = performance.now();
-  const originalWidth = width;
-  const originalHeight = height;
-  let luminance = grayscale(rgba);
+  let luminance = new Uint8Array(sourceGray);
   if (variant === 'flat' || variant === 'adaptive') {
     luminance = normalizeFlatField(luminance, width, height);
   }
@@ -145,10 +143,7 @@ const scanPixels = async (rgba, width, height, variant) => {
   }
   return symbols.map((symbol) => ({
     rawValue: symbol.decode('utf-8').trim(),
-    points: symbol.points.map((point) => ({
-      x: point.x * originalWidth / width,
-      y: point.y * originalHeight / height,
-    })),
+    points: symbol.points.map((point) => ({ x: point.x, y: point.y })),
   })).filter((symbol) => symbol.rawValue);
 };
 
@@ -194,10 +189,11 @@ const scanZXing = async (rgba, width, height) => {
 };
 
 self.onmessage = async ({ data }) => {
-  const { id, bitmap, pixels, width, height, variant } = data;
+  const { id, bitmap, pixels, pixelFormat, width, height, variant } = data;
   let canvas;
   try {
-    let rgba = pixels;
+    let pixelBuffer = pixels;
+    let format = pixelFormat || 'rgba';
     let imageWidth = width;
     let imageHeight = height;
     if (bitmap) {
@@ -208,15 +204,23 @@ self.onmessage = async ({ data }) => {
       const context = canvas.getContext('2d', { willReadFrequently: true });
       if (!context) throw new Error('Could not create QR worker canvas context');
       context.drawImage(bitmap, 0, 0);
-      rgba = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      pixelBuffer = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      format = 'rgba';
       imageWidth = canvas.width;
       imageHeight = canvas.height;
     }
     if (DEBUG_QR) console.debug(`[qr-worker] request ${id} ${variant} ${imageWidth}x${imageHeight}`);
-    const pixelsData = rgba instanceof Uint8ClampedArray ? rgba : new Uint8ClampedArray(rgba);
+    const pixelsData = pixelBuffer instanceof Uint8Array || pixelBuffer instanceof Uint8ClampedArray
+      ? pixelBuffer
+      : new Uint8Array(pixelBuffer);
     const detections = variant === 'zxing'
       ? await scanZXing(pixelsData, imageWidth, imageHeight)
-      : await scanPixels(pixelsData, imageWidth, imageHeight, variant);
+      : await scanPixels(
+        format === 'gray' ? pixelsData : grayscale(pixelsData),
+        imageWidth,
+        imageHeight,
+        variant
+      );
     self.postMessage({ id, detections });
   } catch (error) {
     debugError(`${variant} scan failed`, error);

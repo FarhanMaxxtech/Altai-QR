@@ -1,6 +1,7 @@
 // src/pages/merchant/AssignQrToProduct.jsx
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useCallback } from 'react';
 import { ScanBarcode, Camera, X, Search } from 'lucide-react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { apiFetch, apiFetchScanLookupBatch } from '../../utils/api';
 import { useEffect } from 'react';
 import '../../styles/AssignQrToProduct.css';
@@ -8,6 +9,9 @@ import { useLocation } from 'react-router-dom';
 import { useConfirm } from '../../context/ConfirmContext';
 import MultiQrScanner from '../../components/MultiQrScanner';
 import SnapAndScanButton from '../../components/SnapAndScanButton';
+import SnapPhotoPreview from '../../components/SnapPhotoPreview';
+import { getAuthUser } from '../../utils/authStorage';
+import { exportRowsToExcel } from '../../utils/tableExport';
 
 const MAX_RANGE_SIZE = 500;
 const SUMMARY_PAGE_SIZE = 50;
@@ -19,10 +23,10 @@ function normalizeSerialSearch(value) {
     .replace(/\d+/g, (digits) => digits.replace(/^0+(?=\d)/, ''));
 }
 
-function findSequenceGaps(values, maxMissing) {
+function findSerialGaps(serials, { maxGaps = 10 } = {}) {
   const groups = new Map();
-  values.forEach((value) => {
-    const match = String(value).match(/^(.*?)(\d+)$/);
+  serials.forEach((serial) => {
+    const match = String(serial).match(/^(.*?)(\d+)$/);
     if (!match) return;
     const [, prefix, digits] = match;
     const key = `${prefix}\u0000${digits.length}`;
@@ -31,28 +35,36 @@ function findSequenceGaps(values, maxMissing) {
     groups.set(key, group);
   });
 
-  const sequences = [...groups.values()].map(({ prefix, width, numbers }) => ({
-    prefix,
-    width,
-    sorted: [...numbers].sort((a, b) => a - b),
-  }));
-  let totalGaps = 0;
-  sequences.forEach(({ sorted }) => {
-    for (let index = 1; index < sorted.length; index += 1) {
-      totalGaps += Math.max(0, sorted[index] - sorted[index - 1] - 1);
+  const missingSerials = [];
+  let ignoredGapCount = 0;
+  const serialGroups = [];
+  groups.forEach(({ prefix, width, numbers }) => {
+    if (numbers.size < 2) return;
+    const sorted = [...numbers].sort((a, b) => a - b);
+    const gaps = [];
+    for (let number = sorted[0] + 1; number < sorted[sorted.length - 1]; number += 1) {
+      if (!numbers.has(number)) gaps.push(`${prefix}${String(number).padStart(width, '0')}`);
     }
+    serialGroups.push({
+      prefix,
+      width,
+      minimum: sorted[0],
+      maximum: sorted[sorted.length - 1],
+      presentCount: numbers.size,
+      totalCount: sorted[sorted.length - 1] - sorted[0] + 1,
+    });
+    if (gaps.length > maxGaps) {
+      ignoredGapCount += gaps.length;
+      return;
+    }
+    missingSerials.push(...gaps);
   });
-  if (totalGaps > 30 || totalGaps > maxMissing) return [];
+  return { missingSerials, ignoredGapCount, groups: serialGroups };
+}
 
-  const gaps = [];
-  sequences.forEach(({ prefix, width, sorted }) => {
-    for (let index = 1; index < sorted.length; index += 1) {
-      for (let number = sorted[index - 1] + 1; number < sorted[index]; number += 1) {
-        gaps.push(`${prefix}${String(number).padStart(width, '0')}`);
-      }
-    }
-  });
-  return gaps;
+function releaseSnapPhotoUrls(photos) {
+  const urls = new Set(photos.flatMap((photo) => [photo.url, photo.thumbnailUrl]).filter(Boolean));
+  urls.forEach((url) => URL.revokeObjectURL(url));
 }
 
 function displayName(sku, productName) {
@@ -74,6 +86,9 @@ function badgeInfo(item) {
 export default function AssignQrToProduct() {
 
   const confirm = useConfirm();
+  const currentUser = getAuthUser();
+  const isFullAccess = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+  const canCreateBundles = isFullAccess || (currentUser?.permissions?.['Agent / Distributor'] || []).includes('create');
 
   // Alert-style dialog (dismiss-only) for scan-station notifications that
   // were easy to miss when shown as inline text below aq-range-hint.
@@ -93,16 +108,30 @@ export default function AssignQrToProduct() {
   const [scanSearchTerm, setScanSearchTerm] = useState('');
   const [debouncedScanSearchTerm, setDebouncedScanSearchTerm] = useState('');
   const [snapReport, setSnapReport] = useState(null);
+  const [snapPhotos, setSnapPhotos] = useState([]);
+  const [activeSnapMarkerId, setActiveSnapMarkerId] = useState(null);
   const [lastSnapExpectedCount, setLastSnapExpectedCount] = useState(0);
 
   const [scanSuccessMessage, setScanSuccessMessage] = useState('');
   const scanInputRef = useRef(null);
   const snapValuesRef = useRef(new Set());
   const snapFailuresRef = useRef(new Map());
+  const snapRepairValuesRef = useRef(new Set());
+  const snapRepairPendingRef = useRef(false);
   const snapExpectedRef = useRef(0);
   const snapCompleteRef = useRef(false);
-  const snapMissingCellHintRef = useRef(0);
+  const snapScanStoppedEarlyRef = useRef(false);
   const snapReportTimerRef = useRef(null);
+  const snapPhotosRef = useRef([]);
+
+  useEffect(() => () => releaseSnapPhotoUrls(snapPhotosRef.current), []);
+
+  const clearSnapPhotos = useCallback(() => {
+    releaseSnapPhotoUrls(snapPhotosRef.current);
+    snapPhotosRef.current = [];
+    setSnapPhotos([]);
+    setActiveSnapMarkerId(null);
+  }, []);
 
   const scanCartRef = useRef([]);
   const commitCart = (next) => {
@@ -189,6 +218,13 @@ export default function AssignQrToProduct() {
   const [summaryStatusMessage, setSummaryStatusMessage] = useState('');
   const [isProcessingSummary, setIsProcessingSummary] = useState(false);
   const [summaryPage, setSummaryPage] = useState(1);
+  const [alsoGenerateBundle, setAlsoGenerateBundle] = useState(true);
+  const [summaryBundleMeta, setSummaryBundleMeta] = useState({ remarks: null, expiryDate: null });
+  const [bundleResult, setBundleResult] = useState(null);
+  const [bundleRetryPayload, setBundleRetryPayload] = useState(null);
+  const [bundleFailureMessage, setBundleFailureMessage] = useState('');
+  const [isRetryingBundle, setIsRetryingBundle] = useState(false);
+  const bundleQrCanvasRef = useRef(null);
 
   useEffect(() => {
     apiFetch('/api/products')
@@ -306,6 +342,7 @@ export default function AssignQrToProduct() {
     if (!snapReport?.allAdded) return undefined;
     snapReportTimerRef.current = window.setTimeout(() => {
       setSnapReport(null);
+      clearSnapPhotos();
       snapReportTimerRef.current = null;
     }, 4000);
     return () => {
@@ -314,22 +351,31 @@ export default function AssignQrToProduct() {
         snapReportTimerRef.current = null;
       }
     };
-  }, [snapReport]);
+  }, [snapReport, clearSnapPhotos]);
 
-  const recordSnapFailure = (value, reason) => {
-    if (snapValuesRef.current.has(value)) snapFailuresRef.current.set(value, reason);
+  const recordSnapFailure = (value, reason, serial = null) => {
+    if (snapValuesRef.current.has(value) || snapRepairValuesRef.current.has(value)) {
+      snapFailuresRef.current.set(value, { reason, serial });
+    }
   };
 
   const recordSnapFailures = (failures) => {
-    failures.forEach(({ value, message }) => recordSnapFailure(value, message));
+    failures.forEach(({ value, message, serial }) => {
+      if (snapValuesRef.current.has(value) || snapRepairValuesRef.current.has(value)) {
+        snapFailuresRef.current.set(value, { reason: message, serial: serial || null });
+      }
+    });
   };
 
   const handleSnapStart = ({ expected }) => {
+    clearSnapPhotos();
     snapValuesRef.current = new Set();
     snapFailuresRef.current.clear();
+    snapRepairValuesRef.current.clear();
+    snapRepairPendingRef.current = false;
     snapExpectedRef.current = expected;
     snapCompleteRef.current = false;
-    snapMissingCellHintRef.current = 0;
+    snapScanStoppedEarlyRef.current = false;
     setSnapReport(null);
     if (snapReportTimerRef.current !== null) {
       window.clearTimeout(snapReportTimerRef.current);
@@ -354,55 +400,216 @@ export default function AssignQrToProduct() {
 
     const values = [...snapValuesRef.current];
     const expected = snapExpectedRef.current;
-    const addedValues = new Set(
-      scanCartRef.current
-        .filter((row) => row.scanState === 'ok')
-        .map((row) => row.scanValue || row.label_id)
-        .filter((value) => snapValuesRef.current.has(value))
-    );
+    const addedRows = scanCartRef.current.filter((row) => (
+      row.scanState === 'ok' && snapValuesRef.current.has(row.scanValue)
+    ));
+    const repairedRows = scanCartRef.current.filter((row) => (
+      row.scanState !== 'checking'
+      && snapRepairValuesRef.current.has(row.label_id || row.scanValue)
+    ));
+    const addedRowsAll = [...new Set([...addedRows, ...repairedRows])];
+    const successfulValues = new Set(addedRowsAll.flatMap((row) => [row.scanValue, row.label_id]));
     const failures = [...snapFailuresRef.current.entries()]
-      .filter(([serial]) => !addedValues.has(serial))
-      .map(([serial, reason]) => ({ serial, reason }));
-    const notDetected = Math.max(0, expected - values.length);
-    const showMissingHints = expected === 0 || values.length < expected;
-    const sequenceGaps = showMissingHints
-      ? findSequenceGaps(values, Math.max(0, expected - addedValues.size) + 5)
-      : [];
+      .filter(([value]) => !successfulValues.has(value))
+      .map(([value, failure]) => ({ value, ...failure }));
+    const failureByValue = new Map(failures.map((failure) => [failure.value, failure]));
+    const rejectedNumbers = new Map();
+    let nextRejectedNumber = 0;
+    const photoValues = new Set(snapPhotosRef.current.flatMap((photo) => (
+      (photo.detections || [])
+        .map((detection) => String(detection.rawValue || detection.raw_value || detection.value || ''))
+        .filter(Boolean)
+    )));
+    failures.filter((failure) => photoValues.has(failure.value)).forEach((failure) => {
+      rejectedNumbers.set(failure.value, ++nextRejectedNumber);
+    });
+    const notDetected = Math.max(0, expected - values.length - repairedRows.length);
+    const validatedHoleCount = snapPhotosRef.current.reduce(
+      (count, photo) => count + (photo.validatedHoleCount ?? photo.holes?.length ?? 0),
+      0
+    );
+    const availableHoleCount = snapPhotosRef.current.reduce(
+      (count, photo) => count + (photo.holes?.length || 0),
+      0
+    );
+    const canMarkMissing = expected > 0 && notDetected > 0 && availableHoleCount >= 1;
+    // TODO remove after verifying orange marker placement.
+    console.log('[snap-orange]', {
+      expected,
+      notDetected,
+      validatedHoleCount,
+      holes: snapPhotosRef.current.map((photo) => photo.holes?.length || 0),
+      basis: snapPhotosRef.current.map((photo) => ({
+        a: photo.lattice?.a || null,
+        b: photo.lattice?.b || null,
+      })),
+      spacing: snapPhotosRef.current.map((photo) => photo.lattice?.spacing ?? null),
+    });
+    const photoMarkers = snapPhotosRef.current.flatMap((photo, photoIndex) => {
+      const codeMarkers = (photo.detections || []).flatMap((detection, detectionIndex) => {
+        const value = String(detection.rawValue || detection.raw_value || detection.value || '');
+        const points = detection.points || [];
+        if (!value || points.length === 0) return [];
+        const xValues = points.map((point) => point.x);
+        const yValues = points.map((point) => point.y);
+        const center = points.reduce((sum, point) => ({
+          x: sum.x + point.x / points.length,
+          y: sum.y + point.y / points.length,
+        }), { x: 0, y: 0 });
+        const added = scanCartRef.current.some((row) => (
+          row.scanState === 'ok' && row.scanValue === value
+        ));
+        const failure = failureByValue.get(value);
+        let number;
+        if (!added) {
+          if (!rejectedNumbers.has(value)) {
+            rejectedNumbers.set(value, ++nextRejectedNumber);
+          }
+          number = rejectedNumbers.get(value);
+        }
+        return [{
+          id: added ? `added:${photoIndex}:${detectionIndex}:${value}` : `rejected:${value}`,
+          kind: added ? 'added' : 'rejected',
+          value,
+          serial: failure?.serial || null,
+          number,
+          points,
+          x: center.x,
+          y: center.y,
+          size: Math.max(
+            Math.max(...xValues) - Math.min(...xValues),
+            Math.max(...yValues) - Math.min(...yValues)
+          ),
+          photoIndex,
+          label: added
+            ? `Added code${failure?.serial ? ` ${failure.serial}` : ''}`
+            : `Rejected code ${number}${failure?.serial ? `: ${failure.serial}` : ''}`,
+        }];
+      });
+      const codeSizes = codeMarkers
+        .map((marker) => marker.size)
+        .filter((size) => Number.isFinite(size) && size > 0)
+        .sort((left, right) => left - right);
+      const middle = Math.floor(codeSizes.length / 2);
+      const medianCodeSize = codeSizes.length === 0
+        ? 0
+        : codeSizes.length % 2 === 0
+          ? (codeSizes[middle - 1] + codeSizes[middle]) / 2
+          : codeSizes[middle];
+      const photoHoles = photo.holes || [];
+      const hasGridCoordinates = photoHoles.every((hole) => (
+        Number.isFinite(hole.row) && Number.isFinite(hole.column)
+      ));
+      const orderedPhotoHoles = hasGridCoordinates
+        ? [...photoHoles].sort((left, right) => (
+          (left.row - right.row) || (left.column - right.column)
+        ))
+        : [...photoHoles];
+      const missingMarkers = canMarkMissing
+        ? orderedPhotoHoles.slice(0, notDetected).map((hole, holeIndex) => ({
+            id: `missing:${photoIndex}:${holeIndex}`,
+            kind: 'missing',
+            x: hole.x,
+            y: hole.y,
+            size: medianCodeSize || hole.size,
+            photoIndex,
+            label: 'Undetected QR code slot',
+          }))
+        : [];
+      return [...codeMarkers, ...missingMarkers];
+    });
+    const presentSerials = [...new Set([
+      ...addedRowsAll.map((row) => row.label_id).filter(Boolean),
+      ...failures.map((failure) => failure.serial).filter(Boolean),
+    ])];
+    const serialGaps = findSerialGaps(presentSerials);
+    const sequenceGaps = serialGaps.missingSerials;
+    const serialGroups = serialGaps.groups;
+    const serialRange = serialGroups.map(({ prefix, width, minimum, maximum }) => (
+      `${prefix}${String(minimum).padStart(width, '0')} to ${prefix}${String(maximum).padStart(width, '0')}`
+    )).join(' · ');
+    const sequenceCount = serialGroups.reduce((count, group) => count + group.presentCount, 0);
+    const sequenceTotal = serialGroups.reduce((count, group) => count + group.totalCount, 0);
+    const hasDifferentPrefixes = new Set(serialGroups.map((group) => group.prefix)).size > 1;
+    const showIgnoredGapNote = serialGaps.ignoredGapCount > 0
+      && !(sequenceGaps.length === 0 && hasDifferentPrefixes);
     const allAdded = values.length > 0
-      && addedValues.size === values.length
+      && addedRowsAll.length >= values.length
       && failures.length === 0
       && sequenceGaps.length === 0
+      && serialGaps.ignoredGapCount === 0
       && notDetected === 0;
     const failureGroups = [...new Map(
       failures.map(({ reason }) => [reason, { reason, serials: [] }])
     ).values()];
     failureGroups.forEach((group) => {
-      group.serials = failures
+      group.items = failures
         .filter((failure) => failure.reason === group.reason)
-        .map((failure) => failure.serial);
+        .map((failure) => ({
+          failure,
+          marker: photoMarkers.find((marker) => (
+            marker.kind === 'rejected' && marker.value === failure.value
+          )),
+        }))
+        .filter(({ failure, marker }) => failure.serial || marker)
+        .map((failure) => ({
+          id: `rejected:${failure.failure.value}`,
+          serial: failure.failure.serial || null,
+          markerId: failure.marker?.id,
+          number: failure.marker?.number,
+        }));
+      group.serials = group.items.map((item) => item.serial);
     });
 
     snapCompleteRef.current = false;
     setSnapReport({
       read: values.length,
-      added: addedValues.size,
+      added: addedRowsAll.length,
       expected,
       notDetected,
+      notAdded: failures.length,
       failures,
       failureGroups,
       sequenceGaps,
-      retrySerials: [...new Set([...sequenceGaps, ...failures.map(({ serial }) => serial)])],
-      missingCellHint: snapMissingCellHintRef.current,
+      photoMarkers,
+      retrySerials: sequenceGaps,
+      serialRange,
+      sequenceCount,
+      sequenceTotal,
+      ignoredGapCount: serialGaps.ignoredGapCount,
+      showIgnoredGapNote,
+      scanStoppedEarly: snapScanStoppedEarlyRef.current,
       allAdded,
     });
   };
 
-  const handleSnapComplete = ({ values, expected, missingCells }) => {
-    snapValuesRef.current = new Set(values);
-    snapExpectedRef.current = expected || 0;
-    snapMissingCellHintRef.current = missingCells?.count || 0;
+  const finishSnapRepairIfReady = () => {
+    if (
+      !snapRepairPendingRef.current
+      || scanQueueRef.current.length > 0
+      || scanCartRef.current.some((row) => row.scanState === 'checking')
+    ) return;
+    snapRepairPendingRef.current = false;
     snapCompleteRef.current = true;
     maybeBuildSnapReport();
+  };
+
+  const handleSnapComplete = ({ values, expected, scanStoppedEarly, photos = [] }) => {
+    snapValuesRef.current = new Set(values);
+    snapExpectedRef.current = expected || 0;
+    snapScanStoppedEarlyRef.current = Boolean(scanStoppedEarly);
+    snapPhotosRef.current = photos;
+    setSnapPhotos(photos);
+    snapCompleteRef.current = true;
+    maybeBuildSnapReport();
+  };
+
+  const addMissingSnapSerials = () => {
+    const serials = snapReport?.retrySerials || [];
+    if (serials.length === 0) return;
+    snapRepairValuesRef.current = new Set(serials);
+    snapRepairPendingRef.current = true;
+    enqueueScanBatch(serials);
   };
 
   const focusScanInput = (serial) => {
@@ -453,7 +660,10 @@ export default function AssignQrToProduct() {
         current = [...scanCartRef.current];
         results.forEach((result) => {
           if (!result.ok) {
-            failures.push({ value: result.label_id || result.value, message: result.message || 'Could not recognize this code.' });
+            const value = result.label_id || result.value;
+            const message = result.message || 'Could not recognize this code.';
+            failures.push({ value, message });
+            if (snapRepairValuesRef.current.has(value)) recordSnapFailure(value, message, result.label_id || null);
             return;
           }
           if (current.some((item) => item.qr_batch === result.data.qr_batch || item.label_id === result.data.label_id)) return;
@@ -464,7 +674,11 @@ export default function AssignQrToProduct() {
         if (sortMode === 'newest' && !pendingPhotoSortRef.current) setScanCartPage(1);
       } catch (err) {
         if (sessionId !== scanSessionRef.current) return;
-        candidates.forEach((value) => failures.push({ value, message: 'Could not reach server. Check it is running.' }));
+        candidates.forEach((value) => {
+          const message = 'Could not reach server. Check it is running.';
+          failures.push({ value, message });
+          if (snapRepairValuesRef.current.has(value)) recordSnapFailure(value, message, value);
+        });
         console.error(err);
       }
     }
@@ -615,7 +829,7 @@ export default function AssignQrToProduct() {
           } else {
             const message = result.message || 'Could not recognize this code.';
             failures.push({ value: result.label_id || result.value, message });
-            recordSnapFailure(result.value, message);
+            recordSnapFailure(result.value, message, result.label_id || null);
           }
         });
         values.filter((value) => !receivedValues.has(value))
@@ -668,6 +882,7 @@ export default function AssignQrToProduct() {
         cameraBatchRequestRef.current = null;
         if (cameraPendingValuesRef.current.size > 0) scheduleCameraBatch(0);
       }
+      finishSnapRepairIfReady();
       maybeBuildSnapReport();
     }
   };
@@ -764,6 +979,7 @@ export default function AssignQrToProduct() {
       await addManyToCart(values);
     }
     isProcessingQueueRef.current = false;
+    finishSnapRepairIfReady();
   };
 
     const handleScanSubmit = (e) => {
@@ -791,7 +1007,10 @@ export default function AssignQrToProduct() {
    snapCompleteRef.current = false;
    snapValuesRef.current.clear();
    snapFailuresRef.current.clear();
+   snapRepairValuesRef.current.clear();
+   snapRepairPendingRef.current = false;
    setSnapReport(null);
+   clearSnapPhotos();
   };
 
   const toggleCamera = () => {
@@ -868,6 +1087,10 @@ export default function AssignQrToProduct() {
   };
 
   const loadSummary = (varId, fallbackLabel) => {
+    setAlsoGenerateBundle(true);
+    setBundleResult(null);
+    setBundleRetryPayload(null);
+    setBundleFailureMessage('');
     setSummaryVariantId(varId);
     setSummaryLabel(fallbackLabel);
     setSummaryPage(1);
@@ -931,6 +1154,10 @@ export default function AssignQrToProduct() {
       const label = targetLabel;
       const varId = variantId;
 
+      setSummaryBundleMeta({
+        remarks: batchNumber.trim() || null,
+        expiryDate: expiryDate || null,
+      });
       resetScanSession();
       commitCart([]);
       setBatchNumber('');
@@ -993,6 +1220,59 @@ export default function AssignQrToProduct() {
     setSummaryVariantId(null);
   };
 
+  const createBundle = async (payload) => {
+    const res = await apiFetch('/api/bundles', {
+      method: 'POST',
+      body: JSON.stringify({
+        variant_id: payload.variantId,
+        qr_ids: payload.qrIds,
+        remarks: payload.remarks,
+        expiry_date: payload.expiryDate,
+      }),
+    });
+    if (!res) throw new Error('Your session is no longer valid.');
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.message || 'Could not generate the bundle QR.');
+    setBundleResult({
+      bundle: result,
+      productName: result.product_name || payload.productName,
+      sku: result.sku || payload.sku,
+    });
+    setBundleRetryPayload(null);
+    setBundleFailureMessage('');
+  };
+
+  const retryBundleCreation = async () => {
+    if (!bundleRetryPayload || isRetryingBundle) return;
+    setIsRetryingBundle(true);
+    setBundleFailureMessage('');
+    try {
+      await createBundle(bundleRetryPayload);
+    } catch (err) {
+      setBundleFailureMessage(err.message || 'Could not generate the bundle QR.');
+    } finally {
+      setIsRetryingBundle(false);
+    }
+  };
+
+  const downloadBundleQr = () => {
+    const canvas = bundleQrCanvasRef.current;
+    if (!canvas || !bundleResult) return;
+    const link = document.createElement('a');
+    link.href = canvas.toDataURL('image/png');
+    link.download = `${bundleResult.bundle.bundle_code}.png`;
+    link.click();
+  };
+
+  const downloadBundleContents = () => {
+    if (!bundleResult?.bundle?.items?.length) return;
+    exportRowsToExcel(
+      bundleResult.bundle.items.map((item) => ({ 'Label ID': item.label_id })),
+      `${bundleResult.bundle.bundle_code}-contents.xlsx`,
+      'Bundle contents'
+    );
+  };
+
   const confirmSummaryAssign = async () => {
     const qrIds = summaryRows.map((r) => r.qr_batch);
     if (qrIds.length === 0) return;
@@ -1021,9 +1301,33 @@ export default function AssignQrToProduct() {
         return;
       }
 
+      const shouldGenerateBundle = canCreateBundles && alsoGenerateBundle;
+      const bundlePayload = {
+        variantId: summaryVariantId,
+        qrIds,
+        remarks: summaryBundleMeta.remarks,
+        expiryDate: summaryBundleMeta.expiryDate,
+        productName: summaryRows[0]?.target_product_name || summaryLabel,
+        sku: summaryRows[0]?.target_sku || '',
+      };
       setSummaryStatusMessage(`${result.approved_count} unit(s) confirmed.`);
       setSummaryRows([]);
-      setTimeout(() => closeSummary(), 900);
+      if (shouldGenerateBundle) {
+        try {
+          await createBundle(bundlePayload);
+          setIsSummaryOpen(false);
+          setSummaryVariantId(null);
+        } catch (err) {
+          setBundleRetryPayload(bundlePayload);
+          setBundleFailureMessage(err.message || 'Could not generate the bundle QR.');
+          setIsSummaryOpen(false);
+          setSummaryVariantId(null);
+        }
+      } else {
+        setIsSummaryOpen(false);
+        setSummaryVariantId(null);
+        setTimeout(() => closeSummary(), 900);
+      }
     } catch (err) {
       setSummaryStatusMessage('Could not reach server. Check it is running.');
       console.error(err);
@@ -1241,7 +1545,10 @@ export default function AssignQrToProduct() {
                 <button
                   type="button"
                   className="aq-snap-report-dismiss"
-                  onClick={() => setSnapReport(null)}
+                  onClick={() => {
+                    setSnapReport(null);
+                    clearSnapPhotos();
+                  }}
                   aria-label="Dismiss snap result"
                 >
                   <X size={16} />
@@ -1254,25 +1561,33 @@ export default function AssignQrToProduct() {
               )}
               <div className="aq-snap-report-counts">
                 <span>
-                  Photo read <strong>{snapReport.read}</strong>
-                  {snapReport.expected > 0 && ` (expected ${snapReport.expected})`}
+                  Read <strong>{snapReport.read}</strong>
+                  {snapReport.expected > 0 && <> of <strong>{snapReport.expected}</strong></>}
+                  {' '}· Added <strong>{snapReport.added}</strong>
+                  {' '}· Not added <strong>{snapReport.notAdded}</strong>
                 </span>
-                <span>Added to list <strong>{snapReport.added}</strong></span>
-                <span>Failed lookup <strong>{snapReport.failures.length}</strong></span>
                 {snapReport.notDetected > 0 && (
                   <span>Not detected <strong>{snapReport.notDetected}</strong></span>
                 )}
               </div>
-              {snapReport.notDetected > 0 && (
+              <SnapPhotoPreview
+                photos={snapPhotos}
+                markers={snapReport.photoMarkers}
+                activeMarkerId={activeSnapMarkerId}
+                onHighlightMarker={setActiveSnapMarkerId}
+              />
+              {snapReport.serialRange && (
                 <p className="aq-snap-report-note">
-                  {snapReport.notDetected} expected code{snapReport.notDetected === 1 ? '' : 's'} not detected.
+                  Serial range: {snapReport.serialRange} · {snapReport.sequenceCount} of {snapReport.sequenceTotal} in sequence
                 </p>
               )}
-              {snapReport.missingCellHint > 0
-                && (snapReport.expected === 0 || snapReport.read < snapReport.expected) && (
-                <p className="aq-snap-report-hint">
-                  Photo may be missing ~{snapReport.missingCellHint} code{snapReport.missingCellHint === 1 ? '' : 's'}.
+              {snapReport.showIgnoredGapNote && (
+                <p className="aq-snap-report-note">
+                  Serials are not continuous ({snapReport.ignoredGapCount} gaps); check manually
                 </p>
+              )}
+              {snapReport.scanStoppedEarly && (
+                <p className="aq-snap-report-hint">Scan stopped early</p>
               )}
               {snapReport.sequenceGaps.length > 0 && (
                 <div className="aq-snap-report-group">
@@ -1291,32 +1606,45 @@ export default function AssignQrToProduct() {
                   </div>
                 </div>
               )}
-              {snapReport.failureGroups.map(({ reason, serials }) => (
+              {snapReport.failureGroups.map(({ reason, items }) => (
                 <div className="aq-snap-report-group" key={reason}>
                   <strong>{reason}</strong>
                   <div className="aq-snap-report-chips">
-                    {serials.map((serial) => (
+                    {items.map((item) => (
                       <button
-                        key={serial}
+                        key={item.id}
                         type="button"
-                        className="aq-snap-report-chip aq-snap-report-chip-failed"
-                        onClick={() => focusScanInput(serial)}
+                        className={`aq-snap-report-chip aq-snap-report-chip-failed${item.markerId && item.markerId === activeSnapMarkerId ? ' is-active' : ''}`}
+                        onClick={() => {
+                          if (item.markerId) setActiveSnapMarkerId(item.markerId);
+                          if (item.serial) focusScanInput(item.serial);
+                        }}
+                        aria-pressed={Boolean(item.markerId && item.markerId === activeSnapMarkerId)}
                       >
-                        {serial}
+                        {item.number ? `#${item.number} ` : ''}{item.serial || 'Code'}
                       </button>
                     ))}
                   </div>
                 </div>
               ))}
+              <p className="aq-snap-report-note aq-snap-report-edge-note">
+                Edge limitation: codes beyond the serial range may be missed.
+              </p>
               <div className="aq-snap-report-actions">
-                <button
-                  type="button"
-                  className="aq-snap-report-add"
-                  onClick={() => enqueueScanBatch(snapReport.retrySerials)}
-                  disabled={snapReport.retrySerials.length === 0}
-                >
-                  Add missing ({snapReport.retrySerials.length})
-                </button>
+                {snapReport.retrySerials.length > 0 && (
+                  <>
+                    <p className="aq-snap-report-safety">
+                      Adds these serials from the sequence. Only tap if the labels on your sheet are in this order.
+                    </p>
+                    <button
+                      type="button"
+                      className="aq-snap-report-add"
+                      onClick={addMissingSnapSerials}
+                    >
+                      Add missing ({snapReport.retrySerials.length})
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   className="aq-snap-report-manual"
@@ -1575,8 +1903,21 @@ export default function AssignQrToProduct() {
               {summaryError && <p className="aq-error-text">{summaryError}</p>}
               {summaryStatusMessage && <p className="aq-status-text">{summaryStatusMessage}</p>}
 
+              {canCreateBundles && summaryRows.length > 0 && (
+                <label className="aq-bundle-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={alsoGenerateBundle}
+                    onChange={(event) => setAlsoGenerateBundle(event.target.checked)}
+                  />
+                  <span>Also generate one bundle QR for these {summaryRows.length} codes</span>
+                </label>
+              )}
+
               {isLoadingSummary ? (
                 <p className="aq-empty-state">Loading…</p>
+              ) : isProcessingSummary && summaryRows.length === 0 ? (
+                <p className="aq-empty-state">Assignment confirmed. Generating the bundle QR…</p>
               ) : summaryRows.length === 0 ? (
                 <p className="aq-empty-state">No pending assignments — they may have already been processed.</p>
               ) : (
@@ -1639,6 +1980,7 @@ export default function AssignQrToProduct() {
                   )}
                 </>
               )}
+
             </div>
 
             <div className="aq-modal-footer aq-modal-footer-end">
@@ -1652,6 +1994,68 @@ export default function AssignQrToProduct() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {bundleRetryPayload && !bundleResult && (
+        <div className="aq-modal-overlay">
+          <section className="aq-modal-panel aq-bundle-result-panel" role="dialog" aria-modal="true" aria-labelledby="aq-bundle-retry-title">
+            <div className="aq-modal-header">
+              <h3 id="aq-bundle-retry-title">Assignment confirmed; bundle QR not created</h3>
+            </div>
+            <div className="aq-modal-body">
+              <p className="aq-bundle-error">
+                The QR assignment succeeded, but bundle creation failed. Retrying will only create the bundle and will not submit the assignment again.
+              </p>
+              {bundleFailureMessage && <p className="aq-error-text" role="alert">{bundleFailureMessage}</p>}
+            </div>
+            <div className="aq-modal-footer aq-modal-footer-end">
+              <button
+                type="button"
+                className="aq-btn-secondary"
+                onClick={() => { setBundleRetryPayload(null); setBundleFailureMessage(''); }}
+                disabled={isRetryingBundle}
+              >
+                Close
+              </button>
+              <button type="button" className="aq-btn-primary aq-btn-primary-auto" onClick={retryBundleCreation} disabled={isRetryingBundle}>
+                {isRetryingBundle ? 'Retrying…' : 'Retry generate bundle'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {bundleResult && (
+        <div className="aq-modal-overlay">
+          <section className="aq-modal-panel aq-bundle-result-panel" role="dialog" aria-modal="true" aria-labelledby="aq-bundle-result-title">
+            <div className="aq-modal-header">
+              <div>
+                <h3 id="aq-bundle-result-title">Bundle QR generated</h3>
+                <p>{bundleResult.productName} · {bundleResult.sku} · {bundleResult.bundle.qty} codes</p>
+              </div>
+              <button
+                type="button"
+                className="aq-modal-close"
+                onClick={() => setBundleResult(null)}
+                aria-label="Close bundle result"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="aq-modal-body aq-bundle-result-body">
+              <QRCodeCanvas ref={bundleQrCanvasRef} value={bundleResult.bundle.bundle_code} size={220} level="H" />
+              <strong className="aq-bundle-code">{bundleResult.bundle.bundle_code}</strong>
+              <span className="aq-bundle-label">
+                {bundleResult.bundle.bundle_code} · {bundleResult.sku} · {bundleResult.bundle.qty}
+              </span>
+            </div>
+            <div className="aq-modal-footer aq-modal-footer-end">
+              <button type="button" className="aq-btn-secondary" onClick={downloadBundleQr}>Download QR (PNG)</button>
+              <button type="button" className="aq-btn-secondary" onClick={downloadBundleContents}>Download contents (Excel)</button>
+              <button type="button" className="aq-btn-primary aq-btn-primary-auto" onClick={() => setBundleResult(null)}>Close</button>
+            </div>
+          </section>
         </div>
       )}
     </div>

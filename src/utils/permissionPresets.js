@@ -9,6 +9,7 @@ export const MODULE_DEFS = [
   { key: 'Product InfoCenter', functions: ['Register product', 'Edit catalogue', 'Assign QR'] },
   { key: 'Product Balance', functions: ['View balance', 'Export CSV'] },
   { key: 'Store Management', functions: ['View stores', 'Edit stores'] },
+  { key: 'Agent / Distributor', functions: ['View agents', 'Edit agents / View bundles', 'Assign bundles'] },
   { key: 'Stock Adjustment', functions: ['Create adjustment', 'Approve adjustment'] },
   { key: 'Transaction Ledger', functions: ['View ledger', 'Export ledger'] },
   { key: 'User Management', functions: ['View users', 'Invite users', 'Edit permissions'] },
@@ -21,6 +22,7 @@ export const PRESETS = ['Admin', 'Manager', 'Operator', 'Viewer'];
 function fullAccess() {
   const perms = {};
   ALL_MODULES.forEach((m) => { perms[m] = ['view', 'create', 'edit']; });
+  perms['Agent / Distributor'].push('delete');
   return perms;
 }
 
@@ -36,7 +38,7 @@ export function buildPresetPermissions(preset) {
 
   if (preset === 'Operator') {
     const perms = {};
-    ['Dashboard', 'Product InfoCenter', 'Product Balance', 'Store Management', 'Stock Adjustment', 'Transaction Ledger']
+    ['Dashboard', 'Product InfoCenter', 'Product Balance', 'Store Management', 'Agent / Distributor', 'Stock Adjustment', 'Transaction Ledger']
       .forEach((m) => { perms[m] = ['view']; });
     perms['Product InfoCenter'] = ['view', 'edit'];
     perms['Stock Adjustment'] = ['view', 'edit'];
@@ -45,7 +47,7 @@ export function buildPresetPermissions(preset) {
 
   if (preset === 'Viewer') {
     const perms = {};
-    ['Dashboard', 'Product InfoCenter', 'Product Balance', 'Store Management', 'Transaction Ledger']
+    ['Dashboard', 'Product InfoCenter', 'Product Balance', 'Store Management', 'Agent / Distributor', 'Transaction Ledger']
       .forEach((m) => { perms[m] = ['view']; });
     return perms;
   }
