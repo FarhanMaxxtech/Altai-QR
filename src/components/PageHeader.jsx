@@ -13,6 +13,8 @@ const STATIC_HEADERS = {
   '/assign-qr': { title: 'Assign QR to Product', subtitle: 'Bind printed QR labels to a product variant' },
   '/stock-balance': { title: 'Inventory Balance', subtitle: 'Live on-hand quantity across every store' },
   '/stores': { title: 'Store Management' },
+  '/agents': { title: 'Agent / Distributor', subtitle: 'Manage your distribution partners' },
+  '/assign-agent': { title: 'Assign QR to Agent', subtitle: 'Assign and manage bundle QR codes' },
   '/stock': { title: 'Stock Adjustment', subtitle: 'Pending counts and corrections' },
   '/ledger': { title: 'Transaction History', subtitle: 'Every movement, immutable · click a row for detail' },
   '/users': { title: 'User Management' },

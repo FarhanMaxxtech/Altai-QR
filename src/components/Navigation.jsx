@@ -6,6 +6,7 @@ import {
     QrCode,
     PackageSearch,
     Store,
+    Truck,
     ArrowLeftRight,
     ScrollText,
     Users,
@@ -31,6 +32,14 @@ const navItems = [
     },
     { path: '/stock-balance', label: 'Product Balance', icon: PackageSearch, module: 'Product Balance' },
     { path: '/stores', label: 'Store Management', icon: Store, module: 'Store Management' },
+    {
+        label: 'Agent',
+        icon: Truck,
+        children: [
+            { path: '/agents', label: 'Agent / Distributor', module: 'Agent / Distributor' },
+            { path: '/assign-agent', label: 'Assign QR to Agent', module: 'Agent / Distributor' },
+        ],
+    },
     { path: '/stock', label: 'Stock Adjustment', icon: ArrowLeftRight, module: 'Stock Adjustment' },
     { path: '/ledger', label: 'Transaction Ledger', icon: ScrollText, module: 'Transaction Ledger' },
     { path: '/users', label: 'User Management', icon: Users, module: 'User Management' },

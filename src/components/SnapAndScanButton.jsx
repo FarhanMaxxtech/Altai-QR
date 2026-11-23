@@ -42,6 +42,23 @@ export default function SnapAndScanButton({
   onSnapCompleteRef.current = onSnapComplete;
   onExpectedCountChangeRef.current = onExpectedCountChange;
 
+  const createPhotoThumbnail = async (bitmap) => {
+    const scale = Math.min(1, 900 / bitmap.width);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not create photo thumbnail canvas');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.84));
+    canvas.width = 0;
+    canvas.height = 0;
+    if (!blob) throw new Error('Could not create photo thumbnail');
+    return URL.createObjectURL(blob);
+  };
+
   useEffect(() => () => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
   }, []);
@@ -102,6 +119,7 @@ export default function SnapAndScanButton({
     setScanProgress('');
     setToast(null);
     onSnapStartRef.current?.({ expected });
+    if (expected > 0) onExpectedCountChangeRef.current?.(expected);
     setIsExpectedPanelOpen(false);
     inputRef.current?.click();
   };
@@ -129,7 +147,9 @@ export default function SnapAndScanButton({
     const expected = expectedRef.current;
     let missingCellHint = 0;
     let failed = false;
+    let scanStoppedEarly = false;
     let smallestLongSide = Infinity;
+    const photoResults = [];
     setIsScanningPhoto(true);
     onScanningChangeRef.current?.(true);
     setScanProgress('');
@@ -137,37 +157,75 @@ export default function SnapAndScanButton({
     try {
       for (const file of files) {
         let bitmap;
+        const photo = {
+          url: URL.createObjectURL(file),
+          width: 0,
+          height: 0,
+          detections: [],
+          holes: [],
+          lattice: null,
+          validatedHoleCount: 0,
+        };
         try {
           bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+          photo.width = bitmap.width;
+          photo.height = bitmap.height;
           smallestLongSide = Math.min(smallestLongSide, Math.max(bitmap.width, bitmap.height));
           const detections = await scanTiled(bitmap, bitmap.width, bitmap.height, {
             expectedCodeCount: expected,
             deepScan: true,
-            onProgress: ({ pass, totalPasses, codes }) => {
-              setScanProgress(`${pass}/${totalPasses}`);
+            onProgress: ({ pass, totalPasses, codes, stage }) => {
+              setScanProgress(stage || `Pass ${pass}/${totalPasses}`);
               setScanCount(codes);
             },
+            onDetections: (detections) => {
+              const addedValues = [...new Set(detections.map(detectionValue).filter(Boolean))];
+              addedValues.forEach((value) => scannedValuesRef.current.add(value));
+              if (addedValues.length > 0) {
+                onDetectedRef.current?.(addedValues, { source: 'snap', expected });
+              }
+            },
           });
+          photo.detections = detections;
+          photo.holes = detections.missingCells?.positions || [];
+          photo.lattice = detections.missingCells?.lattice || null;
+          photo.validatedHoleCount = detections.missingCells?.validatedHoleCount
+            ?? photo.holes.length;
           missingCellHint += detections.missingCells?.count || 0;
-          const values = [...new Set(detections.map(detectionValue).filter(Boolean))];
-          values.forEach((value) => scannedValuesRef.current.add(value));
-          onDetectedRef.current?.(values, { source: 'snap', expected });
+          scanStoppedEarly = scanStoppedEarly || Boolean(detections.scanStoppedEarly);
         } catch (error) {
           failed = true;
           console.error('QR photo decoding failed:', error);
           const message = 'Could not read QR codes from this photo. Try another image.';
           onErrorRef.current?.(message);
         } finally {
+          if (bitmap) {
+            try {
+              photo.thumbnailUrl = await createPhotoThumbnail(bitmap);
+            } catch (error) {
+              console.warn('Could not make QR photo thumbnail:', error);
+            }
+          }
           bitmap?.close();
+          photoResults.push(photo);
         }
       }
 
       const values = [...scannedValuesRef.current];
-      onSnapCompleteRef.current?.({
+      const complete = onSnapCompleteRef.current;
+      complete?.({
         values,
         expected,
         missingCells: { count: missingCellHint },
+        scanStoppedEarly,
+        photos: photoResults,
       });
+      if (!complete) {
+        photoResults.forEach(({ url, thumbnailUrl }) => {
+          if (url) URL.revokeObjectURL(url);
+          if (thumbnailUrl) URL.revokeObjectURL(thumbnailUrl);
+        });
+      }
       if (values.length === 0) {
         showToast({
           kind: 'error',
@@ -214,8 +272,7 @@ export default function SnapAndScanButton({
         {isScanningPhoto ? (
           <>
             <span className="multi-qr-snap__spinner" aria-hidden="true" />
-            <span className="multi-qr-snap__scanning-label">Scanning… </span>
-            <span className="multi-qr-snap__found-label">Found {scanCount}</span>
+            <span className="multi-qr-snap__scanning-label">Scanning… {scanCount} codes</span>
             {scanProgress && <span className="multi-qr-snap__progress">{scanProgress}</span>}
           </>
         ) : (

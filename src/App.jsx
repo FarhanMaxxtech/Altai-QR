@@ -17,6 +17,8 @@ import RegisterProduct from './pages/merchant/RegisterProduct';
 import ProductDetails from './pages/merchant/ProductDetails';
 import ProductBalanceDetails from './pages/merchant/ProductBalanceDetails';
 import AssignQrToProduct from './pages/merchant/AssignQrToProduct';
+import AgentDistributor from './pages/merchant/AgentDistributor';
+import AssignBundleToAgent from './pages/merchant/AssignBundleToAgent';
 import PageHeader from './components/PageHeader';
 import ScrollToTop from './components/ScrollToTop';
 //import ApproveQrProduct from './pages/merchant/ApproveQrProduct';
@@ -120,6 +122,8 @@ useEffect(() => {
                   <Route path="/assign-qr" element={<ProtectedRoute module="Product InfoCenter" action="create"><AssignQrToProduct /></ProtectedRoute>} />
                   <Route path="/stock-balance" element={<ProtectedRoute module="Product Balance"><StockAdjustment /></ProtectedRoute>} />
                   <Route path="/stores" element={<ProtectedRoute module="Store Management"><StoreManagement /></ProtectedRoute>} />
+                  <Route path="/agents" element={<ProtectedRoute module="Agent / Distributor"><AgentDistributor /></ProtectedRoute>} />
+                  <Route path="/assign-agent" element={<ProtectedRoute module="Agent / Distributor"><AssignBundleToAgent /></ProtectedRoute>} />
                   <Route path="/stock" element={<ProtectedRoute module="Stock Adjustment"><StockManager /></ProtectedRoute>} />
                   <Route path="/stock-balance/:variantId/:storeId" element={<ProtectedRoute module="Product Balance"><ProductBalanceDetails /></ProtectedRoute>} />
                   <Route path="/ledger" element={<ProtectedRoute module="Transaction Ledger"><LedgerHistory /></ProtectedRoute>} />
